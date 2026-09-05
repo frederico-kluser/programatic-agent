@@ -64,8 +64,10 @@ Usage:
   huu status [...]          Inspect the latest run via .huu/debug-*.log
   huu prune [...]           List/kill orphan huu containers + stale cidfiles
   huu --dir=<path>          Run in this directory instead of the current one (default: cwd)
-  huu --provider=<name>     Pick the LLM provider for pi: openrouter (default), azure
-  huu --backend=<kind>      Advanced: pick dispatch backend pi (default), azure, stub
+  huu --provider=<name>     LLM provider — the endpoint called and the key spent:
+                            deepseek (default, alias ds), openrouter (alias or)
+  huu --backend=<kind>      Advanced: the agent process that runs each task:
+                            jcode (default), stub
   huu --stub                Alias for --backend=stub (no real LLM)
   huu --yolo                Skip Docker, run native on the host (agent sees your shell creds)
   huu --no-docker           Alias for --yolo / HUU_NO_DOCKER=1 — neutral spelling for CI runners

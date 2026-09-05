@@ -64,8 +64,10 @@ Uso:
   huu status [...]          Inspeciona a última execução via .huu/debug-*.log
   huu prune [...]           Lista/mata containers huu órfãos + cidfiles obsoletos
   huu --dir=<caminho>       Roda neste diretório em vez do atual (padrão: cwd)
-  huu --provider=<nome>     Escolhe o provedor de LLM do pi: openrouter (padrão), azure
-  huu --backend=<tipo>      Avançado: escolhe o backend de despacho pi (padrão), azure, stub
+  huu --provider=<nome>     Provedor de LLM — o endpoint chamado e a chave gasta:
+                            deepseek (padrão, apelido ds), openrouter (apelido or)
+  huu --backend=<tipo>      Avançado: o processo de agente que roda cada tarefa:
+                            jcode (padrão), stub
   huu --stub                Atalho para --backend=stub (sem LLM de verdade)
   huu --yolo                Pula o Docker, roda nativo no host (o agente vê as credenciais do seu shell)
   huu --no-docker           Atalho para --yolo / HUU_NO_DOCKER=1 — grafia neutra para runners de CI

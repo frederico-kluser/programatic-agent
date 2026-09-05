@@ -522,11 +522,16 @@ export function buildDockerArgv(opts: DockerCommandOptions): string[] {
     // container inherits the same author/committer as the host user.
     'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL',
     'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
-    // Hermetic-pi escape hatch + RAM-tuning knobs must reach the in-container
-    // orchestrator. Deliberately NOT forwarding PI_CODING_AGENT_DIR: the
-    // container has no host ~/.jcode to leak from, and the hermetic composition
-    // sets its own huu-owned dir.
-    'HUU_PI_HERMETIC', 'HUU_AGENT_MEM_SEED_MB', 'HUU_AGENT_MEM_EMA_ALPHA',
+    // Hermetic-jcode escape hatch + RAM-tuning knobs must reach the
+    // in-container orchestrator. The name matters: the ONLY variable anything
+    // reads is `HUU_JCODE_HERMETIC` (backends/jcode/hermetic.ts →
+    // resolveHermeticEnabled). This slot used to hold `HUU_PI_HERMETIC`, left
+    // behind when the pi backend was deleted — a name nothing reads, so the
+    // documented escape hatch never crossed into the container and, huu being
+    // docker-only, never worked at all. Deliberately NOT forwarding
+    // JCODE_HOME / JCODE_AGENT_DIR: the container has no host ~/.jcode to leak
+    // from, and the hermetic composition sets its own huu-owned dirs.
+    'HUU_JCODE_HERMETIC', 'HUU_AGENT_MEM_SEED_MB', 'HUU_AGENT_MEM_EMA_ALPHA',
     // RAM-safety knobs (dial, guard ladder, admission, OS reserve, pause) —
     // set on the host, they must govern the in-container scheduler too.
     // (Before this passthrough a host HUU_RAM_PERCENT was silently ignored

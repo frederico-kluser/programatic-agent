@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   AgentManifestEntry,
@@ -68,7 +68,7 @@ export class RunLogger {
         stageIntegrations: manifest.stageIntegrations,
         checkRuns: manifest.checkRuns,
       };
-      writeFileSync(path, JSON.stringify(snapshot, null, 2), 'utf8');
+      writeManifestFileAtomic(path, JSON.stringify(snapshot, null, 2));
     } catch {
       // Non-fatal — the run should still complete.
     }
@@ -162,6 +162,56 @@ export class RunLogger {
         // Per-agent write is best-effort — keep going so other agents still land.
       }
     }
+  }
+}
+
+/**
+ * Writes `.huu/manifest-<runId>.json` ATOMICALLY: stage a sibling temp file
+ * next to the target, then `rename` over it.
+ *
+ * WHY: `flushManifest` runs at EVERY stage boundary during a run — not once
+ * at the end — and the manifest is meant to be read WHILE the run is still
+ * going, by external tools and by a human tailing `.huu/`. A plain
+ * `writeFileSync` onto the target truncates it first, so a reader fast enough
+ * to open the file inside the truncate→write window sees a JSON document cut
+ * off mid-object, and a `flushManifest` call is not exotic — it happens on
+ * every stage boundary of every run. `rename(2)` is atomic within a
+ * filesystem: a reader either sees the complete previous manifest or the
+ * complete new one, never a prefix of either.
+ *
+ * Same recipe as `dev-mode/dev-state.ts`'s `writeFileEnsuringDir` (and
+ * `dev-graph/graph-store.ts`, `jcode/hermetic.ts`) — duplicated here rather
+ * than shared, matching how each of those sites already duplicates it for its
+ * own target file rather than routing through one helper.
+ *
+ * The temp file lives in the SAME directory as the target — `rename` across
+ * filesystems is EXDEV — and carries a pid+random suffix so two concurrent
+ * runs flushing their own manifest into the same shared `.huu/` directory
+ * cannot collide on one another's staging file.
+ *
+ * Unlike `writeFileEnsuringDir`, this does not read or reapply the target's
+ * previous file mode: `manifest-<runId>.json` is a huu-generated run artifact
+ * a user has no reason to have manually chmod'd, unlike a blackboard file or
+ * a credential-bearing config.
+ *
+ * On failure the temp file is removed and the error is rethrown — an orphan
+ * `manifest-<runId>.json.<pid>-<rand>.huu.tmp` would sit in the user's `.huu/`
+ * forever, listed by nothing and cleaned by nobody. The caller (`flushManifest`)
+ * wraps this in a try/catch that swallows the error: a failed manifest flush
+ * must never take the run down.
+ */
+function writeManifestFileAtomic(path: string, content: string): void {
+  const tmp = `${path}.${process.pid}-${Math.random().toString(36).slice(2, 10)}.huu.tmp`;
+  try {
+    writeFileSync(tmp, content, 'utf8');
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* nothing left to do — the real failure is rethrown below */
+    }
+    throw err;
   }
 }
 

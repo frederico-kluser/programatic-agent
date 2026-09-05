@@ -179,6 +179,13 @@ export class RunLogger {
  * filesystem: a reader either sees the complete previous manifest or the
  * complete new one, never a prefix of either.
  *
+ * SCOPE, exactly: death of the process. Neither the temp file nor its
+ * directory is `fsync`ed, so a power cut or a kernel panic is NOT covered — a
+ * rename can be atomic and still not have reached the platter. Nothing in
+ * `src/` fsyncs; matching the neighbours (this file's own `dev-mode/dev-state.ts`
+ * twin included) is worth more than a durability guarantee only this one call
+ * site would carry.
+ *
  * Same recipe as `dev-mode/dev-state.ts`'s `writeFileEnsuringDir` (and
  * `dev-graph/graph-store.ts`, `jcode/hermetic.ts`) — duplicated here rather
  * than shared, matching how each of those sites already duplicates it for its

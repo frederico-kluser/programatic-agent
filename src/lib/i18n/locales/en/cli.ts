@@ -11,8 +11,6 @@ export const cliEn = {
     'Step "{name}" has scope "per-file" but no files — add them under config.files["{name}"], or switch the step to scope "memory" with filesFrom.',
   'cli.err_auto_no_key':
     'huu auto: the {provider} provider requires an API key but {envVar} is not set. Either export the env var, mount a secret at {secretPath}, or persist it via the TUI first.',
-  'cli.err_auto_no_endpoint':
-    'huu auto: the Azure AI Foundry provider requires an endpoint URL but AZURE_OPENAI_BASE_URL is not set. Export it or persist it via the TUI first.',
   'cli.err_port_in_use':
     'huu: port {port} is already in use. Pick another with --port=<n> or HUU_WEB_PORT=<n>.',
   'cli.err_web_start': 'huu: web server failed to start: {message}',

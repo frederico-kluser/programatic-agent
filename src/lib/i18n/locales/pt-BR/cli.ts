@@ -12,8 +12,6 @@ export const cliPtBR = {
     'O passo "{name}" tem escopo "per-file" mas nenhum arquivo — adicione-os em config.files["{name}"], ou mude o passo para o escopo "memory" com filesFrom.',
   'cli.err_auto_no_key':
     'huu auto: o provedor {provider} exige uma chave de API, mas {envVar} não está definida. Exporte a variável de ambiente, monte um secret em {secretPath}, ou salve a chave pela TUI antes.',
-  'cli.err_auto_no_endpoint':
-    'huu auto: o provedor Azure AI Foundry exige a URL do endpoint, mas AZURE_OPENAI_BASE_URL não está definida. Exporte-a ou salve-a pela TUI antes.',
   'cli.err_port_in_use':
     'huu: a porta {port} já está em uso. Escolha outra com --port=<n> ou HUU_WEB_PORT=<n>.',
   'cli.err_web_start': 'huu: o servidor web falhou ao subir: {message}',

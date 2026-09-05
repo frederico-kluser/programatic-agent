@@ -74,11 +74,11 @@ describe('screen-fsm', () => {
     it('run.authError opens options focused on the rejected provider', () => {
       const next = reduce(
         baseState({ screen: { kind: 'run', modelId: 'm', apiKey: 'k' }, backendKind: 'jcode' }),
-        { type: 'run.authError', backendKind: 'jcode', specName: 'azureApiKey' },
+        { type: 'run.authError', backendKind: 'jcode', specName: 'deepseek' },
       );
-      expect(next.screen).toEqual({ kind: 'options', focusSpecName: 'azureApiKey' });
+      expect(next.screen).toEqual({ kind: 'options', focusSpecName: 'deepseek' });
       // Backend is carried over so a follow-up run uses the right backend.
-      expect(next.backendKind).toBe('deepseek');
+      expect(next.backendKind).toBe('jcode');
     });
   });
 
@@ -121,7 +121,7 @@ describe('screen-fsm', () => {
         deepseekResolvedKey: '',
         requiresApiKey: true,
       });
-      expect(s.backendKind).toBe('deepseek');
+      expect(s.backendKind).toBe('jcode');
     });
   });
 
@@ -461,7 +461,7 @@ describe('screen-fsm', () => {
           firstStepModelId: 'gpt-z',
         },
       );
-      expect(next.backendKind).toBe('deepseek');
+      expect(next.backendKind).toBe('jcode');
       expect(next.requiresApiKey).toBe(false);
       expect(next.modelId).toBe('gpt-z');
       expect(next.screen).toEqual({ kind: 'run', modelId: 'gpt-z', apiKey: 'AK' });

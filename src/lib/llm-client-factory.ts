@@ -54,7 +54,14 @@ export function buildChatClient(
     );
   }
 
-  const baseURL = ctx.deepseekEndpoint?.trim().replace(/\/+$/, '') + '/' || DEEPSEEK_BASE_URL;
+  // The fallback belongs to the OPTIONAL endpoint, never to the concatenation:
+  // `+` binds tighter than `||`, so `endpoint?.trim()… + '/' || DEFAULT` used to
+  // evaluate as `(undefined + '/') || DEFAULT` → the truthy string "undefined/",
+  // which made DEEPSEEK_BASE_URL unreachable for every caller (no call site sets
+  // `deepseekEndpoint`). Resolve the override FIRST, then normalize once, so the
+  // default and an override share the same canonical no-trailing-slash shape.
+  const endpoint = ctx.deepseekEndpoint?.trim() ?? '';
+  const baseURL = (endpoint || DEEPSEEK_BASE_URL).replace(/\/+$/, '');
 
   return new ChatOpenAI({
     model: modelId,

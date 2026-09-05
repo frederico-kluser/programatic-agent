@@ -1,9 +1,9 @@
 /* huu web UI — development mode (/dev). */
 
-import { buildDevModelsPayload, describeDevModelsPayload, presetValues } from '../dev-models.js';
+import { buildDevModelsPayload, defaultPreset, describeDevModelsPayload, fallbackModelIdFrom, presetRunnable, presetValues } from '../dev-models.js';
 import { buildDevMethodologyPayload, parseStoredMethodology } from '../dev-methodology.js';
 import { esc, toast, shortDir, projectName } from './utils.js';
-import { $, S, api, DEFAULT_MODEL_ID, sessionKey, backendSpecName, providerInfoById, providerReady, providerBackend } from './state.js';
+import { $, S, api, DEFAULT_MODEL_ID, sessionKey, activeKeySpecName, providerInfoById, providerReady, providerBackend } from './state.js';
 import { showView, switchMode, refreshModelsAndKeys, wireModeSwitch } from './launch.js';
 import { makeGraphApi } from './graph/graph-api-client.js';
 import { RUN_GRAPH_EVENT } from './graph/canvas.js';
@@ -82,13 +82,17 @@ export function renderDevProviderSeg() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = S.provider === p.id ? 'on' : '';
-    btn.textContent = p.label + (providerReady(p) ? '' : ' •');
-    btn.title = p.description + (providerReady(p) ? ' · key ✓' : ' · key needed');
+    btn.textContent = p.label + (providerReady(S, p) ? '' : ' •');
+    btn.title = p.description + (providerReady(S, p) ? ' · key ✓' : ' · key needed');
     if (locked && p.id !== S.boot.lockedProvider) btn.disabled = true;
     btn.addEventListener('click', () => {
       S.provider = p.id;
-      S.backend = providerBackend(p.id);
+      S.backend = providerBackend(S, p.id);
       renderDevProviderSeg();
+      // The two choices are coupled: a preset is a set of ids, and only some
+      // endpoints serve them. Re-picking here is what keeps "open /dev, press
+      // Start" working whichever provider the machine has a key for.
+      syncDevPresetToProvider();
     });
     seg.appendChild(btn);
   }
@@ -114,6 +118,11 @@ const DEV_ROLE_COPY = {
   reporter: ['web.role.reporter', 'web.role.reporter_hint'],
   judge: ['web.role.judge', 'web.role.judge_hint'],
   integration: ['web.role.integration', 'web.role.integration_hint'],
+  // The `--debate` pair. Rendered like every other role — the panel is the
+  // server's list — so a session that never turns the debate on simply leaves
+  // both fields blank and stamps nothing.
+  advocate: ['web.role.advocate', 'web.role.advocate_hint'],
+  prosecutor: ['web.role.prosecutor', 'web.role.prosecutor_hint'],
 };
 
 const DEV_PRESET_COPY = {
@@ -121,6 +130,7 @@ const DEV_PRESET_COPY = {
   thrifty: ['web.preset.thrifty', 'web.preset.thrifty_hint'],
   // Named honestly: this is the arm of the A/B, not a suggestion.
   monoculture: ['web.preset.monoculture', 'web.preset.monoculture_hint'],
+  roster: ['web.preset.roster', 'web.preset.roster_hint'],
   uniform: ['web.preset.uniform', 'web.preset.uniform_hint'],
 };
 
@@ -134,13 +144,53 @@ const devModels = { roles: [], presets: null, preset: 'hetero', values: {} };
  * Falls back to the degraded-path input, and only then to the catalog default.
  */
 export function devFallbackModelId() {
-  const v = devModels.values || {};
-  const pick = (role) => (v[role] || '').trim();
-  const derived = pick('worker') || pick('planner')
-    || (devModels.roles || []).map(pick).find(Boolean) || '';
+  const derived = fallbackModelIdFrom(devModels.roles, devModels.values);
   if (derived) return derived;
   const el = /** @type {HTMLInputElement | null} */ ($('devModel'));
   return (el && el.value.trim()) || S.modelId || DEFAULT_MODEL_ID;
+}
+
+/**
+ * `preset → the providers that can run it`, as `/api/bootstrap` served it.
+ * `null` when the server never advertised it (an older build) — every helper
+ * below then answers "runnable", so the form degrades to what it did before
+ * and the SERVER stays the one authority that refuses.
+ */
+export function devPresetProviders() {
+  const table = (S.boot || {}).devModelPresetProviders;
+  return table && typeof table === 'object' && !Array.isArray(table) ? table : null;
+}
+
+/** Can `preset` run on the provider currently selected in the form? */
+export function devPresetRunnable(preset) {
+  return presetRunnable(devPresetProviders(), preset, S.provider);
+}
+
+/** Provider LABELS for the presets a provider cannot run — for the tooltip. */
+function devPresetProviderLabels(preset) {
+  const list = (devPresetProviders() || {})[preset] || [];
+  return list
+    .map((id) => (providerInfoById(S, id) || {}).label || id)
+    .join(', ');
+}
+
+/**
+ * Re-open the routing panel on a preset the ACTIVE provider can serve.
+ *
+ * Called whenever the provider changes, because the two decisions are not
+ * independent: `hetero` is only meaningful on an endpoint that fronts more than
+ * one family. Leaving the selection alone would keep the form on a preset whose
+ * POST the border refuses — the very failure this wave exists to remove.
+ */
+export function syncDevPresetToProvider() {
+  if (!devModelRoutingAvailable() || !devModels.presets) return;
+  if (!devPresetRunnable(devModels.preset)) {
+    devModels.preset = defaultPreset(devPresetProviders(), Object.keys(devModels.presets), S.provider);
+    devModels.values = presetValues(devModels.roles, devModels.presets, devModels.preset);
+    renderDevRoleFields();
+  }
+  renderDevPresetSeg();
+  renderDevModelsSummary();
 }
 
 /** True only when the server advertised BOTH tables. */
@@ -165,12 +215,15 @@ export function initDevModelPanel() {
   if (fallback) fallback.hidden = true;
   devModels.roles = S.boot.devModelRoles.slice();
   devModels.presets = S.boot.devModelPresets;
-  // Start on `hetero`: routing is a REQUIRED decision here, not an opt-in
-  // tweak, so the form opens on the recommended split (strong blind leader,
-  // cheap swarm, cross-family critic) rather than on a neutral default that
-  // silently collapses every role onto one model.
+  // Start on the recommended split — WHEN THE ACTIVE PROVIDER CAN RUN IT.
+  // Routing is a REQUIRED decision here, not an opt-in tweak, so the form opens
+  // on a preset rather than on a neutral default that silently collapses every
+  // role onto one model. `hetero` cannot be that preset unconditionally: it
+  // routes the planner and the critic to ids only openrouter.ai serves, so on a
+  // machine with a DeepSeek key it made the DEFAULT path a 400 from the model
+  // preflight. `defaultPreset` picks the best preset this provider can serve.
   const names = Object.keys(devModels.presets);
-  devModels.preset = names.includes('hetero') ? 'hetero' : (names[0] || 'hetero');
+  devModels.preset = defaultPreset(devPresetProviders(), names, S.provider);
   devModels.values = presetValues(devModels.roles, devModels.presets, devModels.preset);
   renderDevPresetSeg();
   renderDevRoleFields();
@@ -192,17 +245,32 @@ export function renderDevPresetSeg() {
   if (!seg || !devModels.presets) return;
   seg.innerHTML = '';
   for (const name of Object.keys(devModels.presets)) {
-    const copy = DEV_PRESET_COPY[name] || [name, ''];
+    // `t()` THROWS on an unknown key, so a preset the copy table does not list
+    // renders its raw name rather than taking the panel down — the same
+    // degradation `DEV_ROLE_COPY` gives a role added server-side. (The labels
+    // used to be printed as the KEYS themselves; `t()` is the fix.)
+    const copy = DEV_PRESET_COPY[name];
+    const label = copy ? t(copy[0]) : name;
+    const hintText = copy && copy[1] ? t(copy[1]) : '';
+    const runnable = devPresetRunnable(name);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = devModels.preset === name ? 'on' : '';
     btn.dataset.preset = name;
-    btn.textContent = copy[0];
-    btn.title = copy[1];
+    btn.textContent = label;
+    // DISABLED, not selectable-then-refused. The preset's ids are served by
+    // another endpoint, and the tooltip says which — a repair the user can act
+    // on, offered before the round-trip instead of as a 400 after it.
+    btn.disabled = !runnable;
+    btn.setAttribute('aria-disabled', runnable ? 'false' : 'true');
+    btn.title = runnable
+      ? hintText
+      : t('web.preset.needs_provider', { providers: devPresetProviderLabels(name) });
     seg.appendChild(btn);
   }
   const hint = $('devPresetHint');
-  if (hint) hint.textContent = (DEV_PRESET_COPY[devModels.preset] || ['', ''])[1];
+  const selected = DEV_PRESET_COPY[devModels.preset];
+  if (hint) hint.textContent = selected && selected[1] ? t(selected[1]) : '';
 }
 
 export function renderDevRoleFields() {
@@ -729,7 +797,10 @@ export async function finishDictation() {
   setMicUi('busy', t('web.dev.mic_transcribing'));
   try {
     const audio = await blobToWavBase64(blob);
-    const specName = backendSpecName('pi');           // transcription is OpenRouter-only
+    // Transcription is OpenRouter-only (Gemini via OpenRouter), so the spec is
+    // that provider's by definition — NOT the run's provider, and not a lookup
+    // through the backend (which now names no spec at all).
+    const specName = 'openrouter';
     const res = await api('/api/dev/transcribe', {
       method: 'POST',
       body: JSON.stringify({ audio, format: 'wav', apiKey: sessionKey(specName) || undefined }),
@@ -1115,7 +1186,10 @@ export function devStartBody(goal, modelId, extra = {}) {
   // purpose: "a session without a drawing posts the same bytes" is the
   // invariant this wave has to keep, and quietly starting to send a key would
   // break it in the one direction nobody would test for.
-  const specName = backendSpecName(S.backend);
+  // The ACTIVE PROVIDER's spec. `backendSpecName(S.backend)` could not answer
+  // this (jcode serves two providers, so the server reports no spec for it) and
+  // was additionally called without `S.boot`, so it always returned undefined.
+  const specName = activeKeySpecName(S);
   return {
     goal,
     provider: S.provider,
@@ -1150,6 +1224,22 @@ export function devSubmitBlocker(goal, modelId) {
   if (!goal) return { message: t('web.dev.err_no_goal'), focus: 'devGoal' };
   if (!modelId) return { message: t('web.dev.err_no_model'), focus: '' };
   if (!S.devDir) return { message: t('web.dev.err_no_dir'), focus: '' };
+  // Routing. The body this form assembles must be one the border can accept —
+  // `checkDevModelPolicy` refuses a preset whose ids the session's provider
+  // does not serve, and it refuses it AT the border, so the answer belongs
+  // here too. Only the preset half is checkable client-side: a hand-typed id
+  // is judged against a catalog only the server reads.
+  const routing = devModelsPayload();
+  if (routing.modelsPreset && !devPresetRunnable(routing.modelsPreset)) {
+    const copy = DEV_PRESET_COPY[routing.modelsPreset];
+    return {
+      message: t('web.dev.err_preset_provider', {
+        preset: copy ? t(copy[0]) : routing.modelsPreset,
+        providers: devPresetProviderLabels(routing.modelsPreset),
+      }),
+      focus: '',
+    };
+  }
   if (devMethodSource() === 'graph') {
     const picked = devSelectedGraph();
     if (!picked) return { message: t('web.dev.err_no_graph'), focus: 'devGraphSelect' };
@@ -1200,8 +1290,12 @@ export function wireDev() {
   if (presetSeg) presetSeg.addEventListener('click', (ev) => {
     const t = /** @type {Element} */ (ev.target);
     // closest() types as Element; the matches are always our <button>s (dataset).
-    const btn = /** @type {HTMLElement | null} */ (t.closest ? t.closest('[data-preset]') : null);
+    const btn = /** @type {HTMLButtonElement | null} */ (t.closest ? t.closest('[data-preset]') : null);
     if (!btn || !devModels.presets) return;
+    // Belt and braces: a disabled <button> fires no click in a browser, but the
+    // delegated listener must not be the only thing standing between a stale
+    // DOM and an impossible POST body.
+    if (btn.disabled || !devPresetRunnable(btn.dataset.preset)) return;
     devModels.preset = btn.dataset.preset;
     devModels.values = presetValues(devModels.roles, devModels.presets, devModels.preset);
     renderDevPresetSeg();

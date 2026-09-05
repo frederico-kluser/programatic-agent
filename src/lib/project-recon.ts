@@ -19,6 +19,8 @@ import {
   defaultHelperModel,
   type LlmClientContext,
 } from './llm-client-factory.js';
+import { specForProvider } from './api-key.js';
+import { resolveRunProvider } from './providers.js';
 
 /**
  * Default recon model — minimax is fast, cheap, and supports function calling,
@@ -136,9 +138,22 @@ export async function runProjectRecon(
 
   // Validate credentials up-front so we fail fast with a single, clear
   // error instead of N parallel per-item failures.
-  const hasCreds = apiKey.length > 0 || Boolean(opts.llmContext?.deepseekApiKey);
+  //
+  // SILENT-SKIP TRAP: this used to test ONLY `llmContext.deepseekApiKey`.
+  // Migrating the contexts to the provider-neutral `apiKey` field without
+  // touching this line would make every recon conclude "no credential" and
+  // abort — with a message naming DeepSeek — for a perfectly configured
+  // OpenRouter run. Both fields are checked, and the message names the
+  // provider the context actually carries.
+  const ctxKey = opts.llmContext?.apiKey ?? opts.llmContext?.deepseekApiKey;
+  const hasCreds = apiKey.length > 0 || Boolean(ctxKey && ctxKey.trim());
   if (!hasCreds) {
-    const message = 'DeepSeek API key missing. Set DEEPSEEK_API_KEY or mount /run/secrets/deepseek_api_key.';
+    const missingSpec = specForProvider(
+      resolveRunProvider(opts.llmContext?.backend ?? 'jcode', opts.llmContext?.provider),
+    );
+    const message = missingSpec
+      ? `${missingSpec.label} API key missing. Set ${missingSpec.envVar} or mount ${missingSpec.secretMountPath}.`
+      : 'API key missing.';
     for (const item of items) {
       opts.onUpdate({ agentId: item.tag, status: 'error', error: message });
     }
@@ -152,9 +167,11 @@ export async function runProjectRecon(
   // consistent than letting each agent see a different snapshot.
   const digest = buildProjectDigest(opts.repoRoot);
 
+  // Provider-NEUTRAL fallback — the legacy `deepseekApiKey` field is honored
+  // only when the resolved provider is `deepseek`.
   const ctx: LlmClientContext = opts.llmContext ?? {
     backend: 'jcode',
-    deepseekApiKey: apiKey,
+    apiKey,
   };
 
   const promises = items.map(async (item): Promise<ReconAgentResult> => {

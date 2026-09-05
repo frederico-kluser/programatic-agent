@@ -218,3 +218,79 @@ describe('runProjectRecon — real mode guards', () => {
     expect(errored.length).toBe(items.length);
   });
 });
+
+/**
+ * The SILENT-SKIP trap, pinned.
+ *
+ * `runProjectRecon` decides "is there a credential?" before doing anything.
+ * That check used to read ONLY the legacy `llmContext.deepseekApiKey`, so
+ * migrating the contexts to the provider-neutral `apiKey` field would have made
+ * every recon conclude "no key" and abort — with a message naming DeepSeek —
+ * for a perfectly configured OpenRouter run.
+ */
+describe('runProjectRecon — the credential check is provider-neutral', () => {
+  let root: string;
+  let originalStubFlag: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'huu-recon-creds-'));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x' }));
+    originalStubFlag = process.env.HUU_LANGCHAIN_STUB;
+    delete process.env.HUU_LANGCHAIN_STUB;
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    if (originalStubFlag === undefined) delete process.env.HUU_LANGCHAIN_STUB;
+    else process.env.HUU_LANGCHAIN_STUB = originalStubFlag;
+  });
+
+  it('accepts a key carried in the NEUTRAL apiKey field (no legacy deepseekApiKey)', async () => {
+    // MUTATION KILLED: reverting the check to
+    // `Boolean(opts.llmContext?.deepseekApiKey)`. With the contexts migrated,
+    // that reads undefined here and the whole recon aborts in silence.
+    // `items: []` keeps this hermetic — the gate runs, no model is called.
+    const results = await runProjectRecon({
+      apiKey: '',
+      repoRoot: root,
+      items: [],
+      llmContext: { backend: 'jcode', provider: 'openrouter', apiKey: 'sk-or-v1-real' },
+      onUpdate: () => {},
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('still accepts the LEGACY deepseekApiKey field (call sites not yet migrated)', async () => {
+    const results = await runProjectRecon({
+      apiKey: '',
+      repoRoot: root,
+      items: [],
+      llmContext: { backend: 'jcode', deepseekApiKey: 'sk-legacy' },
+      onUpdate: () => {},
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('refuses with the CHOSEN provider named — not always DeepSeek', async () => {
+    // MUTATION KILLED: hard-coding the DeepSeek remediation text. An
+    // OpenRouter user told to "set DEEPSEEK_API_KEY" is sent to fix the wrong
+    // credential — the same misdirection the run gate used to produce.
+    await expect(
+      runProjectRecon({
+        apiKey: '',
+        repoRoot: root,
+        items: [],
+        llmContext: { backend: 'jcode', provider: 'openrouter' },
+        onUpdate: () => {},
+      }),
+    ).rejects.toThrow(/OPENROUTER_API_KEY/);
+    await expect(
+      runProjectRecon({
+        apiKey: '',
+        repoRoot: root,
+        items: [],
+        llmContext: { backend: 'jcode', provider: 'deepseek' },
+        onUpdate: () => {},
+      }),
+    ).rejects.toThrow(/DEEPSEEK_API_KEY/);
+  });
+});

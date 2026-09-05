@@ -72,9 +72,13 @@ export function createAssistantChat(opts: CreateAssistantChatOptions): Assistant
   // Build a backend-aware ChatOpenAI client. If a context was passed, use it
   // — that's the correctness path. Otherwise, fall back to DeepSeek with
   // the legacy apiKey field (back-compat for call sites we haven't migrated).
+  // Provider-NEUTRAL fallback: `apiKey` (not the legacy `deepseekApiKey`,
+  // which `buildChatClient` honors only when the resolved provider is
+  // `deepseek` — passing it here would silently drop the credential of an
+  // OpenRouter context).
   const ctx: LlmClientContext = opts.llmContext ?? {
     backend: 'jcode',
-    deepseekApiKey: opts.apiKey,
+    apiKey: opts.apiKey,
   };
   const chat = buildChatClient(ctx, {
     modelId,

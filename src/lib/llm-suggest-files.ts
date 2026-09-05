@@ -214,9 +214,13 @@ export async function suggestFilesForStep(
   const fallbackModel = DEFAULT_ASSISTANT_MODEL;
   const modelId = (input.modelId ?? fallbackModel).trim();
   progress(`Sending request to ${modelId.replace(/^.*\//, '')}…`);
+  // Provider-NEUTRAL fallback: `apiKey` (not the legacy `deepseekApiKey`,
+  // which `buildChatClient` honors only when the resolved provider is
+  // `deepseek` — passing it here would silently drop the credential of an
+  // OpenRouter context).
   const ctx: LlmClientContext = input.llmContext ?? {
     backend: 'jcode',
-    deepseekApiKey: apiKey,
+    apiKey,
   };
   const chat = buildChatClient(ctx, { modelId, temperature: 0.2 });
   const structured = chat.withStructuredOutput(SuggestFilesResponseSchema, {

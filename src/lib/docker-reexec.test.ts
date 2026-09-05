@@ -18,6 +18,7 @@ import {
   dockerMemoryLimitBytes,
 } from './docker-reexec.js';
 import { JCODE_CONTAINER_DIR } from './jcode-bundle.js';
+import { resolveHermeticEnabled } from '../orchestrator/backends/jcode/hermetic.js';
 
 describe('decideReexec', () => {
   function env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -944,5 +945,71 @@ describe('buildDockerArgv jcode bundle mount (readonlyMounts)', () => {
     expect(mounts).toHaveLength(2);
     expect(mounts[0]).toContain('dst=/opt/jcode');
     expect(mounts[1]).toContain('dst=/run/secrets/k');
+  });
+});
+
+// huu is docker-only, so an escape hatch the wrapper does not forward is an
+// escape hatch that does not exist. This regression pins the passthrough to
+// the variable the orchestrator ACTUALLY reads: the list used to carry
+// `HUU_PI_HERMETIC`, a leftover of the deleted pi backend that nothing reads,
+// while `resolveHermeticEnabled` was already keyed on `HUU_JCODE_HERMETIC`.
+//
+// The import reaches "up" into `orchestrator/` on purpose: the contract under
+// test spans both layers, and only the reader can prove which name is live. No
+// production module in `lib/` gains an edge from it.
+describe('buildDockerArgv forwards the hermetic-jcode escape hatch', () => {
+  const baseOpts = {
+    cwd: '/w',
+    image: 'huu:test',
+    cidfile: '/tmp/cid',
+    args: [] as string[],
+    hasTTY: false,
+    uid: 1000,
+    gid: 1000,
+  };
+  const HATCH = 'HUU_JCODE_HERMETIC';
+
+  function withEnv(key: string, value: string, fn: () => void): void {
+    const saved = process.env[key];
+    process.env[key] = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
+  }
+
+  it('forwards the very variable resolveHermeticEnabled reads', () => {
+    // The name is not exported, so prove it behaviorally: this string, and
+    // only this string, flips the hermetic default off.
+    expect(resolveHermeticEnabled({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(resolveHermeticEnabled({ [HATCH]: '0' } as NodeJS.ProcessEnv)).toBe(false);
+
+    withEnv(HATCH, '0', () => {
+      const argv = buildDockerArgv(baseOpts);
+      const i = argv.findIndex((a, idx) => a === '-e' && argv[idx + 1] === HATCH);
+      expect(i, `expected -e ${HATCH}`).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  it('no longer forwards HUU_PI_HERMETIC, which nothing reads', () => {
+    // Not cosmetic: while the dead name occupied the slot the live one was
+    // missing, so `HUU_JCODE_HERMETIC=0 huu` silently ran hermetic anyway.
+    expect(resolveHermeticEnabled({ HUU_PI_HERMETIC: '0' } as NodeJS.ProcessEnv)).toBe(true);
+    withEnv('HUU_PI_HERMETIC', '0', () => {
+      const argv = buildDockerArgv(baseOpts);
+      expect(argv).not.toContain('HUU_PI_HERMETIC');
+    });
+  });
+
+  it('forwards nothing when the hatch is unset on the host', () => {
+    const saved = process.env[HATCH];
+    delete process.env[HATCH];
+    try {
+      expect(buildDockerArgv(baseOpts)).not.toContain(HATCH);
+    } finally {
+      if (saved !== undefined) process.env[HATCH] = saved;
+    }
   });
 });

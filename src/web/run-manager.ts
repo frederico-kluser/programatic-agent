@@ -33,7 +33,10 @@ import {
   type ApiKeySpec,
 } from '../lib/api-key.js';
 import { createKeyPoolHandle, type KeyPoolHandle } from '../lib/api-key-pool.js';
-import { backendToProvider } from '../lib/providers.js';
+import {
+  providerInfo,
+  resolveRunProvider,
+} from '../lib/providers.js';
 import { generateRunId } from '../lib/run-id.js';
 import { resolveRamPercent } from '../lib/budget.js';
 import { noKernelCeilingWarning } from '../lib/ram-doctor.js';
@@ -448,6 +451,16 @@ export class WebRunManager {
     }
 
     const bundle = selectBackend(params.backend);
+    // THE line the whole web credential path hangs on: the provider the
+    // browser picked, honored. `params.provider` used to be accepted, stored
+    // for display, and then ignored here in favor of `bundle.apiKeySpecName`
+    // — so an OpenRouter run resolved the DeepSeek spec: it was refused when
+    // only OPENROUTER_API_KEY existed, and (worse) ran silently against
+    // DeepSeek when only DEEPSEEK_API_KEY existed.
+    const { provider: runProvider, spec: credSpec, label: credLabel } = runCredential(
+      params.backend,
+      params.provider,
+    );
 
     let apiKey = 'stub';
     let keySource: NonNullable<AppConfig['apiKeySource']> = 'none';
@@ -462,8 +475,8 @@ export class WebRunManager {
      */
     let keyPool: KeyPoolHandle | undefined;
     if (bundle.requiresApiKey) {
-      const specName = bundle.apiKeySpecName;
-      const spec = specName ? findSpec(specName) : undefined;
+      const spec = credSpec;
+      const specName = spec?.name;
       // Key precedence for a web run: the key the browser sent with THIS run
       // (validated, session-held) → a key saved via the web ⚙ Options this
       // server session → the env/mount/disk resolver (CLI path). The winning
@@ -477,8 +490,12 @@ export class WebRunManager {
       keySource = picked.source;
       keyNote = describeKeySource(picked.source, apiKey, spec);
       if (!apiKey) {
+        // Names the PROVIDER and its env var: "jcode needs an API key" was
+        // unactionable when the missing credential could be either of two.
+        const who = credLabel || bundle.label;
+        const envVar = spec ? ` (${spec.envVar})` : '';
         throw new Error(
-          `${bundle.label} needs an API key. Save one in ⚙ Options (validated) or paste one in the launch form.`,
+          `${who} needs an API key${envVar}. Save one in ⚙ Options (validated) or paste one in the launch form.`,
         );
       }
       if (spec) keyPool = createKeyPoolHandle(spec, apiKey);
@@ -508,7 +525,10 @@ export class WebRunManager {
       apiKey: apiKey || 'stub',
       modelId: params.modelId,
       backend: params.backend,
-            endpoint,
+      // The choice reaches the orchestrator, so the run spends — and, once the
+      // jcode profile wave lands, TALKS TO — the provider the user picked.
+      provider: runProvider,
+      endpoint,
       apiKeySource: keySource,
     };
 
@@ -833,6 +853,31 @@ export function applyResolverModel(pipeline: Pipeline, modelId?: string): Pipeli
   const trimmed = modelId?.trim();
   if (!trimmed) return pipeline;
   return { ...pipeline, integrationModelId: trimmed };
+}
+
+/**
+ * The credential a web run is about to spend, decided by the PROVIDER.
+ *
+ * This is the seam the whole web credential path hangs on, and it is exported
+ * because the invariant it encodes is the contract:
+ *   · an OpenRouter run asks for `OPENROUTER_API_KEY` and nothing else;
+ *   · a DeepSeek run asks for `DEEPSEEK_API_KEY` and nothing else;
+ *   · a `stub` run asks for nothing at all.
+ *
+ * It replaced `bundle.apiKeySpecName`, which is keyed on the BACKEND — and
+ * `jcode` serves BOTH providers, so that reading resolved every jcode run to
+ * the DeepSeek spec: it refused an OpenRouter run that held a perfectly good
+ * OpenRouter key, and (worse) silently spent the DeepSeek key when that one
+ * happened to exist.
+ */
+export function runCredential(
+  backend: AgentBackendKind,
+  provider?: LlmProvider,
+): { provider: LlmProvider | undefined; spec: ApiKeySpec | undefined; label: string } {
+  const runProvider = resolveRunProvider(backend, provider);
+  if (!runProvider) return { provider: undefined, spec: undefined, label: '' };
+  const info = providerInfo(runProvider);
+  return { provider: runProvider, spec: findSpec(info.apiKeySpecName), label: info.label };
 }
 
 /**

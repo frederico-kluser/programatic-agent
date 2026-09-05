@@ -1,8 +1,8 @@
 ---
 name: running-dev-mode
-description: Covers huu's development mode (src/lib/dev-mode/, `huu dev`, web `/dev`) — the one flow whose step graph is written at RUN TIME. Explains the TWO-RUN epoch (knowledge → plan → execution), the BLIND orchestrator that reads no file and gets a digest agents wrote, why gap specs must be real files committed BEFORE the run, the per-task generator→critic loop (`WorkStep.review`) with severity convergence and forward-default on every failure, per-role model routing (why `z-ai/glm-5.2` can only be the planner), session-namespaced blackboards with resume + orphan branches, the epoch-landing merge, and the MANIFESTO boundary that keeps the planner decomposing instead of inventing scope. Use for any change under src/lib/dev-mode/, src/lib/knowledge-detect.ts, src/lib/model-registry-check.ts, src/web/dev-manager.ts, the `huu dev` CLI, or when debugging a dev session that stalled, refused to start, or planned the wrong thing.
+description: Covers huu's development mode (src/lib/dev-mode/, `huu dev`, web `/dev`) — the one flow whose step graph is written at RUN TIME. Explains the TWO-RUN epoch (knowledge → plan → execution), the BLIND orchestrator that reads no file and gets a digest agents wrote, why gap specs must be real files committed BEFORE the run, the per-task generator→critic loop (`WorkStep.review`) with severity convergence and forward-default on every failure, opt-in per-role model routing with NO registry preflight since v3.0, session-namespaced blackboards with resume + orphan branches, the epoch-landing merge, and the MANIFESTO boundary that keeps the planner decomposing instead of inventing scope. Use for any change under src/lib/dev-mode/, src/lib/knowledge-detect.ts, src/lib/dev-mode/dev-model-policy.ts, src/web/dev-manager.ts, the `huu dev` CLI, or when debugging a dev session that stalled, refused to start, or planned the wrong thing.
 metadata:
-  version: 0.2.0
+  version: 0.2.1
   type: task
 ---
 
@@ -11,11 +11,11 @@ metadata:
 ## When to use
 
 Any change to `src/lib/dev-mode/**`, `src/lib/knowledge-detect.ts`,
-`src/lib/model-registry-check.ts`, `src/web/dev-manager.ts`, the `dev` branch
-of `src/cli.tsx`, or `docs/dev-mode*.md`. Also for debugging: a session that
-stops with `dirty-tree` / `landing-failed` / `empty-plan` /
-`model-preflight-failed`, a plan whose fronts fight over the same files, an
-epoch whose fan-out ran zero agents, or a card stuck in `reviewing`/`fixing`.
+`src/web/dev-manager.ts`, the `dev` branch of `src/cli.tsx`, or
+`docs/dev-mode*.md`. Also for debugging: a session that stops with
+`dirty-tree` / `landing-failed` / `empty-plan` / `graph-invalid`, a plan whose
+fronts fight over the same files, an epoch whose fan-out ran zero agents, or a
+card stuck in `reviewing`/`fixing`.
 
 The per-task critic loop itself is orchestrator machinery — for the loop's
 placement, locking and preemption see working-on-orchestrator; for `review` as
@@ -74,8 +74,10 @@ it is also what keeps a `--stub` session at one run per epoch.
 ### The orchestrator is BLIND — and the digest is the only exception
 
 `planKnowledge`/`planEpoch` are structured-output calls through
-`buildChatClient` → LangChain `ChatOpenAI` → OpenRouter. No tools, no file
-reads, and **no repo digest**: the mechanically truncated file listing the old
+`buildChatClient` → LangChain `ChatOpenAI` → the endpoint of the provider the
+run SELECTED (`src/lib/llm-client-factory.ts` binds `ProviderInfo.defaultBaseUrl`;
+`deepseek` and `openrouter` are both live today). No
+tools, no file reads, and **no repo digest**: the mechanically truncated file listing the old
 planner got is gone. The only thing it ever learns about this repository is
 `digest.md`, which AGENTS wrote from the code, with citations.
 
@@ -143,22 +145,43 @@ Phase C stamps `review` onto each front's implement step (`buildReviewSpec` in
   the standard, the front's task specs, `findingsDir` per front. A vague atlas
   produces vague findings — that is why the atlas prompt demands checkable rules.
 
-### Per-role model routing
+### Per-role model routing (opt-in, and NO preflight since v3.0)
 
 `DevModelRole` = planner · recon · worker · critic · reporter · judge ·
-integration; `DevModelPolicy` is `Partial`, and a role left unset **omits**
-`modelId` on the emitted step so `AppConfig.modelId` stays the one authority.
-No routing at all ⇒ the compiled pipeline is byte-identical to before.
+integration (`ALL_ROLES` in `dev-model-policy.ts` is an exhaustiveness lock —
+adding a role fails compilation there until it is listed). `DevModelPolicy` is
+`Partial`, and a role left unset **omits** `modelId` on the emitted step so
+`AppConfig.modelId` stays the one authority. No routing at all ⇒ the compiled
+pipeline is byte-identical to before, which is why routing is opt-in **at the
+surfaces**: `--models=<preset>` or a per-role flag, never a driver default.
+`defaultDevModelPolicy(backend, preset)` returns `{}` for any backend other
+than `jcode`.
 
-**`z-ai/glm-5.2` can only ever be the `planner`.** The pi registry has no such
-id (`getModel('openrouter', …)` returns `undefined`, and `pi/factory.ts`
-throws on that), while the planner never touches the registry — it is the
-LangChain path. So `preflightDevModelPolicy` checks the six PI-EXECUTED roles
-and excludes `planner` **at the type level** (`Exclude<DevModelRole,'planner'>`)
-— a preflight that checked it would refuse dev mode in its own default preset.
-The check runs at the borders (`dev-cli.ts`, `dev-manager.start()`) so an
-unknown id is a refusal instead of a throw inside the first agent, after its
-worktree already exists.
+A role's value may be an ordered CHAIN of fallback rungs
+(`"a/b, c/d"` → `modelRungs` → `pickModelRung`). The `isKnown` predicate that
+would pick a surviving rung is **injected, and nothing injects one today**, so
+the first rung always wins.
+
+**The model preflight is GONE.** `src/lib/model-registry-check.ts` was deleted
+with the pi backend (`dev-driver.ts:1164` — "Model preflight skipped in v3.0 —
+the model registry is not available. Id validation happens at the factory level
+when the first agent is built"). `DevStopReason` still declares
+`'model-preflight-failed'` but nothing emits it. Consequence to design around:
+an unknown id now fails inside the first agent, after its worktree and branch
+already exist — exactly the failure the preflight existed to move to the border.
+
+Because of that, **the preset ids are unverified against the current provider**.
+`DEV_MODEL_PRESETS` (`src/lib/types/dev-mode.ts:114-134`) routes `planner` to
+`z-ai/glm-5.2` and `critic` to `moonshotai/kimi-k2.6` while every other role
+sits on a `deepseek/…` id — so a preset is only coherent under the provider that
+serves BOTH families. Under `--provider=openrouter` the aggregator routes on the
+vendor prefix and the mixed roster resolves; under `--provider=deepseek` those
+two ids are FOREIGN, and `modelIdForProvider` deliberately leaves a foreign id
+untouched (`src/lib/providers.ts:232-242`) so api.deepseek.com answers "unknown
+model" rather than huu mangling it — which, with the preflight gone, happens
+inside the first agent, after its worktree exists. Re-validate a preset against
+the selected provider before recommending it — and see integrating-llm-backends
+for why a role routed to a foreign provider is a billing bug, not a typo.
 
 `critic` is a distinct role from `judge` on purpose: the judge runs post-merge
 in the integration worktree and routes a step; the critic runs pre-merge in the
@@ -239,19 +262,27 @@ shipped completely unexercised.
 - `src/lib/dev-mode/` (`dev-driver.ts`, `knowledge-blackboard.ts`,
   `knowledge-to-pipeline.ts`, `plan-to-pipeline.ts`, `epoch-evidence.ts`,
   `orphan-branches.ts`, `dev-model-policy.ts`, `dev-protocol.ts`),
-  `src/lib/model-registry-check.ts`, `src/lib/knowledge-detect.ts`,
-  `src/orchestrator/review-agent.ts`, `src/web/dev-manager.ts`
+  `src/lib/knowledge-detect.ts`, `src/lib/types/dev-mode.ts`
+  (`DEV_MODEL_PRESETS`), `src/orchestrator/review-agent.ts`,
+  `src/web/dev-manager.ts`
 - `docs/dev-mode.md` · `docs/dev-mode.pt-BR.md` · `docs/memory-scope.md` ·
   `docs/pipeline-json-guide.md` (the `review` field)
 - Related skills: working-on-orchestrator (the review loop's placement,
   locking and preemption; the finalize git-truth rule),
   authoring-pipelines (the schema the compiler must satisfy),
-  integrating-llm-backends (registry vs LangChain paths, key pool),
+  integrating-llm-backends (the jcode subprocess vs the LangChain helper path,
+  provider layer, key pool),
   orchestrating-git-worktrees (integration branch, landing merge),
   authoring-agent-prompts (planner/front/critic prompts), building-web-ui,
   writing-tests
 
-> Facts verified against source on 2026-07-28.
+>
+> Facts verified against source on 2026-07-28; the v3.0 backend collapse
+> re-verified 2026-09-05 — model preflight and `model-registry-check.ts`
+> deleted, the LangChain path now bound to the SELECTED provider's base URL
+> (`deepseek` and `openrouter` both live), and the knowledge
+> BOOTSTRAP replaced by a warning (`dev-driver.ts:1308-1313`: "knowledge
+> bootstrap is not available in v3.0"). The `pi` backend no longer exists.
 
 ## <evolution>
 

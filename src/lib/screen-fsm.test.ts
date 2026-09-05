@@ -8,6 +8,7 @@ import {
 } from './screen-fsm.js';
 import type { ApiKeySpec } from './api-key.js';
 import type { OrchestratorResult, Pipeline } from './types.js';
+import { resolveRunProvider } from './providers.js';
 
 const pipelineWithoutModels: Pipeline = {
   name: 'no-models',
@@ -26,7 +27,7 @@ const pipelineAllModels: Pipeline = {
 };
 
 function baseState(overrides: Partial<FsmState> = {}): FsmState {
-  return {
+  const merged: FsmState = {
     screen: { kind: 'welcome' } as Screen,
     pipeline: null,
     pipelines: null,
@@ -34,11 +35,18 @@ function baseState(overrides: Partial<FsmState> = {}): FsmState {
     modelId: '',
     conflictResolverModelId: '',
     backendKind: 'jcode',
+    provider: 'deepseek',
     apiKey: '',
     requiresApiKey: true,
     pipelineSourceName: null,
     ...overrides,
   };
+  // The provider is DERIVED from the backend unless a test names one, so a
+  // `baseState({ backendKind: 'stub' })` cannot describe an impossible world
+  // (a keyless stub state still carrying a DeepSeek provider).
+  return 'provider' in overrides
+    ? merged
+    : { ...merged, provider: resolveRunProvider(merged.backendKind) };
 }
 
 describe('screen-fsm', () => {
@@ -74,11 +82,11 @@ describe('screen-fsm', () => {
     it('run.authError opens options focused on the rejected provider', () => {
       const next = reduce(
         baseState({ screen: { kind: 'run', modelId: 'm', apiKey: 'k' }, backendKind: 'jcode' }),
-        { type: 'run.authError', backendKind: 'jcode', specName: 'azureApiKey' },
+        { type: 'run.authError', backendKind: 'jcode', specName: 'deepseek' },
       );
-      expect(next.screen).toEqual({ kind: 'options', focusSpecName: 'azureApiKey' });
+      expect(next.screen).toEqual({ kind: 'options', focusSpecName: 'deepseek' });
       // Backend is carried over so a follow-up run uses the right backend.
-      expect(next.backendKind).toBe('deepseek');
+      expect(next.backendKind).toBe('jcode');
     });
   });
 
@@ -121,7 +129,7 @@ describe('screen-fsm', () => {
         deepseekResolvedKey: '',
         requiresApiKey: true,
       });
-      expect(s.backendKind).toBe('deepseek');
+      expect(s.backendKind).toBe('jcode');
     });
   });
 
@@ -215,6 +223,7 @@ describe('screen-fsm', () => {
       expect(next.screen).toEqual({
         kind: 'resolver-model-selector',
         backendKind: 'jcode',
+        provider: 'deepseek',
         modelId: 'm',
         apiKey: 'k',
       });
@@ -422,7 +431,7 @@ describe('screen-fsm', () => {
         pipeline: pipelineWithoutModels,
         initialBackendSet: true,
       });
-      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode' });
+      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode', provider: 'deepseek' });
     });
   });
 
@@ -461,7 +470,7 @@ describe('screen-fsm', () => {
           firstStepModelId: 'gpt-z',
         },
       );
-      expect(next.backendKind).toBe('deepseek');
+      expect(next.backendKind).toBe('jcode');
       expect(next.requiresApiKey).toBe(false);
       expect(next.modelId).toBe('gpt-z');
       expect(next.screen).toEqual({ kind: 'run', modelId: 'gpt-z', apiKey: 'AK' });
@@ -473,7 +482,7 @@ describe('screen-fsm', () => {
         requiresApiKey: true,
         skipModelSelector: false,
       });
-      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode' });
+      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode', provider: 'deepseek' });
       expect(next.backendKind).toBe('jcode');
       expect(next.requiresApiKey).toBe(true);
     });
@@ -708,7 +717,7 @@ describe('screen-fsm', () => {
         baseState({ screen: { kind: 'api-key', missing: [] } }),
         { type: 'apiKey.cancel' },
       );
-      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode' });
+      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode', provider: 'deepseek' });
     });
   });
 
@@ -728,6 +737,7 @@ describe('screen-fsm', () => {
       expect(next.screen).toEqual({
         kind: 'resolver-model-selector',
         backendKind: 'jcode',
+        provider: 'deepseek',
         modelId: 'm1',
         apiKey: 'AK',
       });
@@ -743,6 +753,7 @@ describe('screen-fsm', () => {
       expect(next.screen).toEqual({
         kind: 'resolver-model-selector',
         backendKind: 'jcode',
+        provider: 'deepseek',
         modelId: 'm1',
         apiKey: 'AK',
       });
@@ -754,7 +765,7 @@ describe('screen-fsm', () => {
         }),
         { type: 'timeout.cancel' },
       );
-      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode' });
+      expect(next.screen).toEqual({ kind: 'model-selector', backendKind: 'jcode', provider: 'deepseek' });
     });
   });
 
@@ -1123,5 +1134,114 @@ describe('screen-fsm', () => {
       reduce(s, { type: 'timeout.submit', minutes: 4 });
       expect(s).toEqual(snapshot);
     });
+  });
+});
+
+/**
+ * The TUI half of the BLOCK: the provider must SURVIVE the provider picker.
+ *
+ * `BackendSelector` computed its "key set / key needed" badge with
+ * `findMissingKeysForProvider(p.id)` — the right function — and then handed the
+ * app only `providerToBackend(p.id)`, which is `'jcode'` for BOTH providers.
+ * The pick died there, one screen before the credential gate read it, so the
+ * badge could say READY for OpenRouter and the very next screen demand
+ * DEEPSEEK_API_KEY.
+ */
+describe('screen-fsm — the provider survives the picker', () => {
+  it('backend.select carries the chosen provider onto the state AND the next screen', () => {
+    // MUTATION KILLED: dropping `provider` from the event (or from the
+    // `backend.select` reducer branch) so the state keeps the previous /
+    // default provider. Both providers map to `jcode`, so `backendKind` alone
+    // cannot tell these two runs apart — this assertion can.
+    const next = reduce(baseState({ screen: { kind: 'backend-selector' } }), {
+      type: 'backend.select',
+      backendKind: 'jcode',
+      provider: 'openrouter',
+      requiresApiKey: true,
+      skipModelSelector: false,
+    });
+    expect(next.provider).toBe('openrouter');
+    expect(next.screen).toEqual({
+      kind: 'model-selector',
+      backendKind: 'jcode',
+      provider: 'openrouter',
+    });
+  });
+
+  it('modelSelector.select keeps the provider, and runDirect carries it too', () => {
+    const afterBackend = reduce(baseState({ screen: { kind: 'backend-selector' } }), {
+      type: 'backend.select',
+      backendKind: 'jcode',
+      provider: 'openrouter',
+      requiresApiKey: true,
+      skipModelSelector: false,
+    });
+    const afterModel = reduce(afterBackend, {
+      type: 'modelSelector.select',
+      modelId: 'anthropic/claude-sonnet-4',
+      requiresApiKey: true,
+      backendKind: 'jcode',
+      provider: 'openrouter',
+      missingKeys: [],
+      resolvedApiKey: 'sk-or-v1-x',
+    });
+    expect(afterModel.provider).toBe('openrouter');
+    expect(afterModel.apiKey).toBe('sk-or-v1-x');
+
+    const direct = reduce(baseState(), {
+      type: 'runDirect',
+      modelId: 'm',
+      backendKind: 'jcode',
+      provider: 'openrouter',
+      missingKeys: [],
+      resolvedApiKey: 'sk-or-v1-x',
+    });
+    expect(direct.provider).toBe('openrouter');
+  });
+
+  it('an event with NO provider keeps the one already chosen', () => {
+    // The skip-model fast path and the resolver screens dispatch without a
+    // provider; forgetting the pick there would resurrect the bug halfway.
+    const s = baseState({ provider: 'openrouter' });
+    expect(
+      reduce(s, {
+        type: 'runDirect',
+        modelId: 'm',
+        missingKeys: [],
+        resolvedApiKey: 'k',
+      }).provider,
+    ).toBe('openrouter');
+  });
+
+  it('a provider the backend cannot serve is never carried (stub keeps NO provider)', () => {
+    // MUTATION KILLED: using `defaultProviderForBackend` instead of
+    // `resolveRunProvider` in the reducer — it falls back to DEEPSEEK for a
+    // backend that serves nobody, giving `--stub` a credential requirement.
+    const next = reduce(baseState({ screen: { kind: 'backend-selector' } }), {
+      type: 'backend.select',
+      backendKind: 'stub',
+      provider: 'openrouter',
+      requiresApiKey: false,
+      skipModelSelector: false,
+    });
+    expect(next.provider).toBeUndefined();
+  });
+
+  it('initialState honors --provider= and derives it otherwise', () => {
+    expect(
+      initialState({
+        deepseekResolvedKey: '',
+        requiresApiKey: true,
+        initialBackend: 'jcode',
+        initialProvider: 'openrouter',
+      }).provider,
+    ).toBe('openrouter');
+    expect(
+      initialState({ deepseekResolvedKey: '', requiresApiKey: true }).provider,
+    ).toBe('deepseek');
+    expect(
+      initialState({ deepseekResolvedKey: '', requiresApiKey: true, initialBackend: 'stub' })
+        .provider,
+    ).toBeUndefined();
   });
 });

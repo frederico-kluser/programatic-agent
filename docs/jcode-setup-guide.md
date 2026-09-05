@@ -3,10 +3,26 @@
 > Tutorial pratico de como instalar e configurar o `jcode` no macOS, Linux e
 > Windows, focado no uso como backend de agentes do huu.
 >
-> Para a documentacao de referencia do backend jcode dentro do huu, veja
-> [`pi-coding-agent.md`](pi-coding-agent.md) (a arquitetura de backends e a
-> mesma) e [`ARCHITECTURE.md`](ARCHITECTURE.md). Para troubleshooting de
-> runtime veja [`troubleshooting.pt-BR.md`](troubleshooting.pt-BR.md).
+> O `jcode` e o unico backend de verdade do huu:
+> `src/orchestrator/backends/registry.ts` declara
+> `AgentBackendKind = 'jcode' | 'stub'`. Ele e um **subprocesso CLI** -- o huu
+> chama `jcode run` com o prompt em `argv`
+> (`src/orchestrator/backends/jcode/factory.ts`, `buildJcodeArgs`), nao um SDK
+> rodando dentro do proprio processo como fazia o backend `pi`, removido. Nao
+> reaproveite instrucoes de [`pi-coding-agent.md`](pi-coding-agent.md): aquele
+> arquivo e so um marcador historico.
+>
+> Para a arquitetura em camadas veja [`ARCHITECTURE.md`](ARCHITECTURE.md); para
+> troubleshooting de runtime,
+> [`troubleshooting.pt-BR.md`](troubleshooting.pt-BR.md).
+>
+> **Backend nao e provedor.** O backend diz *como* o agente roda; o **provedor**
+> diz *para onde* a chamada vai e *qual chave* ela gasta --
+> `LlmProvider = 'deepseek' | 'openrouter'` (`src/lib/providers.ts`). O `jcode`
+> serve os dois. Este guia configura o caminho **DeepSeek**; para rodar pela
+> OpenRouter e so escolher esse provedor (`--provider=openrouter`, ou o seletor
+> da tela de launch) e exportar `OPENROUTER_API_KEY` em vez de
+> `DEEPSEEK_API_KEY` -- o resto da instalacao e identico.
 
 ---
 
@@ -93,12 +109,17 @@ refreshenv
 ## 3. Configuracao do Provider DeepSeek
 
 > **Para usar o jcode DENTRO do huu voce nao precisa fazer nada nesta secao.**
-> O modo hermetico materializa exatamente este conteudo em
-> `~/.huu/jcode-home/config.toml` e aponta `JCODE_HOME` para esse diretorio em
-> todo spawn (`src/orchestrator/backends/jcode/hermetic.ts`), o que faz o
-> `~/.jcode/config.toml` do host ser **ignorado** nas execucoes do huu. O
-> arquivo escrito pelo huu e dele: qualquer edicao manual ali e revertida no
-> proximo spawn. Siga a secao apenas para rodar o `jcode` na mao, fora do huu.
+> O modo hermetico GERA `~/.huu/jcode-home/config.toml` a partir da tabela de
+> provedores (`src/lib/providers.ts`) -- **um bloco `[providers.<perfil>]` por
+> provedor**, o `deepseek-v4-pro` abaixo e mais o `openrouter` -- e aponta
+> `JCODE_HOME` para esse diretorio em todo spawn
+> (`src/orchestrator/backends/jcode/hermetic.ts`), o que faz o
+> `~/.jcode/config.toml` do host ser **ignorado** nas execucoes do huu. Qual
+> bloco vale em cada run e decidido na hora pelo `--provider-profile`, derivado
+> do provedor que voce escolheu. O arquivo escrito pelo huu e dele: qualquer
+> edicao manual ali e revertida no proximo spawn, e ele **nunca** carrega
+> segredo -- so nomeia a variavel de ambiente da chave em `api_key_env`. Siga a
+> secao apenas para rodar o `jcode` na mao, fora do huu.
 
 Crie (ou edite) o arquivo `~/.jcode/config.toml` com o conteudo abaixo. Este
 e exatamente o mesmo arquivo de configuracao usado no projeto t-8000.
@@ -421,7 +442,8 @@ npm start -- --backend=jcode
 
 | Variavel                     | Quem define         | Proposito                                     |
 |------------------------------|---------------------|-----------------------------------------------|
-| `DEEPSEEK_API_KEY`           | Voce (usuario)      | Chave de API do DeepSeek                      |
+| `DEEPSEEK_API_KEY`           | Voce (usuario)      | Chave de API do DeepSeek -- exigida quando o provedor ativo e `deepseek` |
+| `OPENROUTER_API_KEY`         | Voce (usuario)      | Chave da OpenRouter -- exigida quando o provedor ativo e `openrouter`. So UMA das duas e cobrada por run: a chave do outro provedor e removida do env do subprocesso |
 | `JCODE_MEMORY_ENABLED=false` | huu (automatico)    | Desabilita embeddings -- execucao stateless    |
 | `JCODE_NO_TELEMETRY=1`       | huu (automatico)    | Desabilita telemetria externa                 |
 | `JCODE_AGENT_DIR`            | huu (automatico)    | Diretorio de runtime isolado `~/.huu/jcode-agent` |

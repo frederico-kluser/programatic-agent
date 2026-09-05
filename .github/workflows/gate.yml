@@ -21,4 +21,15 @@ jobs:
           git config --global user.name "huu gate"
       - run: npm ci
       - run: npm run build
+      # gate.sh is invoked WHOLE, never step by step: its STEPS registry is the
+      # single list, so a step added there runs here automatically and the two
+      # cannot drift. `bash scripts/gate.sh --list-from-ci` parses this file to
+      # prove it.
+      #
+      # One of those steps is `check-dockerfile`, a STATIC scan for
+      # BuildKit-only Dockerfile syntax. It is static on purpose: a real
+      # `docker build` here would NOT catch the bug it guards, because GitHub
+      # runners ship buildx and would happily build a `RUN --mount` that dies on
+      # a user's factory Docker. A green build on this runner is exactly the
+      # false comfort that let the regression live from the first commit.
       - run: bash scripts/gate.sh

@@ -19,24 +19,25 @@ description: >-
   architectural decision).
 license: MIT
 argument-hint: "[task to plan, e.g. 'add rate limiting to the Express API']"
-allowed-tools: Bash(surf-research-skill:*), Bash(surf-free-skill:*), Bash(surf-plan-skill:*), Read, Glob, Grep, Write, Edit, AskUserQuestion
+allowed-tools: Bash(surf-search-normal:*), Bash(surf-search-unlimit:*), Bash(surf-research-skill:*), Bash(surf-plan-skill:*), Read, Glob, Grep, Write, Edit, AskUserQuestion
 metadata:
-  version: 5.2.0
+  version: 5.3.0
   type: task
-  vendored_from: surf-skill@5.2.0 (skills/surf-plan-skill/SKILL.md)
+  vendored_from: "surf-skill@5.2.0 (skills/surf-plan-skill/SKILL.md) — STRUCTURE ONLY. The research facts below were realigned IN PLACE to surf-agent-skill@8.0.1 on 2026-09-05 and NOT re-vendored: upstream v8 restructured the file into skills/surf-plan-agent-skill/SKILL.md with a different layer taxonomy, so a full re-vendor is still owed."
 ---
 
 # surf-plan — research-grounded execution planning, two depths
 
 You are the agent responding to a plan request. Every plan is **research-grounded**; only some also need a **full ambiguity sweep** (see Mode Decision). This skill exists because unresearched plans go stale, undiscovered code gets duplicated, and unspoken assumptions fail exactly where they're wrong.
 
-## Vendored divergences from upstream (surf-skill@5.2.0)
+## Vendored divergences from upstream (surf-agent-skill@8.0.1)
 
-1. **No `WebSearch`/`WebFetch` rung.** The pi agent inside huu's container has no such tool — Layer B is `surf-free-skill` CLI, Layer C writes a `blocker` finding.
+1. **No `WebSearch`/`WebFetch` rung.** Upstream's Layer B *is* the harness's WebSearch, for the single case where the harness denies Bash. The agent inside huu's container has no such tool, so that rung does not exist here: the ladder is Layer A → Layer A-manual → Layer C.
 2. **`<evolution>` step appended** (required by this repo's task-skill taxonomy).
-3. **Layer C remediation points at huu's key store** (`~/.config/surf/keys.json` materialized from huu's `tavily`/`parallel`/`brave` specs), not the upstream installer.
+3. **Layer C remediation points at huu's key store** — `~/.config/surf/keys.json`, materialized by `ensureSurfKeys()` from huu's registry. huu still writes `tavily`/`parallel` blocks (surf ignores unknown blocks, so a downgrade keeps working), but **only the `brave` key can make research work**: v8 dispatches over Brave alone.
+4. **Layer C never fails the run** (huu rule). Upstream STOPS on exit 78; here the plan is delivered labelled `NOT WEB-RESEARCHED` with a `blocker` finding. Exit 78 is still a CONFIGURATION verdict — never retry it.
 
-Frontmatter `description` is kept VERBATIM from upstream (routing surface); the body below overrides where they differ.
+Frontmatter `description` is the 5.2.0 upstream text, kept as the routing surface and **not** re-vendored — v8 rewrote it. The body below is authoritative wherever they differ (notably: there is no WebSearch fallback in huu's container).
 
 ## THE GATE — two locks
 
@@ -60,11 +61,21 @@ While Lock 2 is closed (Deep mode): **only read/research/ask — no Write/Edit p
 
 ## Research layers — resolve once in Phase 0
 
-Use the first that works; a blocked layer means fall back, never skip.
+Use the first that works; a blocked layer means fall back, never skip. **There are only two working layers plus the halt** — surf v8 searches over **Brave and nothing else**, and there is no keyless tier underneath it (`surf-free-skill` was deleted in v8; do not go looking for it, and never fake a search engine with `curl`).
 
-- **Layer A — `surf-research-skill` CLI (preferred).** Tavily+Parallel+Brave, batching, fan-out, citations. Needs keys at `~/.config/surf/keys.json`.
-- **Layer B — `surf-free-skill` CLI (keyless).** Wikipedia→DuckDuckGo. ONE query per call, encyclopedic only (no SERP/blog/changelog/CVE). Weaker evidence → mark `layer: B (keyless)` in ledger + Risks.
-- **Layer C — neither works.** Fixed action: `blocker` + `NOT WEB-RESEARCHED` + plan from repo knowledge. Never reach for harness `WebSearch`.
+- **Layer A — `surf-search-normal` (preferred).** ONE autonomous wave: an LLM plans the queries, up to `--sub-agents` run at once against Brave, and the LLM writes the cited answer. `surf-search-unlimit` runs as many waves as the question needs — use it only when a single wave demonstrably left the question open.
+- **Layer A-manual — `surf-research-skill search` / `search-parallel`.** Raw ranked links + snippets, no synthesis. Same key, same gate. Use when you want the hits yourself, or when a wave timed out.
+- **Layer C — no usable Brave key, or no CLI at all.** Fixed action: `blocker` finding + `NOT WEB-RESEARCHED` at the top of the plan + plan from repo knowledge. Never reach for harness `WebSearch` (the container has none).
+
+### Exit codes — read the number, not the mood of the text
+
+| Exit | Means | Do |
+|---|---|---|
+| `0` | It ran and answered | Use it |
+| `1` | It ran and found nothing | REAL degradation. Record the emptiness; the same query will not find a page that does not exist |
+| `2` | Your command line is wrong (no query; `--sub-agents` outside 1..20) | Fix the argv |
+| `78` | No usable Brave key — surf exits BEFORE searching | Layer C. Never retry, never "try another provider": there isn't one |
+| `143` | The harness killed the call on its timeout | ONE retry, with a narrower question, `normal` not `unlimit` |
 
 ## Plan-approval modes
 
@@ -88,11 +99,14 @@ surf-plan: Phase 0 (layer) → 1 (project read) → 2 (mode=DEEP) → 3D (ambigu
 ## Phase 0 — resolve research layer
 
 ```bash
-surf-research-skill --version; surf-free-skill --version
+command -v surf-search-normal && command -v surf-research-skill
+surf-research-skill gate   # exit 0 = usable Brave key · exit 78 = none
 ```
-- Both exit 0 → Layer A (fall to B on later key failure).
-- Only `surf-free-skill` exit 0 → Layer B.
-- Neither → Layer C: tell user, record `blocker`, label plan `NOT WEB-RESEARCHED`.
+`gate` is the cheapest question in the system and the ONLY verb that answers **without** a key — ask it first. `--version` exits 0 with no key at all, so it proves installation, never readiness.
+
+- Binaries present **and** `gate` exit 0 → Layer A.
+- Binaries present, `gate` exit 78 → Layer C (no keyless rung exists to fall to).
+- Binaries absent → Layer C: tell user, record `blocker`, label plan `NOT WEB-RESEARCHED`.
 
 ## Phase 1 — project discovery (5–10 min, read-only)
 
@@ -116,11 +130,16 @@ Form an opinion on what you'd ship — that opinion + uncertainty level → Phas
 
 ### Phase 3 — baseline web research (REQUIRED, before conversation)
 
-Layer A (batched):
+Layer A — ONE wave; it plans its own queries across all three angles. The four brief flags are what separate a usable answer from a summary of summaries:
+```bash
+surf-search-normal "<topic>: prevailing approaches, common pitfalls, production/security gotchas" \
+  --task "<what you are building>" --goal "<what you need out of this>" \
+  --insights "<what you already believe>" --deliverable "<the shape of answer you want>"
+```
+Layer A-manual — when you want raw hits instead of a synthesis (up to 3 queries batched in one call):
 ```bash
 surf-research-skill search "<topic> best practices 2026" "<topic> common pitfalls" "<topic> security/production checklist 2026" --max 3 --quiet
 ```
-Layer B (3 separate calls, no batching — drop year terms).
 
 Distill: 3 dominant approaches (1 sentence each), 2–3 common mistakes, 1–2 security/performance gotchas. One ledger row per query.
 
@@ -137,6 +156,9 @@ What you read (cite 2 most relevant files) + what the web says (1 sentence per a
 ### Phase 6 — pre-plan synthesis research (REQUIRED)
 
 ```bash
+surf-search-normal "<chosen approach>: production setup and reference implementations" \
+  --task "<the plan you are about to write>" --goal "confirm the choice survives production"
+# or, for raw hits:
 surf-research-skill search "<chosen approach> production setup 2026" "<chosen architecture> reference" --max 3 --quiet
 ```
 Flag contradictions before writing. **Research lock now open.**
@@ -161,9 +183,9 @@ Record every doubt in the Ambiguity Register. Completeness is the point.
 
 For each ambiguity depending on external facts, launch parallel research:
 ```bash
-surf-research-skill search-parallel --queries-file /tmp/plan-queries.json --concurrency 8 --no-budget --json > /tmp/plan-research.json
+surf-research-skill search-parallel --queries-file /tmp/plan-queries.json --sub-agents 8 --no-budget --json > /tmp/plan-research.json
 ```
-Layer B: one `surf-free-skill search` call per unknown; thinner coverage → unresolved items get ASKED, not assumed. Every option must trace to a ledger row.
+`--sub-agents` is the ONE simultaneity budget (default 10, **max 20**; outside 1..20 exits `2` without searching). `--concurrency` still works as a deprecated alias. Every option must trace to a ledger row; anything research cannot settle gets ASKED, not assumed.
 
 ### Phase 5D — CLARIFY (→ questions + answers)
 
@@ -182,9 +204,9 @@ Embed Ambiguity Register + Research Ledger. Self-check: every Register item Answ
 ## How to research a technical doubt
 
 1. **Query craft:** short and specific (<400 chars). Start wide, narrow if needed. One query per decision.
-2. **Source diversity:** vendor docs · community blog · spec/standard · security advisory · benchmark — 3 hits from same blog = weaker than 1 doc+1 advisory+1 benchmark. Layer B can't diversify; record that.
+2. **Source diversity:** vendor docs · community blog · spec/standard · security advisory · benchmark — 3 hits from same blog = weaker than 1 doc+1 advisory+1 benchmark. One backend means one ranking bias — `--domains` / `--exclude` are how you force diversity; record when you could not get it.
 3. **Conflict resolution:** (a) more recent wins, (b) primary (vendor/spec) wins over secondary (blog/forum), (c) corroborated by 2+ sources wins over outlier. Unresolved → present both + flag conflict.
-4. **Depth:** factual check → `--max 2-3 --quiet`; consequential decision → `--max 3-5` + `extract` the 1-2 load-bearing pages; multiple unknowns → `search-parallel`.
+4. **Depth:** factual check → `surf-research-skill search --max 2-3 --quiet`; consequential decision → a `surf-search-normal` wave (it reads and cites for you), or `--max 3-5` and `curl` the 1-2 load-bearing pages yourself; multiple unknowns → `search-parallel`. **`extract`, `crawl`, `map`, `research` and `usage` were REMOVED in v8** — Brave's search API returns ranked links and snippets, never page content.
 5. **Never present an option you didn't find.** If intuition suggests a 4th option nothing found → search for it explicitly or label "not found in research."
 
 ---
@@ -216,7 +238,7 @@ Concrete paths from Phase 1: `path/to/file.ts:42` — description.
 Numbered, ordered, ≤30 min each. Mark parallelizable. Reference existing utilities.
 
 ## Risks & mitigations
-Include resolved contradictions, flagged unknowns, Layer B/C limitations.
+Include resolved contradictions, flagged unknowns, Layer C limitations (a `NOT WEB-RESEARCHED` plan is a risk, and it belongs here).
 
 ## Verification
 End-to-end test: `npm test` / `pytest` / `cargo test` + manual smoke commands.
@@ -255,10 +277,11 @@ After writing: "Plan written to `<path>`. Review it, then say 'execute the plan'
 ## Anti-patterns
 
 - Presenting plan for approval first, promising to "research during implementation" — inverts the skill.
-- Treating missing `surf-research-skill` as skip permission → Layer B.
-- Reaching for harness `WebSearch` → Layer B is `surf-free-skill`.
-- Failing the run on missing key → degrade evidence, report, never crash.
-- Passing multiple queries to `surf-free-skill` (no batching) or running full Deep sweep on routine 1-file plan.
+- Treating a missing CLI as skip permission → that is Layer C, and Layer C has a fixed, written cost.
+- Hunting for `surf-free-skill`, or reaching for harness `WebSearch` → neither exists in this container.
+- Retrying an exit 78, or "trying another provider" → there is one backend and the key is missing. Only the user can fix it.
+- Failing the run on a missing key → degrade evidence, report, never crash.
+- Running a full Deep sweep on a routine 1-file plan.
 - Inventing options not backed by research · 20 questions at once · 10-question surveys · plan without file paths · fabricated ledger · one citation for every decision.
 
 ## Quick command reference
@@ -271,16 +294,20 @@ surf-plan-skill new "<task>"         # skeleton + path
 surf-plan-skill doctor               # verify CLI + keys
 surf-plan-skill --version / --help
 
-# Research — Layer A (surf-research-skill; needs ~/.config/surf/keys.json)
+# Phase 0 probe — the only verb that answers without a key
+surf-research-skill gate                                          # 0 = key · 78 = none
+
+# Research — Layer A (autonomous wave; needs a brave key in ~/.config/surf/keys.json)
+surf-search-normal "Q" --task "…" --goal "…" --insights "…" --deliverable "…"
+surf-search-unlimit "Q" --sub-agents 10 --max-depth 3             # multi-wave, costlier
+
+# Research — Layer A-manual (raw ranked links, no synthesis)
 surf-research-skill search "Q1" "Q2" "Q3" --max 3 --quiet         # batch baseline
 surf-research-skill search "specific" --max 2 --quiet              # targeted
-surf-research-skill search-parallel --queries-file F.json --concurrency 8 --json  # grounding
-surf-research-skill extract --urls-file U.json --depth advanced --json
-
-# Research — Layer B (keyless: Wikipedia→DuckDuckGo; ONE query per call)
-surf-free-skill search "Q" --max 3 --quiet
-surf-free-skill search "Q" --max 3 --json
-surf-free-skill search "Q" --provider wikipedia --max 3 --quiet
+surf-research-skill search "Q" --domains vendor.com --time year    # force source diversity
+surf-research-skill search-parallel --queries-file F.json --sub-agents 8 --json  # grounding
+# NOT VERIFIED against a live run: every command above is transcribed from
+# `surf-research-skill --help` (8.0.1). No search was executed while editing this file.
 ```
 
 ## Why this skill exists

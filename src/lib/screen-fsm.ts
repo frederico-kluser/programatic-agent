@@ -7,6 +7,7 @@
 // was planned but never built, so this reducer has exactly one consumer.)
 
 import type { ApiKeySpec } from './api-key.js';
+import { resolveRunProvider, type LlmProvider } from './providers.js';
 import type { AgentBackendKind, OrchestratorResult, Pipeline } from './types.js';
 
 export type Screen =
@@ -43,10 +44,21 @@ export type Screen =
   /** Review the (pipeline × project) fan-out before spending RAM and tokens. */
   | { kind: 'run-queue'; modelId: string; apiKey: string }
   | { kind: 'backend-selector' }
-  | { kind: 'model-selector'; backendKind: AgentBackendKind }
+  /**
+   * `provider` rides on the screen next to `backendKind` because the model
+   * CATALOG is provider-scoped: `jcode` serves DeepSeek and OpenRouter, so
+   * filtering by backend alone mixes Claude and DeepSeek entries into one list.
+   */
+  | { kind: 'model-selector'; backendKind: AgentBackendKind; provider?: LlmProvider }
   | { kind: 'api-key'; missing: ApiKeySpec[] }
   | { kind: 'timeout-prompt'; modelId: string; apiKey: string }
-  | { kind: 'resolver-model-selector'; backendKind: AgentBackendKind; modelId: string; apiKey: string }
+  | {
+      kind: 'resolver-model-selector';
+      backendKind: AgentBackendKind;
+      provider?: LlmProvider;
+      modelId: string;
+      apiKey: string;
+    }
   | { kind: 'run'; modelId: string; apiKey: string }
   | { kind: 'summary'; result: OrchestratorResult };
 
@@ -77,6 +89,16 @@ export interface FsmState {
    */
   conflictResolverModelId: string;
   backendKind: AgentBackendKind;
+  /**
+   * The provider the user chose — the axis that names the credential and the
+   * base URL. `undefined` only for a backend that serves none (`stub`).
+   *
+   * It is SEPARATE from `backendKind` on purpose: both `deepseek` and
+   * `openrouter` dispatch to `jcode`, so collapsing the choice into the
+   * backend (what the TUI used to do at `BackendSelector.onSelect`) throws the
+   * user's pick away one screen before the credential gate reads it.
+   */
+  provider: LlmProvider | undefined;
   apiKey: string;
   requiresApiKey: boolean;
   pipelineSourceName: string | null;
@@ -139,6 +161,8 @@ export type FsmEvent =
   | {
       type: 'backend.select';
       backendKind: AgentBackendKind;
+      /** The provider actually picked. Omitted → the backend's first provider. */
+      provider?: LlmProvider;
       requiresApiKey: boolean;
       skipModelSelector: boolean;
       firstStepModelId?: string;
@@ -172,6 +196,8 @@ export type FsmEvent =
       modelId: string;
       requiresApiKey: boolean;
       backendKind: AgentBackendKind;
+      /** Omitted → keep `state.provider` (re-derived against `backendKind`). */
+      provider?: LlmProvider;
       missingKeys: ApiKeySpec[];
       resolvedApiKey: string;
     }
@@ -199,6 +225,8 @@ export type FsmEvent =
       pipeline?: Pipeline;
       /** When set, updates state.backendKind (backend-selector fast path). */
       backendKind?: AgentBackendKind;
+      /** When set, updates state.provider (backend-selector fast path). */
+      provider?: LlmProvider;
       /** When set, overrides state.requiresApiKey (backend-selector fast path). */
       requiresApiKey?: boolean;
     }
@@ -220,7 +248,7 @@ export type FsmEvent =
  */
 function batchLaunchStart(state: FsmState, initialBackendSet: boolean): Screen {
   return initialBackendSet
-    ? { kind: 'model-selector', backendKind: state.backendKind }
+    ? { kind: 'model-selector', backendKind: state.backendKind, provider: state.provider }
     : { kind: 'backend-selector' };
 }
 
@@ -246,6 +274,8 @@ export interface InitialStateOpts {
   initialPipeline?: Pipeline;
   autoStart?: boolean;
   initialBackend?: AgentBackendKind;
+  /** Provider locked from `--provider=`. Absent → the backend's first provider. */
+  initialProvider?: LlmProvider;
   deepseekResolvedKey: string;
   requiresApiKey: boolean;
 }
@@ -262,6 +292,7 @@ export function initialState(opts: InitialStateOpts): FsmState {
     modelId: '',
     conflictResolverModelId: '',
     backendKind: opts.initialBackend ?? 'jcode',
+    provider: resolveRunProvider(opts.initialBackend ?? 'jcode', opts.initialProvider),
     apiKey: opts.deepseekResolvedKey,
     requiresApiKey: opts.requiresApiKey,
     pipelineSourceName: null,
@@ -418,7 +449,11 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
       }
       return {
         ...base,
-        screen: { kind: 'model-selector', backendKind: state.backendKind },
+        screen: {
+          kind: 'model-selector',
+          backendKind: state.backendKind,
+          provider: state.provider,
+        },
       };
     }
     case 'editor.import':
@@ -434,9 +469,11 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
 
     // ── backend-selector ──────────────────────────────────────────────────
     case 'backend.select': {
+      const provider = resolveRunProvider(event.backendKind, event.provider);
       const base: FsmState = {
         ...state,
         backendKind: event.backendKind,
+        provider,
         requiresApiKey: event.requiresApiKey,
       };
       if (event.skipModelSelector) {
@@ -449,7 +486,7 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
       }
       return {
         ...base,
-        screen: { kind: 'model-selector', backendKind: event.backendKind },
+        screen: { kind: 'model-selector', backendKind: event.backendKind, provider },
       };
     }
     case 'backend.cancel':
@@ -553,6 +590,7 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
         ...state,
         modelId: event.modelId,
         backendKind: event.backendKind,
+        provider: resolveRunProvider(event.backendKind, event.provider ?? state.provider),
       };
       if (!event.requiresApiKey || event.backendKind === 'stub') {
         return {
@@ -602,7 +640,7 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
     case 'apiKey.cancel':
       return {
         ...state,
-        screen: { kind: 'model-selector', backendKind: state.backendKind },
+        screen: { kind: 'model-selector', backendKind: state.backendKind, provider: state.provider },
       };
 
     // ── timeout-prompt ───────────────────────────────────────────────────
@@ -630,13 +668,19 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
         pipelines: newPipelines,
         // Offer the optional conflict-resolver model pick before the run; the
         // overlay's cancel (Esc) skips it (resolver inherits the run model).
-        screen: { kind: 'resolver-model-selector', backendKind: state.backendKind, modelId: mid, apiKey: ak },
+        screen: {
+          kind: 'resolver-model-selector',
+          backendKind: state.backendKind,
+          provider: state.provider,
+          modelId: mid,
+          apiKey: ak,
+        },
       };
     }
     case 'timeout.cancel':
       return {
         ...state,
-        screen: { kind: 'model-selector', backendKind: state.backendKind },
+        screen: { kind: 'model-selector', backendKind: state.backendKind, provider: state.provider },
       };
 
     // ── resolver-model-selector ──────────────────────────────────────────
@@ -673,6 +717,7 @@ export function reduce(state: FsmState, event: FsmEvent): FsmState {
       const requiresApiKey = event.requiresApiKey ?? state.requiresApiKey;
       const base: FsmState = {
         ...state,
+        provider: resolveRunProvider(backendKind, event.provider ?? state.provider),
         // runDirect is the single-pipeline skip-model fast path
         pipelines: null,
         projectDirs: [],

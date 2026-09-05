@@ -276,6 +276,8 @@ export const webEn = {
     'Validated against the provider, then kept only in this browser tab — never written to disk.',
   'web.key.validated_session': 'Key validated ✓ — kept in this browser only',
   'web.key.rejected': 'Key rejected (HTTP {status}). Check it and paste again.',
+  'web.key.wrong_provider':
+    'That is a {label} key — not saved. Pick {label} as your provider, or paste the right key.',
   'web.key.unverified': "Couldn't verify the value ({reason}) — using it for this session anyway.",
 
   'web.history.title': 'Run history',
@@ -313,19 +315,19 @@ export const webEn = {
   'web.settings.ram_hint':
     'Share of total RAM huu may use across ALL concurrent runs on this machine (10–95). Applied IMMEDIATELY to running and queued runs, persisted on the server, and enforced by the pressure guard (the topbar chip shows the live value). Higher = more parallelism, thinner safety margin; the rest is reserved for the OS. Empty = 70%.',
   'web.settings.ram_applied': 'RAM budget: {percent}% — applied to all runs now',
-  'web.settings.keys': 'OpenRouter API keys',
+  'web.settings.keys': 'Provider API keys',
   'web.settings.checking': 'Checking…',
   'web.settings.validate_add': 'Validate & add',
   'web.settings.validating': 'Validating…',
   'web.settings.keys_hint':
-    'Checked against OpenRouter first — a rejected key is never saved. A valid key joins the pool and is used by every new run (this session and future huu starts); this tab starts using it immediately. With more than one key huu rotates per attempt, skipping burned and cooling ones. Validation results and any run problem are also logged in the terminal running huu.',
+    'Checked against the selected provider first — a rejected key, or one that belongs to a different provider, is never saved. A valid key joins the pool and is used by every new run (this session and future huu starts); this tab starts using it immediately. With more than one key huu rotates per attempt, skipping burned and cooling ones. Validation results and any run problem are also logged in the terminal running huu.',
   'web.settings.in_use': 'in use',
   'web.settings.remove_key': 'Remove this key from the pool',
   'web.settings.pool_count_one': '{count} key in the pool · huu rotates per attempt, skipping burned and cooling ones.',
   'web.settings.pool_count_other': '{count} keys in the pool · huu rotates per attempt, skipping burned and cooling ones.',
   'web.settings.pool_reset': 'reset burned / cooldowns',
   'web.settings.pool_reset_done': 'Burned keys and cooldowns cleared',
-  'web.settings.no_key': 'No OpenRouter key yet — paste one below.',
+  'web.settings.no_key': 'No {label} key yet — paste one below.',
   'web.settings.active_key': '✓ Active: {masked} — {source}',
   'web.settings.clear_saved': 'clear saved key',
   'web.settings.env_ignored':
@@ -333,12 +335,14 @@ export const webEn = {
   'web.settings.session_key':
     'This tab holds a validated session key and sends it with runs launched here.',
   'web.settings.status_unavailable': 'Key status unavailable: {message}',
-  'web.settings.paste_first': 'Paste an OpenRouter key first.',
+  'web.settings.paste_first': 'Paste a {label} key first.',
+  'web.settings.key_wrong_provider':
+    'That is a {label} key, not a {expected} key — nothing was saved.',
   'web.settings.key_rejected':
-    'OpenRouter rejected this key (HTTP {status}) — nothing saved. Check it and paste again.',
+    '{label} rejected this key (HTTP {status}) — nothing saved. Check it and paste again.',
   'web.settings.key_saved': 'Key validated ✓ and saved — every new run will use it',
   'web.settings.key_unverified':
-    "Couldn't reach OpenRouter to verify ({reason}) — key saved anyway; runs will try it.",
+    "Couldn't reach {label} to verify ({reason}) — key saved anyway; runs will try it.",
   'web.settings.key_removed': 'Key removed from the pool',
   'web.settings.key_cleared': 'Saved key cleared',
   'web.settings.key_cleared_note': 'Saved key cleared — {note}',
@@ -434,6 +438,12 @@ export const webEn = {
   'web.dev.method.chainOfVerification.label': 'Claim verification',
   'web.dev.method.chainOfVerification.desc':
     'In the knowledge phase, a second agent re-checks every claim against the repo and demotes what it cannot reproduce — nothing invented reaches the plan.',
+  // The side effect is IN the description on purpose. `--debate` is the only
+  // option that adds no rubric and no gate of its own, so the critic switching
+  // to HOLD is a behaviour the user gets without asking unless it is said here.
+  'web.dev.method.debate.label': 'Adversarial debate',
+  'web.dev.method.debate.desc':
+    "Two agents from different model families argue this epoch's design decisions before any front starts, and an anonymized judge rules — capped at two rounds. Like every option here, it also makes a blocked task wait for a human instead of waiving at the round cap.",
   /* WHO WRITES THE TOPOLOGY. Either the LLM planner decomposes the goal (what
      dev mode has always done), or huu compiles a method the human DREW on the
      canvas. The two are exclusive, and the drawing wins whenever it is set. */
@@ -488,6 +498,8 @@ export const webEn = {
   'web.dev.err_no_goal': 'Write the goal first',
   'web.dev.err_no_model': 'Pick a model for every role',
   'web.dev.err_no_dir': 'Pick the project folder',
+  'web.dev.err_preset_provider':
+    'The “{preset}” preset only runs on {providers} — switch the provider, or pick a preset this one serves.',
   'web.dev.session_started': 'Session started ({id})',
   'web.dev.row_goal': 'Goal',
   'web.dev.row_project': 'Project',
@@ -549,6 +561,12 @@ export const webEn = {
     'Front verification and the epoch gate. Every check has a forward default outcome, so a judge that fails APPROVES SILENTLY — the one place to keep the strong model.',
   'web.role.integration': 'Integration',
   'web.role.integration_hint': 'The merge-conflict resolver.',
+  'web.role.advocate': 'Advocate',
+  'web.role.advocate_hint':
+    "Writes the epoch's decision record when the adversarial debate is on. Used only with the Adversarial debate option — and it must NOT share a family with the prosecutor, or the debate is one model talking to itself.",
+  'web.role.prosecutor': 'Prosecutor',
+  'web.role.prosecutor_hint':
+    'Attacks that record, one verdict per decision. The other half of the debate pair — route it to a different family from the advocate.',
 
   'web.preset.hetero': 'Hetero ★',
   'web.preset.hetero_hint':
@@ -559,9 +577,14 @@ export const webEn = {
   'web.preset.monoculture': 'Monoculture',
   'web.preset.monoculture_hint':
     "A/B BASELINE, not a recommendation: every role — including the critic — on the worker's own model. This is precisely the configuration the evidence flags as the most fragile; it exists so the cross-family critic can be measured against it.",
+  'web.preset.roster': 'Roster',
+  'web.preset.roster_hint':
+    'One endpoint, five vendors: the strongest model on the judge (whose failure is silent), the prosecutor cross-family from the workers, and the cheap flash model on the fan-out.',
   'web.preset.uniform': 'Uniform',
   'web.preset.uniform_hint':
     'Every role on the same model — whatever the worker field holds. The pre-routing behavior.',
+  'web.preset.needs_provider':
+    'Not available on this provider: these ids are served by {providers}.',
 
   /* ── The method canvas (/graph) ────────────────────────────────────────────
      Chrome only. Every RULE the canvas states — why a connection was refused,

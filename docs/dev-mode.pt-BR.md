@@ -225,6 +225,8 @@ perceber.
 | `--traceability` | Monta a matriz bidirecional requisito ↔ evidência depois do fan-out e barra órfão não declarado. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--characterize` | Fotografa o comportamento observável de hoje antes de mudar qualquer coisa, e depois o congela. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--verify-claims` | Re-verifica cada afirmação do conhecimento contra o repositório e rebaixa o que não se reproduz. Veja [Opções de metodologia](#opções-de-metodologia). |
+| `--debate` | Põe dois agentes de famílias de modelo diferentes para discutir as decisões de design da época antes das frentes, julgados por uma rubrica anonimizada. Veja [Opções de metodologia](#opções-de-metodologia). |
+| `--advocate-model <id>` / `--prosecutor-model <id>` | Roteia os dois lados do `--debate`. Ponha-os em **famílias diferentes** — veja [Debate adversarial](#debate-adversarial---debate). |
 
 ## As duas fases
 
@@ -276,33 +278,140 @@ pool de workers. Uma frente que declara `dependsOnFronts` espera o juiz da
 outra — o compilador ordena as frentes topologicamente e quebra ciclos
 soltando arestas (com aviso) em vez de perder a época.
 
+## O pesquisador sob demanda (lacunas `external`)
+
+Uma lacuna de conhecimento declara uma **pista** — `repo`, `convention` ou
+`external` — e a pista é escrita no arquivo de spec daquela lacuna, não no
+prompt compartilhado da etapa. É isso que permite mandar um agente da onda
+pesquisar na web enquanto o vizinho é proibido de fazê-lo. `external` é o
+pesquisador sob demanda: quando uma dúvida material não pode ser respondida a
+partir deste código, um agente barato vai olhar e volta com **evidência
+citada**.
+
+### O que ele roda
+
+A pista nomeia o CLI instalado com exatidão, porque uma spec que descreve outra
+ferramenta custa ao agente o card inteiro só para descobrir a verdade:
+
+```bash
+surf-research-skill gate            # exit 0 = há chave utilizável · exit 78 = não há
+surf-search-normal "<uma pergunta>" \
+  --task "…" --goal "…" --insights "…" --deliverable "…"
+surf-research-skill search "Q1" "Q2" "Q3"   # links crus, sem síntese
+```
+
+`gate` é a sonda porque é o único verbo que responde **sem** chave. Os quatro
+flags de briefing são o que separa uma resposta utilizável de um resumo de
+resumos. `--sub-agents` controla o leque: padrão 10, **máximo 20**.
+
+Existe **um** backend de busca e **nenhum degrau sem chave**. Chave ausente não
+é um caminho lento: é o fim da estrada.
+
+> **O container fixa a própria versão do surf** (`ARG SURF_VERSION` no
+> `Dockerfile`), então o CLI dentro de uma imagem pode ser mais antigo que o da
+> sua máquina. A spec trata disso em vez de supor: se o `gate` voltar como
+> comando desconhecido, o agente cai para `surf-research-skill search "…"`, usa
+> o que vier e registra a divergência em `unknowns` — um achado real sobre a
+> imagem, não um motivo para concluir que não há web.
+
+### O exit code decide o que acontece depois
+
+| Código | Significado | Repetir? |
+| --- | --- | --- |
+| `0` | Respondeu. | — |
+| `1` | Rodou e não achou nada. Degradação real, não configuração quebrada. | Não |
+| `2` | A linha de comando estava errada (`--sub-agents` fora de 1..20). | Corrija o argv |
+| `78` | Sem chave de busca utilizável — emitido *antes* de rodar qualquer coisa. | Nunca |
+| `143` | O harness matou a chamada no timeout. | Uma vez, mais estreito |
+
+Quem é dono dessa tabela é o `classifySurfExit()`
+(`src/lib/surf-research.ts`), para que o prompt e o código não possam discordar
+sobre quais falhas vale a pena repetir.
+
+### Sem chave, o huu registra a ausência — nunca inventa uma
+
+O `ensureSurfKeys()` reporta `searchReady` separado de `written`: uma máquina
+configurada com uma chave legada realmente ganha um `keys.json`, e mesmo assim
+a pesquisa não roda. O agente é instruído a escrever os dois arquivos do
+briefing do mesmo jeito, com `facts` vazio, `sources` vazio,
+`confidence: "low"` e a ausência escrita em `unknowns` — *"`surf-research-skill
+gate` saiu 78, então nada aqui foi verificado contra a web"*. O digest então
+renderiza aquela seção dizendo **nada aqui foi verificado contra a web**.
+Fabricar URL é proibido de forma explícita: ninguém a jusante consegue conferir
+uma citação contra a web, então uma fonte plausível-e-errada sobrevive até o
+fim da sessão.
+
+### Conteúdo da web é DADO, nunca instrução
+
+Esta é a parte que protege você. Texto vindo da web é escrito por gente que o
+huu não consegue auditar, e ele viaja: para o contexto do pesquisador, para o
+briefing dele, para o digest consolidado e, por fim, para o prompt do
+**planejador cego** — debaixo de uma frase que manda *tratar o que está ali
+como verdade*. Isso é
+[injeção indireta de prompt](https://arxiv.org/abs/2302.12173): o atacante
+nunca fala com o huu, basta colocar uma frase numa página que um agente vá ler.
+Defesas só no nível do prompt não são herméticas
+([AgentDojo](https://arxiv.org/abs/2406.13352)), então o huu faz a coisa de
+forma estrutural além de textual — o formato que o
+[CaMeL](https://arxiv.org/abs/2503.18813) descreve, mantendo o caminho do dado
+fora do caminho do controle, com a
+[hierarquia de instruções](https://arxiv.org/abs/2404.13208) declarada no texto
+por cima:
+
+1. **Cercado.** Toda resposta `external` é embrulhada em
+   `<<<HUU-UNTRUSTED-WEB-DATA>>>` … `<<<END-HUU-UNTRUSTED-WEB-DATA>>>`, e os
+   sentinelas são removidos do conteúdo — então o texto nunca consegue fechar a
+   própria cerca e continuar como prosa confiável.
+2. **Marcado linha a linha.** Toda linha lá dentro recebe o prefixo `| `.
+   Nenhuma linha da web começa na coluna zero, então nenhuma forja um
+   `## título` ou um `=== SEÇÃO ===` no documento onde cai. Nada se perde: cada
+   palavra sobrevive.
+3. **Neutralizado e contado.** Imperativos de override, marcadores de turno
+   forjados (`<|im_start|>`) e reatribuições de papel viram um marcador visível
+   `[huu-neutralized:…]` — nunca são apagados. A seção então diz quantos
+   dispararam, de modo que um ataque é *relatado*, não limpo em silêncio.
+4. **Ordenado.** A regra que explica a cerca vem **antes** dela: uma instrução
+   colocada depois de texto não confiável é justamente a que esse texto tem
+   mais facilidade de contornar.
+
+Seções `repo` e `convention` deliberadamente **não** são cercadas. A cerca é o
+sinal, e um marcador em toda seção deixaria de significar qualquer coisa.
+
+O agente roda a busca sozinho, então o huu nunca vê o stdout do CLI e não
+consegue cercá-lo. Essa fronteira é coberta por uma ordem permanente na spec:
+um resultado que manda o agente mudar de tarefa, pular a spec ou reportar
+sucesso é um **ataque**, e a resposta é terminar o trabalho combinado e nomear
+a fonte em `unknowns`. Relatar vale mais do que a resposta que aquilo tomaria o
+lugar.
+
 ## Opções de metodologia
 
-Doze checkboxes no formulário de dev (o fieldset **Methodology**, logo
-acima de *How it runs*) e doze flags equivalentes no CLI. Cada uma é o humano
+Treze checkboxes no formulário de dev (o fieldset **Methodology**, logo
+acima de *How it runs*) e treze flags equivalentes no CLI. Cada uma é o humano
 subscrevendo um pedaço do *método*, além do objetivo: a opção muda a
 **estrutura** que o compilador da época emite (split de passo, portão de merge
 determinístico, rubrica no crítico, passo de validação antes do fan-out),
 nunca os campos que um modelo pode produzir — os schemas do planejador
 continuam sem `steps`, `dependsOn` ou caminhos de arquivo.
 
-São cinco mecanismos e toda opção é montada a partir deles: um passo novo
+São seis mecanismos e toda opção é montada a partir deles: um passo novo
 (`--tdd`, `--characterize`), um check novo com loop-back (`--plan-review`,
 `--traceability`), uma rubrica acrescentada ao crítico (`--standards`,
 `--write-set`, `--diff-budget`, `--fitness`, `--changelog`, `--checklist`), um
 comando acrescentado ao portão de merge determinístico (`--lint-gate`,
-`--fitness`, `--diff-budget`, `--changelog`) e uma cláusula acrescentada ao
-juiz da frente (`--tdd`, `--write-set`, `--characterize`). O portão de merge e
-as cláusulas do juiz ACUMULAM — várias opções contribuem para cada um,
-encadeadas na ordem em que são declaradas, de modo que nenhuma opção apaga a
-outra em silêncio.
+`--fitness`, `--diff-budget`, `--changelog`), uma cláusula acrescentada ao
+juiz da frente (`--tdd`, `--write-set`, `--characterize`) e — só no `--debate`
+— um BLOCO de passos antes do fan-out mais o bloco de prompt que entrega a
+saída dele às frentes. O portão de merge e as cláusulas do juiz ACUMULAM —
+várias opções contribuem para cada um, encadeadas na ordem em que são
+declaradas, de modo que nenhuma opção apaga a outra em silêncio.
 
 `--verify-claims` é a única que mexe na fase de CONHECIMENTO em vez da fase de
 execução: insere um passo de verificação entre responder e consolidar, e
 rebaixa para `unknowns` o que não se reproduz em vez de falhar — todo caminho
 de saída da Fase A continua para a frente.
 
-**As doze ficam OFF por padrão.** Uma sessão sem nenhuma delas compila
+**As treze ficam OFF por padrão.** Uma sessão sem nenhuma delas compila
 exatamente o pipeline de hoje, byte a byte — o mesmo contrato aditivo da
 política de modelos por papel. O que cada uma impõe, mecanicamente:
 
@@ -501,6 +610,135 @@ Ele **rebaixa, nunca falha e nunca apaga**. Afirmações não verificadas saem d
 para que o agente sempre tenha onde ser honesto — e `confidence` só pode
 descer. É isso que mantém todo caminho de saída da Fase A para a frente: não
 existe CheckStep nesta fase de propósito, e este passo não é um.
+
+### Debate adversarial (`--debate`)
+
+A única opção cujos passos são **agentes discutindo**. Entre o recon global e
+as frentes, o compilador insere três nós:
+
+```
+0. Recon do objetivo
+├─ Sustentar as escolhas    escreve .huu/dev/<sessão>/epoch-N/debate/A.md
+├─ Contestar as escolhas    lê A.md, escreve B.md
+└─ Debate resolvido?        convergiu ↦ o recon da primeira frente (DEFAULT)
+                            contestado ↦ Sustentar as escolhas (mais uma rodada)
+```
+
+**A** é o registro de decisões: no máximo seis decisões, cada uma com a
+alternativa que rejeita, o porquê (apontando para um caminho real, o atlas ou o
+objetivo) e a observação que provaria que a escolha está errada, mais os riscos
+que a época aceita de propósito. **B** ataca: um veredito por id de decisão —
+`SUSTENTADA` ou `CONTESTADA` — e, atrás de cada contestada, uma falha prevista
+e evidência que dá para apontar. Nenhum dos lados pode editar o arquivo do
+outro.
+
+**Como o resultado chega nas frentes.** O único canal passo→passo que o huu
+tem é o sistema de arquivos da worktree de integração, e só depois de
+*commitado* — o texto do veredito de um juiz nunca chega ao prompt do passo
+seguinte. Nada no huu injeta a `reason` de um check em prompt nenhum, então
+todo portão deste arquivo agora diz isso com as próprias palavras: um veredito
+`rework` ou `contestado` é o **registro** de por que o passo voltou, lido por
+um humano no card do check e no log da run, não uma mensagem entregue ao agente
+que re-roda. (Três portões afirmavam o contrário — "esse texto é a única coisa
+que os agentes de retry recebem" — e essa afirmação era herdada, não trazida
+por esta opção.) Então o recon de cada frente (a) **espera o portão do debate**, que é
+o que coloca os dois briefs na árvore de onde a worktree dele sai, e (b) é
+instruído a ler os dois pelo caminho. Decisão marcada `SUSTENTADA` está
+resolvida e o recon a implementa; decisão marcada `CONTESTADA` é *risco
+aceito*, que tem de ser nomeado no "Context" do spec afetado — nunca licença
+para redesenhar. É no recon que isso aterrissa porque é o recon que escreve os
+specs; quando um worker lê o spec dele, a decisão já está dentro.
+
+**A rubrica do juiz é anonimizada por MODELO — e só por modelo.** Ele nunca é
+informado de qual agente nem de qual **modelo** escreveu cada brief, e o prompt
+do portão não contém nenhuma string de fornecedor, família ou modelo. Ele *é*
+informado de qual arquivo é o registro e qual é o ataque, porque o **papel é
+estruturalmente impossível de esconder**: os dois arquivos respondem perguntas
+diferentes, e as próprias cláusulas do portão precisam ler um como registro e o
+outro como ataque para poder compará-los. Anonimato de papel nunca esteve em
+oferta aqui; o de modelo está, e é a propriedade que combate o viés de família.
+Os arquivos se chamam `A.md` e
+`B.md` e nada mais, porque um nome de arquivo não é algo que se possa pedir a
+um modelo para desver; os dois escritores recebem o *mesmo* esqueleto de saída
+e a *mesma* proibição de nomear o modelo por trás deles (sem modelo, sem
+fornecedor, sem assinatura — mais, por asseio e não como propriedade alegada,
+sem nome de papel), então também não dá para distingui-los pela forma; e
+a rubrica nega tamanho, ordem e confiança como evidência, nominalmente. O
+veredito é sobre o **estado do registro**, não sobre um vencedor: não existe
+resultado "o advogado ganhou" para rotear, porque um debate que escolhe
+vencedor seria uma IA decidindo o design. As cláusulas do portão são
+comparações de conjunto — toda decisão tem veredito, toda contestada tem
+evidência e resolução — mais uma cláusula de anonimato que ele consegue
+resolver sem saber a resposta.
+
+**Heterogeneidade é o mecanismo, não um detalhe.** Os dois lados são papéis
+separados (`advocate`, `prosecutor`) justamente para poderem ir a famílias
+diferentes: o resultado publicado sobre debate multiagente ingênuo é que ele
+com frequência não supera um chain-of-thought simples, e cross-family é a
+alavanca que muda isso. Todo preset menos o `monoculture` — que é a linha de
+base deliberada do A/B — os separa; o `roster` usa o par que o documento do
+roster nomeia (Claude Opus 5 e GPT-5.6 Sol, ambos já naquele roster, então a
+opção não lhe custa fornecedor novo). Deixe-os sem rota e os dois caem no
+modelo da run: o huu compila o debate assim mesmo e **avisa** que é um modelo
+falando sozinho. Dito, não escondido: no `roster` o juiz e o advogado são o
+mesmo modelo, que é exatamente por que a rubrica é anonimizada — roteie
+`--judge-model` para uma terceira família se quiser independência total.
+
+**`writes` aqui DECLARA uma superfície; não a impõe.** Os dois passos do debate
+levam `writes: ['<epoch>/debate/**']`, e vale ser exato sobre o que isso compra.
+O huu usa `writes` num lugar só: o `validateTopology` rejeita dois passos
+*concorrentes* cujos globs se cruzam. O promotor `dependsOn` o advogado, então
+eles nunca são concorrentes e essa checagem não tem par para comparar; a
+checagem de partição em runtime também retorna cedo, porque cada passo declara
+`files: []` e portanto abre exatamente uma tarefa. Nenhum dos dois agentes tem
+o toolset restrito, nenhum dos passos declara crítico, e os diffs deles
+mergeiam sem portão — a mesma forma que o `0. Recon do objetivo` tem desde que
+o dev mode existe, então não é buraco novo, mas a declaração é documentação de
+intenção, não sandbox. O que de fato mantém cada agente fora do arquivo do
+outro é o prompt ("nunca edite `A.md`") mais o fato de rodarem em ondas
+diferentes.
+
+**O teto é de 2 rodadas**, e o teto segue para a frente. `contestado`
+re-pendura todo o cone a jusante do advogado, então cada rodada extra custa uma
+época inteira de execuções de nó; bater no teto toma o default para a frente
+com o registro como está, igual a todos os outros portões daqui.
+
+**Com `--plan-review`, um rework de plano NÃO re-discute o debate.** As duas
+opções se sobrepõem num loop, e sozinha a sobreposição era fatal, não lenta. O
+`Plano validado?` manda o `rework` de volta para um passo cujo *cone a jusante
+inteiro* é re-pendurado; com o debate pendurado no recon global, esse cone
+continha os dois debatedores, então todo rework de plano pagava a discussão
+inteira de novo — e o `runDagWaves` responde a um teto estourado com erro de
+run, o que significa que a época é **perdida** depois de todo agente até ali já
+ter sido pago. Então, com `--debate` ligado, o `rework` mira um nó abaixo: no
+**portão** do debate. A cobertura é idêntica (todo recon de frente da primeira
+onda já espera esse portão, então os specs, a auditoria e o próprio check
+continuam sendo re-pendurados) e os briefs discutidos sobrevivem. Isso é tanto
+uma declaração de escopo quanto de orçamento: o portão do plano julga os
+*specs*, o debate julga o *design*, e dois specs colidindo num arquivo não é
+motivo para reabrir em que design a época se apoia. Medido replayando o loop de
+ondas real com quatro frentes, isso levou o pior caso de
+`tdd+planReview+traceability+characterization+debate` de 85 execuções de nó
+para 79.
+
+**O próprio teto foi re-medido.** O `maxNodeExecutions` de uma época compilada
+agora é **96**, não 50. O número antigo carregava uma estimativa de cabeça ("4
+frentes + cauda + loops de rework ≈ 26") que tinha desviado feio: replayando o
+`runDagWaves` sobre todas as 2¹³ combinações de metodologia no máximo de quatro
+frentes, com todo portão tomando o braço para trás até o próprio `maxRuns`
+forçar o default para a frente, o pior caso é **70 sem `--debate` nenhum** e
+**79 com ele**. Ou seja, 50 já estava ~20 curto para combinações que existiam
+antes do debate. Um teste (`the node-execution budget`, em
+`plan-to-pipeline.test.ts`) agora replaya esse loop para toda combinação e
+falha se alguma deixar de caber, então uma metodologia nova não consegue
+reintroduzir o estouro em silêncio.
+
+**E ele também põe o crítico em HOLD** — veja a próxima seção. O `--debate` não
+acrescenta rubrica de crítico nem portão de merge próprio, então esse é o único
+comportamento que você ganha dele sem pedir: com `--debate` ligado, a tarefa
+cujo crítico chega ao teto de rodadas com achados bloqueantes abertos é
+estacionada para um humano em vez de sofrer waive. Isso está dito na descrição
+da flag, no checkbox da web e aqui.
 
 ### O escape: bloqueio segura para um humano, nunca waive silencioso
 

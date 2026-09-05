@@ -9,8 +9,8 @@
 # Added checks (M2-05):
 # - Closed vocabulary: LEARNINGS.md entries must match the canonical format.
 # - TTL freshness: warn if skill files are >30d stale, fail if >90d.
-# - Backend names: grep skill bodies for backend-kind references, verify
-#   against src/orchestrator/backends/registry.ts.
+# - Removed-backend liveness: grep SKILL.md bodies + catalog.md for a FIXED
+#   historical vocabulary (pi, azure, ...) asserted as a LIVE backend.
 # Exits non-zero on any violation.
 set -uo pipefail
 
@@ -110,45 +110,72 @@ for dir in "$skills"/*/; do
   fi
 done
 
-# ---- M2-05: Backend name consistency check ----
-# Extract valid backend kind names from registry.ts and verify that any
-# backend-kind references in skill bodies are covered.
+# ---- M2-05: Removed-backend liveness check ----
+# A skill BODY must not present a backend huu has REMOVED as if it were live.
+#
+# The previous version of this check built its grep alternation FROM the valid
+# kinds extracted out of registry.ts, so it could only ever search for names
+# that were already valid: its `err` branch was unreachable, and
+# `AgentBackendKind = 'pi' | 'azure' | 'stub'` sat in a SKILL.md for weeks
+# while this script printed OK. The vocabulary below is therefore FIXED and
+# HISTORICAL — never derived from the current set. registry.ts is consulted
+# only to UN-flag a name that has been re-added (then it is live again).
+#
+# Scope: SKILL.md bodies + catalog.md ONLY. LEARNINGS.md is a dated,
+# append-only journal; a 2026-06 entry describing the `pi` backend is a correct
+# record of what was true then, not a claim about today.
+#
+# A false positive is worse than a missed one here (`pi` is a common syllable:
+# pipeline, pi-coding-agent, mapping), so only UNAMBIGUOUS liveness assertions
+# fail, and any line that frames the name as past/removed is let through.
+historical_kinds="pi azure azure-openai azure-foundry copilot"
 registry="$root/src/orchestrator/backends/registry.ts"
+removed_alt=""
 if [ -f "$registry" ]; then
-  # Collect valid backend kind strings (union type + ALL_BACKENDS + aliases from parseBackendKind)
   valid_kinds_tmp=$(mktemp)
-  # The union type: 'pi' | 'azure' | 'stub'
   grep -oE "'[a-z][a-z0-9-]*'" "$registry" | tr -d "'" | sort -u > "$valid_kinds_tmp"
-  # Also capture parseBackendKind aliases (words after 'return')
-  grep -oP "return '[a-z][a-z0-9-]*'" "$registry" | sed "s/return '//;s/'//" >> "$valid_kinds_tmp"
-  grep -oP "return '[a-z][a-z0-9-]*'" "$registry" | sed "s/return '//;s/'//" >> "$valid_kinds_tmp"
-  sort -u -o "$valid_kinds_tmp" "$valid_kinds_tmp"
-
-  for dir in "$skills"/*/; do
-    name="$(basename "$dir")"
-    for f in "$dir/SKILL.md" "$dir/LEARNINGS.md"; do
-      [ -f "$f" ] || continue
-      # Find quoted strings that look like backend references (single words)
-      while IFS= read -r ref; do
-        [ -z "$ref" ] && continue
-        # Skip common non-backend words
-        case "$ref" in
-          pi|azure|stub|openrouter|real|fake|mock|azure-openai|azure-foundry) ;;
-          *) continue ;;  # only check known backend-like terms
-        esac
-        if ! grep -qxF "$ref" "$valid_kinds_tmp"; then
-          err "$name" "references backend kind '$ref' not found in registry.ts"
-        fi
-      done < <(grep -oP "(?<![/a-zA-Z0-9_.-])($(tr '\n' '|' < "$valid_kinds_tmp"))(?![a-zA-Z0-9_-])" "$f" 2>/dev/null || true)
-    done
+  for k in $historical_kinds; do
+    # Re-added to registry.ts => live again => not a historical name any more.
+    grep -qxF "$k" "$valid_kinds_tmp" && continue
+    removed_alt="${removed_alt}${removed_alt:+|}$k"
   done
   rm -f "$valid_kinds_tmp"
+else
+  removed_alt="$(echo "$historical_kinds" | tr ' ' '|')"
+fi
+
+if [ -n "$removed_alt" ]; then
+  em='[`*_]*'                                   # markdown emphasis must not hide the name
+  nm="${em}\b(${removed_alt})\b${em}"
+  # Unambiguous "this is a LIVE backend" shapes:
+  live_re="${nm}[[:space:]]+(backend|backends|agent|agents|factory|session|sessions|prompt|prompts|SDK|CLI)\b"
+  live_re="${live_re}|\bbackends?/(${removed_alt})\b"            # backends/pi/
+  live_re="${live_re}|--backend=(${removed_alt})\b"              # --backend=azure
+  live_re="${live_re}|'(${removed_alt})'[[:space:]]*\||\|[[:space:]]*'(${removed_alt})'"  # TS union member
+  live_re="${live_re}|${nm}[[:space:]]+(is|IS|are|ARE)[[:space:]]+(a|an|the)[[:space:]]+(real|live|only|default|current|user-facing|supported)"
+  # Historical framing on the same line — legitimate, never a failure.
+  hist_re="remov|delet|no longer|not exist|n't exist|n’t exist|never exist|gone|historic|legacy|obsolete|deprecat|former|superseded|used to|\bwas\b|\bwere\b|\bv3\.0\b|REMOVED"
+  for f in "$skills"/*/SKILL.md "$skills/catalog.md"; do
+    [ -f "$f" ] || continue
+    if [ "$f" = "$skills/catalog.md" ]; then
+      name="catalog.md"
+    else
+      name="$(basename "$(dirname "$f")")"
+    fi
+    while IFS= read -r hit; do
+      [ -z "$hit" ] && continue
+      lineno="${hit%%:*}"
+      text="${hit#*:}"
+      printf '%s\n' "$text" | grep -qiE "$hist_re" && continue
+      err "$name" "line $lineno asserts a REMOVED backend as live: $(printf '%s' "$text" | cut -c1-110)"
+    done < <(grep -nE "$live_re" "$f" 2>/dev/null || true)
+  done
 fi
 
 # ---- Report ----
 
 if [ "$fail" -eq 0 ] && [ "$warns" -eq 0 ]; then
-  echo "OK: all skills pass structural + vocabulary + TTL + backend-name validation"
+  echo "OK: all skills pass structural + vocabulary + TTL + removed-backend-liveness validation"
 elif [ "$fail" -eq 0 ]; then
   echo "OK: all checks pass (with warnings)"
 fi

@@ -150,9 +150,13 @@ export async function runReconSelector(
   const fallbackModel = SELECTOR_MODEL;
   const modelId = (opts.modelId ?? fallbackModel).trim();
 
+  // Provider-NEUTRAL fallback: `apiKey` (not the legacy `deepseekApiKey`,
+  // which `buildChatClient` honors only when the resolved provider is
+  // `deepseek` — passing it here would silently drop the credential of an
+  // OpenRouter context).
   const ctx: LlmClientContext = opts.llmContext ?? {
     backend: 'jcode',
-    deepseekApiKey: apiKey,
+    apiKey,
   };
   const chat = buildChatClient(ctx, { modelId, temperature: 0, maxTokens: 800 });
   const structured = chat.withStructuredOutput(SelectorOutputSchema, {

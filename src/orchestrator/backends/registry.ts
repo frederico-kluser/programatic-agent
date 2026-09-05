@@ -11,7 +11,8 @@ import { jcodeAgentFactory } from './jcode/factory.js';
  * the `AppConfig.backend` field, so changing one means changing both
  * intentionally.
  *
- * `jcode` is the only real backend (DeepSeek V4 Pro via subprocess).
+ * `jcode` is the only real backend (a subprocess, serving BOTH the
+ * `deepseek` and `openrouter` providers — see `lib/providers.ts`).
  * `stub` is the no-LLM smoke-test backend.
  * (pi and azure — OpenRouter / Azure AI Foundry — were removed in v3.0.)
  */
@@ -41,8 +42,17 @@ export interface BackendBundle {
    */
   requiresApiKey: boolean;
   /**
-   * Name in `API_KEY_REGISTRY` whose presence the App should validate.
-   * `undefined` for backends with no key requirement (stub).
+   * Name in `API_KEY_REGISTRY` whose presence the App should validate — ONLY
+   * for a backend that serves exactly one provider.
+   *
+   * @deprecated as a credential authority. `jcode` serves BOTH `deepseek` and
+   * `openrouter`, so the backend cannot name the key a run will spend; this
+   * field is `undefined` there on purpose, and any call site that reads it to
+   * pick a credential is asking the wrong object. Ask the PROVIDER instead:
+   * `specForProvider(provider)` / `apiKeySpecNameForProvider(provider)`
+   * (src/lib/api-key.ts, src/lib/providers.ts). Hard-coding `'deepseek'` here
+   * is what made an OpenRouter run demand `DEEPSEEK_API_KEY` in the TUI, the
+   * CLI and the web server at once.
    */
   apiKeySpecName?: string;
   /**
@@ -66,11 +76,18 @@ export function selectBackend(kind: AgentBackendKind): BackendBundle {
       return {
         agentFactory: jcodeAgentFactory,
         conflictResolverFactory: jcodeAgentFactory,
-        label: 'jcode · DeepSeek V4 Pro',
+        // Provider-NEUTRAL on purpose: jcode serves both `deepseek` and
+        // `openrouter`, and the label used to name only the first — a user who
+        // had picked OpenRouter read "DeepSeek V4 Pro" on the very screen that
+        // was about to spend their OpenRouter key. The provider selector says
+        // which vendor; this says which agent process runs the task.
+        label: 'jcode',
         description:
-          'Uses jcode CLI (subprocess) with DeepSeek V4 Pro. Stateless — zero embeddings, no memory across turns.',
+          'Runs the jcode CLI as a subprocess, against whichever provider you pick. Stateless — zero embeddings, no memory across turns.',
         requiresApiKey: true,
-        apiKeySpecName: 'deepseek',
+        // Deliberately ABSENT: jcode is served by two providers (deepseek and
+        // openrouter), so no single spec name is correct here. The credential
+        // comes from `specForProvider(<the provider the user chose>)`.
         userSelectable: true,
       };
     case 'stub':

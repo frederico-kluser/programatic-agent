@@ -6,6 +6,25 @@ import {
   type ModelProvider,
 } from '../contracts/models.js';
 import type { AgentBackendKind } from '../lib/types.js';
+import { providersForBackend, type LlmProvider } from '../lib/providers.js';
+
+/**
+ * Compile-time parity between the two provider unions. `ModelProvider`
+ * (contracts/, a zod enum) and `LlmProvider` (lib/, the runtime provider
+ * table) MUST hold the same members: the catalog filter compares one against
+ * the other, so a member added to only one side would silently make every
+ * entry of the missing provider unselectable. `contracts/` cannot import from
+ * `lib/` (downward-only), hence the assertion instead of a shared type.
+ * Adding a provider to just one enum turns `_PROVIDER_UNIONS_MATCH` into
+ * `never` and fails `npm run typecheck`.
+ */
+type SameProviders =
+  [LlmProvider] extends [ModelProvider]
+    ? [ModelProvider] extends [LlmProvider]
+      ? true
+      : never
+    : never;
+const _PROVIDER_UNIONS_MATCH: SameProviders = true;
 
 /**
  * The single canonical default model id — the headline of the recommended
@@ -37,6 +56,11 @@ const DEFAULT_RECOMMENDED_MODELS: readonly ModelEntry[] = [
       'Fast and cheap — use for simple steps, per-file, parallel fan-out (lint, rename, JSDoc, translate, boilerplate).',
     bestFor: ['cheap', 'fast'],
     tier: 'fast',
+    // OpenRouter-namespaced (`minimax/…`): api.deepseek.com serves only its own
+    // models, so an entry whose vendor segment is someone else's can ONLY be
+    // reached through the aggregator. Offering it under `deepseek` is offering
+    // a guaranteed "model not found".
+    provider: 'openrouter',
   },
   {
     id: 'moonshotai/kimi-k2.6',
@@ -47,20 +71,32 @@ const DEFAULT_RECOMMENDED_MODELS: readonly ModelEntry[] = [
       'Deep thinking, agentic, heavy coding — use for complex steps, multi-file, reasoning, cross-file refactors.',
     bestFor: ['coding', 'reasoning', 'agentic'],
     tier: 'workhorse',
+    provider: 'openrouter',
   },
 ];
 
 const RECOMMENDED_MODELS_FILE = 'recommended-models.json';
 
 /**
- * Returns the merged catalog. When `backend` is provided, the result is
- * filtered to only models that backend's provider can serve. Models without
- * an explicit `provider` are treated as `deepseek` (back-compat with files
- * written before this field existed).
+ * Returns the merged catalog, optionally filtered to what the active
+ * dispatch target can actually serve.
+ *
+ * Precedence — the PROVIDER is the real axis, the backend only a fallback:
+ *   · `provider` given → keep only that provider's models. This is the sharp
+ *     filter, and the one callers should use: `jcode` serves BOTH providers,
+ *     so the backend can never discriminate a Claude entry from a DeepSeek
+ *     one.
+ *   · else `backend === 'stub'` (or absent) → NO filter. A `--stub` smoke run
+ *     never calls a provider, so it must be able to show every model.
+ *   · else → keep the models of every provider that backend serves.
+ *
+ * Models without an explicit `provider` are treated as `deepseek` (back-compat
+ * with files written before the field existed).
  */
 export function loadRecommendedModels(
   projectRoot: string,
   backend?: AgentBackendKind,
+  provider?: LlmProvider,
 ): ModelEntry[] {
   const filePath = join(projectRoot, RECOMMENDED_MODELS_FILE);
   let entries: readonly ModelEntry[] = DEFAULT_RECOMMENDED_MODELS;
@@ -77,20 +113,31 @@ export function loadRecommendedModels(
 
   const all: ModelEntry[] = [...entries];
 
+  // An explicit provider is the sharpest filter and always wins.
+  if (provider) return all.filter((m) => providerFor(m) === provider);
+
   // No filter when backend is undefined OR 'stub'. Stub never calls a
   // provider, so a smoke-test run (`--stub`) MUST not be blocked by a
-  // filter. Filtering only when running a real backend prevents accidental
-  // wrong-provider selections.
+  // filter — and it cannot fall through to the branch below, where
+  // `providersForBackend('stub')` is legitimately EMPTY and would drop the
+  // whole catalog.
   if (!backend || backend === 'stub') return all;
-  return all.filter((m) => providerFor(m) === backendToModelProvider(backend));
+
+  // Real backend, provider unknown: keep everything that backend could
+  // serve. Derived from the provider table, so `jcode` widens by itself the
+  // day it stops serving a provider — no hardcoded answer to update.
+  const servable = providersForBackend(backend);
+  return all.filter((m) => servable.includes(providerFor(m)));
 }
 
-function providerFor(m: ModelEntry): ModelProvider {
+/**
+ * The provider that serves an entry. The `?? 'deepseek'` default is
+ * load-bearing back-compat: a `recommended-models.json` written before the
+ * field existed must keep every entry selectable, not silently vanish from
+ * the picker.
+ */
+function providerFor(m: ModelEntry): LlmProvider {
   return m.provider ?? 'deepseek';
-}
-
-function backendToModelProvider(backend: AgentBackendKind): ModelProvider {
-  return 'deepseek';
 }
 
 export function formatPrice(price: number | undefined | null): string {

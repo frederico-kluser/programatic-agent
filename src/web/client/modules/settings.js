@@ -2,7 +2,7 @@
 
 import { esc, toast } from './utils.js';
 import { applyI18n, availableLocales, getLocale, initI18n, saveLocale, t } from '../i18n.js';
-import { $, S, api, sessionKey, setSessionKey, keyStoreName } from './state.js';
+import { $, S, api, activeKeySpec, sessionKey, setSessionKey, keyStoreName } from './state.js';
 import { parseTimeoutMinutes } from '../queue-util.js';
 import { poolNeedsReset, poolRows } from '../key-pool.js';
 import { refreshModelsAndKeys } from './launch.js';
@@ -116,12 +116,22 @@ $('globalRamPercentInput').addEventListener('change', async (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('settingsModal').hidden) closeSettings(); });
 
-/* ---------------- OpenRouter key in ⚙ Settings (server-persisted) ----------------
+/* ---------------- Provider key in ⚙ Settings (server-persisted) ----------------
+   NAMED BY THE ACTIVE PROVIDER, not hard-coded. This panel used to read and
+   write the spec `'openrouter'` literally while a run resolved the credential
+   of whatever provider was selected — so a key saved here never reached the
+   run unless the two happened to coincide. `activeKeySpec(S)` comes from
+   /api/providers → keySpecs, the same projection the launch form gates on.
    Unlike the launch-form key rows (session-only, gone with the tab), this panel
    SAVES: the key is validated against OpenRouter and, only if not rejected,
    persisted server-side (config store — host-mounted under Docker so it survives
    the container) AND mirrored into this tab's sessionStorage. Every new run then
    uses it; the server also logs each step to the huu terminal. */
+/** The spec this panel is currently operating on. Never a literal. */
+function panelSpec() {
+  return activeKeySpec(S) || { name: 'deepseek', label: 'DeepSeek' };
+}
+
 export const OR_SOURCE_KEY = {
   options: 'web.keysrc.options',
   stored: 'web.keysrc.stored',
@@ -138,7 +148,8 @@ export async function refreshOrKeyPool() {
   const host = $('orKeyPool');
   if (!host) return;
   let pool = null;
-  try { pool = await api('/api/keys/pool?name=openrouter'); } catch { pool = null; }
+  const spec = panelSpec();
+  try { pool = await api('/api/keys/pool?name=' + encodeURIComponent(spec.name)); } catch { pool = null; }
   const rows = poolRows(pool);
   if (!rows.length) { host.hidden = true; host.innerHTML = ''; return; }
   host.hidden = false;
@@ -166,11 +177,18 @@ export async function refreshOrKeyPanel() {
   const el = $('orKeyStatus');
   if (!el) return;
   void refreshOrKeyPool();
+  const spec = panelSpec();
+  // The panel header, hint placeholder and every endpoint below follow the
+  // ACTIVE provider's spec — the whole point of this fix.
+  const labelEl = document.querySelector('label[for="orKeyInput"]');
+  if (labelEl) labelEl.textContent = t('web.settings.keys') + ' · ' + spec.label;
+  const inputEl = /** @type {HTMLInputElement|null} */ ($('orKeyInput'));
+  if (inputEl && spec.hint) inputEl.placeholder = spec.hint;
   try {
-    const s = await api('/api/keys/status?name=openrouter');
+    const s = await api('/api/keys/status?name=' + encodeURIComponent(spec.name));
     const bits = [];
     if (!s.masked || s.source === 'none') {
-      bits.push(`<span class="key-status__need">${esc(t('web.settings.no_key'))}</span>`);
+      bits.push(`<span class="key-status__need">${esc(t('web.settings.no_key', { label: spec.label }))}</span>`);
     } else {
       const srcKey = OR_SOURCE_KEY[s.source];
       const label = srcKey ? t(srcKey) : s.source;
@@ -184,7 +202,7 @@ export async function refreshOrKeyPanel() {
         bits.push(`<div class="key-hint">${esc(t('web.settings.env_ignored', { envVar: s.envVar }))}</div>`);
       }
     }
-    if (sessionKey('openrouter')) {
+    if (sessionKey(spec.name)) {
       bits.push(`<div class="key-hint">${esc(t('web.settings.session_key'))}</div>`);
     }
     el.innerHTML = bits.join(' ');
@@ -199,7 +217,8 @@ export const orKeySaveBtn = $('orKeySave');
 if (orKeySaveBtn) orKeySaveBtn.addEventListener('click', async () => {
   const input = /** @type {HTMLInputElement} */ ($('orKeyInput'));
   const value = (input.value || '').trim();
-  if (!value) { toast(t('web.settings.paste_first'), true); input.focus(); return; }
+  const spec = panelSpec();
+  if (!value) { toast(t('web.settings.paste_first', { label: spec.label }), true); input.focus(); return; }
   const btn = /** @type {HTMLButtonElement} */ ($('orKeySave'));
   const label = btn.textContent;
   btn.disabled = true;
@@ -207,30 +226,37 @@ if (orKeySaveBtn) orKeySaveBtn.addEventListener('click', async () => {
   try {
     const r = await api('/api/keys/validate', {
       method: 'POST',
-      body: JSON.stringify({ name: 'openrouter', value }),
+      body: JSON.stringify({ name: spec.name, value }),
     });
     if (r.status === 'invalid') {
       // The exact 401 class that motivated this panel: never save a key the
       // provider actively rejected.
-      toast(t('web.settings.key_rejected', { status: r.httpStatus }), true);
+      toast(t('web.settings.key_rejected', { label: spec.label, status: r.httpStatus }), true);
+      return;
+    }
+    if (r.status === 'wrong-key') {
+      // The value is ANOTHER provider's credential (an `sk-or-…` pasted into
+      // the DeepSeek panel). Refused, never persisted — saving it would file
+      // it under this spec's name and spend it against this spec's host.
+      toast(t('web.settings.key_wrong_provider', { label: r.label, expected: spec.label }), true);
       return;
     }
     // Same validate-then-save flow as before, one step longer: append to the
     // POOL when the server has one (it mirrors keys[0] back into the flat
     // field, so nothing regresses), else fall back to the single-key write.
     try {
-      await api('/api/keys/pool', { method: 'POST', body: JSON.stringify({ name: 'openrouter', value }) });
+      await api('/api/keys/pool', { method: 'POST', body: JSON.stringify({ name: spec.name, value }) });
     } catch {
-      await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: 'openrouter', value }) });
+      await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: spec.name, value }) });
     }
     // UNCHANGED sessionStorage semantics: this tab keeps sending the key it
     // just accepted with every run it launches, and that pick still wins over
     // the pool.
-    setSessionKey('openrouter', value);
+    setSessionKey(spec.name, value);
     input.value = '';
     toast(r.status === 'valid'
       ? t('web.settings.key_saved')
-      : t('web.settings.key_unverified', { reason: r.reason }));
+      : t('web.settings.key_unverified', { label: spec.label, reason: r.reason }));
     await refreshOrKeyPanel();
     await refreshModelsAndKeys();
   } catch (err) { toast(err.message, true); }
@@ -244,7 +270,7 @@ if (orKeyPoolEl) orKeyPoolEl.addEventListener('click', async (e) => {
   if (!el || !el.getAttribute) return;
   if (el.id === 'orKeyPoolReset') {
     try {
-      await api('/api/keys/pool/reset', { method: 'POST', body: JSON.stringify({ name: 'openrouter' }) });
+      await api('/api/keys/pool/reset', { method: 'POST', body: JSON.stringify({ name: panelSpec().name }) });
       toast(t('web.settings.pool_reset_done'));
       await refreshOrKeyPanel();
     } catch (err) { toast(err.message, true); }
@@ -253,7 +279,7 @@ if (orKeyPoolEl) orKeyPoolEl.addEventListener('click', async (e) => {
   const index = el.getAttribute('data-del-index');
   if (index === null) return;
   try {
-    await api(`/api/keys/pool?name=openrouter&index=${encodeURIComponent(index)}`, { method: 'DELETE' });
+    await api(`/api/keys/pool?name=${encodeURIComponent(panelSpec().name)}&index=${encodeURIComponent(index)}`, { method: 'DELETE' });
     toast(t('web.settings.key_removed'));
     await refreshOrKeyPanel();
     await refreshModelsAndKeys();
@@ -266,8 +292,9 @@ if (orKeyStatusEl) orKeyStatusEl.addEventListener('click', async (e) => {
   const el = /** @type {HTMLElement} */ (e.target); // delegated: the re-rendered clear button
   if (!el || el.id !== 'orKeyClear') return;
   try {
-    const r = await api('/api/keys?name=openrouter', { method: 'DELETE' });
-    try { sessionStorage.removeItem(keyStoreName('openrouter')); } catch {}
+    const spec = panelSpec();
+    const r = await api('/api/keys?name=' + encodeURIComponent(spec.name), { method: 'DELETE' });
+    try { sessionStorage.removeItem(keyStoreName(spec.name)); } catch {}
     toast(r.note ? t('web.settings.key_cleared_note', { note: r.note }) : t('web.settings.key_cleared'));
     await refreshOrKeyPanel();
     await refreshModelsAndKeys();

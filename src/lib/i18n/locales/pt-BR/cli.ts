@@ -5,15 +5,13 @@ export const cliPtBR = {
   'cli.err_not_a_repo':
     'huu: não é um repositório git: {cwd}\nO huu roda cada agente numa worktree isolada do git, então precisa de um repositório.\nRode \'git init\' aqui, ou entre num repositório existente, e tente de novo.',
   'cli.err_unknown_provider':
-    'huu: --provider={value}: provedor desconhecido. Válidos: openrouter, azure',
+    'huu: --provider={value}: provedor desconhecido. Válidos: {valid}',
   'cli.err_unknown_backend': 'huu: --backend={value}: backend desconhecido. Válidos: {valid}',
   'cli.err_import_pipeline': 'Falha ao importar o pipeline: {message}',
   'cli.err_per_file_no_files':
     'O passo "{name}" tem escopo "per-file" mas nenhum arquivo — adicione-os em config.files["{name}"], ou mude o passo para o escopo "memory" com filesFrom.',
   'cli.err_auto_no_key':
     'huu auto: o provedor {provider} exige uma chave de API, mas {envVar} não está definida. Exporte a variável de ambiente, monte um secret em {secretPath}, ou salve a chave pela TUI antes.',
-  'cli.err_auto_no_endpoint':
-    'huu auto: o provedor Azure AI Foundry exige a URL do endpoint, mas AZURE_OPENAI_BASE_URL não está definida. Exporte-a ou salve-a pela TUI antes.',
   'cli.err_port_in_use':
     'huu: a porta {port} já está em uso. Escolha outra com --port=<n> ou HUU_WEB_PORT=<n>.',
   'cli.err_web_start': 'huu: o servidor web falhou ao subir: {message}',
@@ -66,8 +64,10 @@ Uso:
   huu status [...]          Inspeciona a última execução via .huu/debug-*.log
   huu prune [...]           Lista/mata containers huu órfãos + cidfiles obsoletos
   huu --dir=<caminho>       Roda neste diretório em vez do atual (padrão: cwd)
-  huu --provider=<nome>     Escolhe o provedor de LLM do pi: openrouter (padrão), azure
-  huu --backend=<tipo>      Avançado: escolhe o backend de despacho pi (padrão), azure, stub
+  huu --provider=<nome>     Provedor de LLM — o endpoint chamado e a chave gasta:
+                            deepseek (padrão, apelido ds), openrouter (apelido or)
+  huu --backend=<tipo>      Avançado: o processo de agente que roda cada tarefa:
+                            jcode (padrão), stub
   huu --stub                Atalho para --backend=stub (sem LLM de verdade)
   huu --yolo                Pula o Docker, roda nativo no host (o agente vê as credenciais do seu shell)
   huu --no-docker           Atalho para --yolo / HUU_NO_DOCKER=1 — grafia neutra para runners de CI
@@ -87,7 +87,7 @@ flags do dev:
                             puro (a-z, 0-9, hífens) é um grafo salvo em .huu/dev/graphs/;
                             qualquer outra coisa é um caminho para um .json. Um desenho é o
                             método COMPLETO, então a sessão é exatamente UMA época e
-                            --epochs > 1 é recusado. As 12 flags de metodologia e as flags
+                            --epochs > 1 é recusado. As 13 flags de metodologia e as flags
                             de modelo por papel NÃO são compiladas num desenho (aviso).
   --epochs <n>              Teto de épocas (padrão 3). Cada época planeja, roda e aterrissa.
   --fronts <n>              Teto de frentes paralelas por época (padrão 4, máx 4)
@@ -99,6 +99,12 @@ flags do dev:
   metodologias (todas desligadas por padrão; rode 'huu dev' sem objetivo para a lista completa):
   --tdd --characterize --lint-gate --fitness --diff-budget --changelog
   --standards --checklist --write-set --plan-review --traceability --verify-claims
+  --debate                  dois agentes de FAMÍLIAS diferentes discutem o design da
+                            época antes das frentes; um juiz anonimizado decide, no
+                            máximo 2 rodadas. Como toda opção daqui, também faz a tarefa
+                            bloqueada ESPERAR por um humano em vez de waive no teto de
+                            rodadas do crítico. Roteie o par com --advocate-model /
+                            --prosecutor-model
 
 subcomandos do graph (o método desenhado — sem navegador):
   list                      Lista os desenhos salvos (id, nós/arestas, válido?)

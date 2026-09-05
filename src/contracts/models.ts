@@ -38,9 +38,16 @@ export type ModelTier = z.infer<typeof ModelTierSchema>;
  * Which LLM provider can serve this model. `deepseek` is the default when
  * omitted (matches existing recommended-models.json with no provider field).
  * The model selector filters the catalog by this field according to the
- * active provider (`AppConfig.backend` → provider).
+ * ACTIVE PROVIDER — not the backend: `deepseek` and `openrouter` both run on
+ * the `jcode` backend, so only the provider can tell a Claude entry from a
+ * DeepSeek one.
+ *
+ * Members must mirror `LlmProviderSchema` (src/lib/providers.ts). This is a
+ * separate zod enum only because `contracts/` sits below `lib/` and must not
+ * import from it; `src/models/catalog.ts` carries a compile-time parity
+ * assertion so the two unions cannot drift silently.
  */
-export const ModelProviderSchema = z.enum(['deepseek']);
+export const ModelProviderSchema = z.enum(['deepseek', 'openrouter']);
 export type ModelProvider = z.infer<typeof ModelProviderSchema>;
 
 export const ModelEntrySchema = z.object({
@@ -55,9 +62,9 @@ export const ModelEntrySchema = z.object({
   /** Pricing/capability tier. Drives default biases in the assistant prompt. */
   tier: ModelTierSchema.optional(),
   /**
-   * Backend that can run this model. Defaults to `deepseek` when
-   * omitted to keep `recommended-models.json` files written before this
-   * field existed parsing without churn.
+   * Provider that can serve this model. Defaults to `deepseek` when omitted,
+   * to keep `recommended-models.json` files written before this field
+   * existed parsing without churn.
    */
   provider: ModelProviderSchema.optional(),
 });

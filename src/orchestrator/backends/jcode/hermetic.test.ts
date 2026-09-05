@@ -14,10 +14,13 @@ import {
   JCODE_CONFIG_FILENAME,
   JCODE_CONFIG_TOML,
   JCODE_PROVIDER_PROFILE,
+  jcodeApiKeyEnvVar,
+  jcodeProviderProfile,
   buildJcodeSessionEnvironment,
   ensureJcodeConfig,
   jcodeConfigHomeDir,
 } from './hermetic.js';
+import { PROVIDERS } from '../../../lib/providers.js';
 
 // ---------------------------------------------------------------------------
 // Real filesystem, real temp home. `getHuuHome()` reads HUU_HOST_HOME from
@@ -83,19 +86,62 @@ describe('jcode hermetic — huu-owned config.toml + JCODE_HOME', () => {
     expect(toml).toBe(JCODE_CONFIG_TOML);
   });
 
+  // MUTATION KILLED: dropping a profile block (or writing only the run's
+  // current provider). jcode refuses to start on an unknown
+  // `--provider-profile`, so a provider huu offers in the selector but omits
+  // here is a provider that cannot run — and the previous shape of this module
+  // "fixed" that by sending it to the DeepSeek profile instead.
+  it('declares ONE profile per provider huu exposes, each with its own host and var', () => {
+    const result = buildJcodeSessionEnvironment({ env: {} as NodeJS.ProcessEnv });
+    const toml = readFileSync(result.configPath as string, 'utf8');
+
+    for (const info of PROVIDERS) {
+      const profile = jcodeProviderProfile(info.id);
+      expect(toml).toContain(`[providers.${profile}]`);
+      expect(toml).toContain(`[[providers.${profile}.models]]`);
+      // The block is derived from the provider table, so the URL jcode dials is
+      // the URL huu's own LangChain clients dial. A literal here would be a
+      // second source of truth for the one string that decides WHERE the
+      // credential goes.
+      const block = toml.slice(toml.indexOf(`[providers.${profile}]`));
+      expect(block).toContain(`base_url = "${info.defaultBaseUrl}"`);
+      expect(block).toContain(`api_key_env = "${jcodeApiKeyEnvVar(info.id)}"`);
+    }
+    expect(toml).toContain('[providers.openrouter]');
+    expect(toml).toContain('base_url = "https://openrouter.ai/api/v1"');
+    expect(toml).toContain('api_key_env = "OPENROUTER_API_KEY"');
+  });
+
+  it('writes each profile’s default_model in THAT endpoint’s namespace', () => {
+    const result = buildJcodeSessionEnvironment({ env: {} as NodeJS.ProcessEnv });
+    const toml = readFileSync(result.configPath as string, 'utf8');
+    // api.deepseek.com names its models bare; openrouter.ai routes on the
+    // vendor prefix. Same rule `--model` goes through, so the declared default
+    // and the spawned model are written in ONE namespace per endpoint.
+    expect(toml).toContain('default_model = "deepseek-v4-pro"');
+    expect(toml).toContain('default_model = "deepseek/deepseek-v4-pro"');
+  });
+
   it('never writes a credential into the config — only the env var NAME', () => {
     const result = buildJcodeSessionEnvironment({
-      env: { DEEPSEEK_API_KEY: 'sk-super-secret-value' } as NodeJS.ProcessEnv,
+      env: {
+        DEEPSEEK_API_KEY: 'sk-super-secret-value',
+        OPENROUTER_API_KEY: 'sk-or-v1-super-secret-value',
+      } as NodeJS.ProcessEnv,
     });
     const toml = readFileSync(result.configPath as string, 'utf8');
 
     expect(toml).not.toContain('sk-super-secret-value');
+    expect(toml).not.toContain('sk-or-v1-super-secret-value');
     // No inline `api_key = "…"` key: only `api_key_env`, which names a variable.
     // (Anchored per line — `requires_api_key = true` legitimately ends in `_api_key =`.)
     expect(toml.split('\n').filter((l) => /^\s*api_key\s*=/.test(l))).toEqual([]);
     expect(toml).toContain('api_key_env = "DEEPSEEK_API_KEY"');
-    // The key still reaches the child, just through the env.
+    expect(toml).toContain('api_key_env = "OPENROUTER_API_KEY"');
+    // The keys still reach the child, just through the env. (The per-run
+    // narrowing to ONE provider's key happens later, in `withJcodeApiKey`.)
     expect(result.env.DEEPSEEK_API_KEY).toBe('sk-super-secret-value');
+    expect(result.env.OPENROUTER_API_KEY).toBe('sk-or-v1-super-secret-value');
   });
 
   // -- idempotency / self-heal --------------------------------------------

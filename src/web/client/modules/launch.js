@@ -5,7 +5,7 @@ import { fanOutBatch } from '../queue-util.js';
 import { parseTimeoutMinutes } from '../queue-util.js';
 import { markAllPlan } from '../folder-select.js';
 import { esc, toast, shortDir, projectName } from './utils.js';
-import { $, S, api, pipeIcon, sessionKey, setSessionKey, backendSpecName, providerInfoById, providerReady, providerBackend, syncTimeoutField, DEFAULT_MODEL_ID, withTok } from './state.js';
+import { $, S, api, pipeIcon, sessionKey, setSessionKey, activeKeySpecName, providerInfoById, providerReady, providerBackend, syncTimeoutField, DEFAULT_MODEL_ID, withTok } from './state.js';
 import { renderQueue, commitBatch, setAddBtnLabel, addLabel, renderLaunchRunning } from './queue.js';
 import { renderActiveRun } from './board.js';
 import { initDevSurface } from './dev.js';
@@ -115,14 +115,14 @@ export function renderProviderSeg() {
   for (const p of S.providers) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    const ready = providerReady(p);
+    const ready = providerReady(S, p);
     btn.className = S.provider === p.id ? 'on' : '';
     btn.textContent = p.label + (ready ? '' : ' •');
     btn.title = p.description + (ready ? ' · key ✓' : ' · key needed');
     if (locked && p.id !== S.boot.lockedProvider) btn.disabled = true;
     btn.addEventListener('click', async () => {
       S.provider = p.id;
-      S.backend = providerBackend(p.id);
+      S.backend = providerBackend(S, p.id);
       // A typed/custom id is provider-specific — re-seed from the new provider's
       // catalog instead of carrying it across.
       S.modelId = '';
@@ -140,7 +140,10 @@ export async function refreshModelsAndKeys() {
   // moment this screen opens. We still forward a validated session key when we
   // have one (per-account view); it's optional for listing.
   try {
-    const orKey = S.provider === 'openrouter' ? sessionKey(backendSpecName(S.backend)) : '';
+    // The session key of the ACTIVE PROVIDER's spec — `backendSpecName` cannot
+    // answer this any more (jcode serves two providers, so the server reports
+    // no spec name for it).
+    const orKey = sessionKey(activeKeySpecName(S));
     const m = await api(
       '/api/models?provider=' + encodeURIComponent(S.provider),
       orKey ? { headers: { 'x-huu-key': orKey } } : undefined,
@@ -190,7 +193,7 @@ export function renderDevModelOptions() {
    written to disk. Endpoint specs use a text input; keys use a password input. */
 export function renderKeyArea() {
   const area = $('keyArea');
-  const info = providerInfoById(S.provider);
+  const info = providerInfoById(S, S.provider);
   const specs = (info && info.keySpecs) || [];
   if (!specs.length) { area.innerHTML = ''; area.hidden = true; return; }
   area.hidden = false;
@@ -260,6 +263,11 @@ $('keyArea').addEventListener('click', async (e) => {
       await refreshModelsAndKeys();
     } else if (r.status === 'invalid') {
       toast(t('web.key.rejected', { status: r.httpStatus }), true);
+    } else if (r.status === 'wrong-key') {
+      // Another provider's credential: refused outright, NOT kept for the
+      // session. An `sk-or-…` accepted into the `deepseek` slot would be sent
+      // to api.deepseek.com with every run this tab launches.
+      toast(t('web.key.wrong_provider', { label: r.label }), true);
     } else {
       // Couldn't reach the provider (offline/VPN) or no validator for this
       // spec (e.g. the Azure endpoint URL) — don't hard-block; keep it for

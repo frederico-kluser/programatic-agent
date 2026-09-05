@@ -47,6 +47,13 @@ is_ci() {
 # A tool is missing when:
 #   - pending_flag="" AND the first token is neither a repo file nor on PATH
 #
+# check-dockerfile is the 10th step and exists because of a HOLE, not a hunch:
+# `RUN --mount=type=cache,target=/root/.npm` sat in the Dockerfile from the
+# first commit and every gate step above stayed green while `npm start` could
+# not build the image at all on a Docker without the buildx plugin. huu is
+# docker-only, so an unbuildable image is a dead product, and no step here was
+# looking at the Dockerfile.
+#
 # check-acceptance / validate-graph carried `pending` from W1, when their
 # scripts did not exist yet ("a gate that does not exist is ANNOUNCED, never
 # omitted" — METODO M1-01). W3 shipped both, so they are now WIRED with the
@@ -63,6 +70,7 @@ STEPS=(
   "check-pins|npx tsx scripts/check-pins.ts|"
   "check-twins|npx tsx scripts/check-twins.ts|"
   "check-metodo|npx tsx scripts/check-metodo.ts|"
+  "check-dockerfile|npx tsx scripts/check-dockerfile.ts|"
 )
 
 # ---- helpers ---------------------------------------------------------------

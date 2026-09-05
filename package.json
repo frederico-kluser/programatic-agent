@@ -1,7 +1,7 @@
 {
   "name": "huu-pipe",
   "version": "1.0.0",
-  "description": "huu (Humans Underwrite Undertakings) \u2014 deterministic pipelines over thinking LLM agents: audits, test generation, knowledge extraction and other predictable-value processes, fanned out in parallel git worktrees with reproducible merges stage-by-stage. TUI and headless CI mode.",
+  "description": "huu (Humans Underwrite Undertakings) — deterministic pipelines over thinking LLM agents: audits, test generation, knowledge extraction and other predictable-value processes, fanned out in parallel git worktrees with reproducible merges stage-by-stage. TUI and headless CI mode.",
   "author": "Frederico Guilherme Kluser de Oliveira <kluserhuu@gmail.com>",
   "license": "Apache-2.0",
   "type": "module",
@@ -68,6 +68,7 @@
     "ink": "^4.4.1",
     "ink-select-input": "^5.0.0",
     "ink-text-input": "^5.0.1",
+    "minimatch": "^10.2.6",
     "model-selector-ink": "^3.1.0",
     "nanoid": "^5.0.0",
     "react": "^18.3.1",

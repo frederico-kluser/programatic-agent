@@ -4,15 +4,14 @@ export const cliEn = {
   'cli.err_dir_not_directory': 'huu: --dir={path}: not a directory',
   'cli.err_not_a_repo':
     'huu: not a git repository: {cwd}\nhuu runs each agent in an isolated git worktree, so it requires a repo.\nRun \'git init\' here, or cd into an existing repo, then try again.',
-  'cli.err_unknown_provider': 'huu: --provider={value}: unknown provider. Valid: openrouter, azure',
+  'cli.err_unknown_provider':
+    'huu: --provider={value}: unknown provider. Valid: {valid}',
   'cli.err_unknown_backend': 'huu: --backend={value}: unknown backend. Valid: {valid}',
   'cli.err_import_pipeline': 'Failed to import pipeline: {message}',
   'cli.err_per_file_no_files':
     'Step "{name}" has scope "per-file" but no files — add them under config.files["{name}"], or switch the step to scope "memory" with filesFrom.',
   'cli.err_auto_no_key':
     'huu auto: the {provider} provider requires an API key but {envVar} is not set. Either export the env var, mount a secret at {secretPath}, or persist it via the TUI first.',
-  'cli.err_auto_no_endpoint':
-    'huu auto: the Azure AI Foundry provider requires an endpoint URL but AZURE_OPENAI_BASE_URL is not set. Export it or persist it via the TUI first.',
   'cli.err_port_in_use':
     'huu: port {port} is already in use. Pick another with --port=<n> or HUU_WEB_PORT=<n>.',
   'cli.err_web_start': 'huu: web server failed to start: {message}',
@@ -65,8 +64,10 @@ Usage:
   huu status [...]          Inspect the latest run via .huu/debug-*.log
   huu prune [...]           List/kill orphan huu containers + stale cidfiles
   huu --dir=<path>          Run in this directory instead of the current one (default: cwd)
-  huu --provider=<name>     Pick the LLM provider for pi: openrouter (default), azure
-  huu --backend=<kind>      Advanced: pick dispatch backend pi (default), azure, stub
+  huu --provider=<name>     LLM provider — the endpoint called and the key spent:
+                            deepseek (default, alias ds), openrouter (alias or)
+  huu --backend=<kind>      Advanced: the agent process that runs each task:
+                            jcode (default), stub
   huu --stub                Alias for --backend=stub (no real LLM)
   huu --yolo                Skip Docker, run native on the host (agent sees your shell creds)
   huu --no-docker           Alias for --yolo / HUU_NO_DOCKER=1 — neutral spelling for CI runners
@@ -86,7 +87,7 @@ dev flags:
                             (a-z, 0-9, dashes) is a graph saved under .huu/dev/graphs/;
                             anything else is a path to a .json file. A drawing is the
                             COMPLETE method, so the session is exactly ONE epoch and
-                            --epochs > 1 is refused. The 12 methodology flags and the
+                            --epochs > 1 is refused. The 13 methodology flags and the
                             per-role model flags are NOT compiled into a drawing (warned).
   --epochs <n>              Ceiling on epochs (default 3). Each epoch plans, runs and lands.
   --fronts <n>              Ceiling on parallel fronts per epoch (default 4, max 4)
@@ -98,6 +99,11 @@ dev flags:
   methodologies (all OFF by default; run 'huu dev' with no goal for the full list):
   --tdd --characterize --lint-gate --fitness --diff-budget --changelog
   --standards --checklist --write-set --plan-review --traceability --verify-claims
+  --debate                  two agents of DIFFERENT families argue the epoch's design
+                            before the fronts; an anonymized judge rules, 2 rounds max.
+                            Like every option here, it also makes a blocked task WAIT
+                            for a human instead of waiving at the critic's round cap.
+                            Route the pair: --advocate-model / --prosecutor-model
 
 graph subcommands (the drawn method — no browser needed):
   list                      List the saved drawings (id, nodes/edges, valid?)

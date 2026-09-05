@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { translateJcodeOutput } from './event-mapper.js';
-import { jcodeAgentFactory, withJcodeApiKey } from './factory.js';
+import { buildJcodeArgs, jcodeAgentFactory, withJcodeApiKey } from './factory.js';
 import {
   resolveHermeticEnabled,
   jcodeAgentDir,
   buildJcodeSessionEnvironment,
+  jcodeApiKeyEnvVar,
+  jcodeProviderProfile,
 } from './hermetic.js';
+import { API_KEY_REGISTRY } from '../../../lib/api-key-registry.js';
+import { DEFAULT_PROVIDER, PROVIDERS, type LlmProvider } from '../../../lib/providers.js';
 import {
   jcodeMissingApiKeyMessage,
   jcodeMissingExecutableMessage,
@@ -338,7 +342,82 @@ describe('jcodeAgentFactory — jcode absent from the environment', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The DeepSeek credential — pure precedence
+// The PROVIDER decides the profile, the model namespace and the credential var
+// ---------------------------------------------------------------------------
+
+// THE regression this file exists for. `buildJcodeArgs` used to hard-code
+// `--provider-profile deepseek-v4-pro`, and `withJcodeApiKey` used to hard-code
+// `DEEPSEEK_API_KEY`, while `config.apiKey` carried whatever key huu had
+// resolved for the provider the user actually chose. An OpenRouter run
+// therefore sent an `sk-or-…` secret to api.deepseek.com as a Bearer token —
+// a credential leak, not a misconfiguration, and one no 401 message would ever
+// have blamed correctly.
+describe('buildJcodeArgs — argv is derived from the provider', () => {
+  /** Read one option's value out of the argv, so order changes cannot fake a pass. */
+  function optionOf(args: string[], flag: string): string | undefined {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  }
+
+  // MUTATION KILLED: restoring a constant profile
+  // (`'--provider-profile', JCODE_PROVIDER_PROFILE`). It sends every run to
+  // DeepSeek's base_url whatever the user picked.
+  it('sends an OpenRouter run to the OpenRouter profile', () => {
+    const args = buildJcodeArgs('anthropic/claude-opus-5', 'do it', 'openrouter');
+    expect(optionOf(args, '--provider-profile')).toBe('openrouter');
+    expect(optionOf(args, '--provider-profile')).toBe(jcodeProviderProfile('openrouter'));
+  });
+
+  it('sends a DeepSeek run to the DeepSeek profile', () => {
+    const args = buildJcodeArgs('deepseek/deepseek-v4-pro', 'do it', 'deepseek');
+    expect(optionOf(args, '--provider-profile')).toBe(jcodeProviderProfile('deepseek'));
+  });
+
+  it('never hands one provider the OTHER provider’s profile', () => {
+    // The invariant, stated over the whole table rather than per pair: a run's
+    // profile belongs to its own provider and to no other.
+    for (const info of PROVIDERS) {
+      const args = buildJcodeArgs('deepseek/deepseek-v4-pro', 'p', info.id);
+      const profile = optionOf(args, '--provider-profile');
+      expect(profile).toBe(jcodeProviderProfile(info.id));
+      for (const other of PROVIDERS) {
+        if (other.id === info.id) continue;
+        expect(profile).not.toBe(jcodeProviderProfile(other.id));
+      }
+    }
+  });
+
+  // MUTATION KILLED: passing `modelId` straight through
+  // (`'--model', modelId`) — the shape that made every catalog id unusable
+  // against api.deepseek.com, since jcode forwards `--model` verbatim.
+  it('renders --model in the endpoint’s namespace, both directions', () => {
+    expect(
+      optionOf(buildJcodeArgs('deepseek/deepseek-v4-pro', 'p', 'deepseek'), '--model'),
+    ).toBe('deepseek-v4-pro');
+    expect(
+      optionOf(buildJcodeArgs('anthropic/claude-opus-5', 'p', 'openrouter'), '--model'),
+    ).toBe('anthropic/claude-opus-5');
+    // The SAME catalog id, rendered two ways — one canonical entry, two wires.
+    expect(
+      optionOf(buildJcodeArgs('deepseek/deepseek-v4-pro', 'p', 'openrouter'), '--model'),
+    ).toBe('deepseek/deepseek-v4-pro');
+  });
+
+  it('falls back to the backend default when no provider was chosen', () => {
+    const args = buildJcodeArgs('deepseek/deepseek-v4-pro', 'p');
+    expect(optionOf(args, '--provider-profile')).toBe(jcodeProviderProfile(DEFAULT_PROVIDER));
+  });
+
+  it('keeps the CLI contract: options first, `--`, then the prompt LAST', () => {
+    const args = buildJcodeArgs('anthropic/claude-opus-5', '--fix the bug', 'openrouter');
+    expect(args.slice(0, 2)).toEqual(['run', '--no-update']);
+    expect(args[args.length - 2]).toBe('--');
+    expect(args[args.length - 1]).toBe('--fix the bug');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The credential — pure precedence, and WHICH variable it lands in
 // ---------------------------------------------------------------------------
 
 describe('withJcodeApiKey', () => {
@@ -391,6 +470,86 @@ describe('withJcodeApiKey', () => {
     const { env } = withJcodeApiKey(parent, 'sk-resolved');
     expect(parent.DEEPSEEK_API_KEY).toBe('sk-from-shell');
     expect(env).not.toBe(parent);
+  });
+
+  // -- the variable is the PROVIDER's, never a constant ---------------------
+
+  /** Every `providerBound` env var in the registry — the set a key may land in. */
+  const PROVIDER_KEY_VARS = API_KEY_REGISTRY.filter((s) => s.providerBound).map(
+    (s) => s.envVar,
+  );
+
+  // MUTATION KILLED: reinstating `const DEEPSEEK_KEY_ENV_VAR = …` as the
+  // injection target. With it, `withJcodeApiKey(env, orKey, 'openrouter')` puts
+  // the OpenRouter secret in DEEPSEEK_API_KEY — which the DeepSeek profile then
+  // sends to api.deepseek.com.
+  it('puts the key in the env var of the provider it was resolved for', () => {
+    const or = withJcodeApiKey({}, 'sk-or-v1-secret', 'openrouter');
+    expect(or.envVar).toBe(jcodeApiKeyEnvVar('openrouter'));
+    expect(or.env.OPENROUTER_API_KEY).toBe('sk-or-v1-secret');
+
+    const ds = withJcodeApiKey({}, 'sk-deepseek-secret', 'deepseek');
+    expect(ds.envVar).toBe(jcodeApiKeyEnvVar('deepseek'));
+    expect(ds.env.DEEPSEEK_API_KEY).toBe('sk-deepseek-secret');
+  });
+
+  it('NEVER writes the key into another provider’s env var', () => {
+    // Stated over the whole registry so a third provider is covered the day it
+    // is added, not the day someone remembers to extend this test.
+    for (const info of PROVIDERS) {
+      const secret = `sk-secret-for-${info.id}`;
+      const { env, envVar } = withJcodeApiKey({}, secret, info.id);
+      expect(envVar).toBe(jcodeApiKeyEnvVar(info.id));
+      for (const otherVar of PROVIDER_KEY_VARS) {
+        if (otherVar === envVar) continue;
+        expect(env[otherVar]).toBeUndefined();
+      }
+      // And the value is nowhere else in the env either.
+      const leaked = Object.entries(env).filter(
+        ([name, value]) => name !== envVar && value === secret,
+      );
+      expect(leaked).toEqual([]);
+    }
+  });
+
+  it('strips an INHERITED foreign provider key out of the child env', () => {
+    // The agent subprocess runs arbitrary shell in the worktree. A run carries
+    // the credential it was authorized to spend and no other.
+    const { env } = withJcodeApiKey(
+      {
+        DEEPSEEK_API_KEY: 'sk-deepseek-from-shell',
+        DEEPSEEK_API_KEY_FILE: '/run/secrets/deepseek_api_key',
+        PATH: '/usr/bin',
+      },
+      'sk-or-v1-secret',
+      'openrouter',
+    );
+    expect(env.OPENROUTER_API_KEY).toBe('sk-or-v1-secret');
+    expect('DEEPSEEK_API_KEY' in env).toBe(false);
+    expect('DEEPSEEK_API_KEY_FILE' in env).toBe(false);
+    // Non-provider variables are untouched — this strips credentials, not env.
+    expect(env.PATH).toBe('/usr/bin');
+  });
+
+  it('falls back to the chosen provider’s OWN inherited var, not the default’s', () => {
+    const { env, source, provider } = withJcodeApiKey(
+      { OPENROUTER_API_KEY: 'sk-or-v1-from-shell' },
+      '',
+      'openrouter',
+    );
+    expect(provider).toBe<LlmProvider>('openrouter');
+    expect(source).toBe('env');
+    expect(env.OPENROUTER_API_KEY).toBe('sk-or-v1-from-shell');
+  });
+
+  it('reports source "none" when only the OTHER provider has a key', () => {
+    // Exactly the case that used to "work" by spending the wrong credential.
+    const { source } = withJcodeApiKey(
+      { DEEPSEEK_API_KEY: 'sk-deepseek-from-shell' },
+      '',
+      'openrouter',
+    );
+    expect(source).toBe('none');
   });
 });
 
@@ -524,5 +683,166 @@ describe('jcodeMissingApiKeyMessage', () => {
     expect(msg).toContain('DEEPSEEK_API_KEY_FILE');
     expect(msg).toContain('/run/secrets/deepseek_api_key');
     expect(msg).toContain('docs/jcode-setup-guide.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The leak, closed end to end — a REAL spawn, from AppConfig to child argv/env
+// ---------------------------------------------------------------------------
+
+// Everything above is unit-level: it pins what huu INTENDS. This block pins
+// what the child process actually RECEIVES, because that is where the secret
+// leaves. The stand-in `jcode` echoes its own argv and its own view of both
+// providers' credential variables, so a regression anywhere on the path —
+// factory, hermetic env, argv builder — fails here even if every unit stays
+// green.
+//
+// MUTATION KILLED: any change that reconnects `config.provider` from the spawn
+// (dropping the field in an AppConfig builder, pinning the profile, pinning the
+// env var). All three produced the SAME observable: `--provider-profile
+// deepseek-v4-pro` plus `DEEPSEEK_API_KEY=<the OpenRouter secret>`.
+describe('jcodeAgentFactory — the spawned child honors config.provider', () => {
+  const task: AgentTask = {
+    agentId: 1,
+    files: [],
+    branchName: 'huu/test/agent-1',
+    worktreePath: '/tmp/does-not-matter',
+    stageIndex: 0,
+    stageName: 'Stage 1',
+  };
+
+  // Echoes on ONE line each so the assertions can be exact-match, not substring
+  // (a substring test would pass on `DEEPSEEK_API_KEY=<unset>OPENROUTER…`).
+  const ECHO_JCODE = [
+    '#!/bin/sh',
+    'echo "ARGV=$*"',
+    'echo "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-<unset>}"',
+    'echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-<unset>}"',
+    '',
+  ].join('\n');
+
+  async function spawnWith(
+    config: Partial<AppConfig>,
+    env: Record<string, string>,
+  ): Promise<string[]> {
+    const dir = mkdtempSync(join(tmpdir(), 'huu-jcode-provider-'));
+    writeFileSync(join(dir, 'jcode'), ECHO_JCODE);
+    chmodSync(join(dir, 'jcode'), 0o755);
+
+    const saved: Record<string, string | undefined> = {
+      PATH: process.env.PATH,
+      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+    };
+    process.env.PATH = dir;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    for (const [k, v] of Object.entries(env)) process.env[k] = v;
+
+    try {
+      const agent = await jcodeAgentFactory(
+        task,
+        { modelId: 'deepseek/deepseek-v4-pro', ...config } as AppConfig,
+        '',
+        dir,
+        () => {},
+        undefined,
+      );
+      await agent.prompt('do the thing');
+      const transcript = await agent.getTranscript!();
+      await agent.dispose();
+      return transcript.split('\n');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** The single line starting with `<name>=`, or undefined. */
+  function line(lines: string[], name: string): string | undefined {
+    return lines.find((l) => l.startsWith(`${name}=`));
+  }
+
+  it('OpenRouter run: OpenRouter profile, OpenRouter var, NO DeepSeek var', async () => {
+    const lines = await spawnWith(
+      { provider: 'openrouter', modelId: 'anthropic/claude-opus-5', apiKey: '' },
+      { OPENROUTER_API_KEY: 'sk-or-v1-THE-SECRET' },
+    );
+    expect(line(lines, 'ARGV')).toContain('--provider-profile openrouter');
+    expect(line(lines, 'ARGV')).toContain('--model anthropic/claude-opus-5');
+    expect(line(lines, 'OPENROUTER_API_KEY')).toBe(
+      'OPENROUTER_API_KEY=sk-or-v1-THE-SECRET',
+    );
+    // The whole point: the secret is NOT in DeepSeek's variable, and the
+    // profile is not DeepSeek's, so it cannot reach api.deepseek.com.
+    expect(line(lines, 'DEEPSEEK_API_KEY')).toBe('DEEPSEEK_API_KEY=<unset>');
+    expect(line(lines, 'ARGV')).not.toContain('deepseek-v4-pro');
+  });
+
+  it('DeepSeek run: DeepSeek profile, BARE model id, NO OpenRouter var', async () => {
+    const lines = await spawnWith(
+      { provider: 'deepseek', modelId: 'deepseek/deepseek-v4-pro', apiKey: '' },
+      { DEEPSEEK_API_KEY: 'sk-THE-DEEPSEEK-SECRET' },
+    );
+    expect(line(lines, 'ARGV')).toContain('--provider-profile deepseek-v4-pro');
+    // Stripped: api.deepseek.com does not know `deepseek/deepseek-v4-pro`.
+    expect(line(lines, 'ARGV')).toContain('--model deepseek-v4-pro --');
+    expect(line(lines, 'DEEPSEEK_API_KEY')).toBe(
+      'DEEPSEEK_API_KEY=sk-THE-DEEPSEEK-SECRET',
+    );
+    expect(line(lines, 'OPENROUTER_API_KEY')).toBe('OPENROUTER_API_KEY=<unset>');
+  });
+
+  it('an exported DeepSeek key never travels on an OpenRouter run', async () => {
+    const lines = await spawnWith(
+      {
+        provider: 'openrouter',
+        modelId: 'anthropic/claude-opus-5',
+        apiKey: 'sk-or-v1-RESOLVED-BY-HUU',
+      },
+      { DEEPSEEK_API_KEY: 'sk-DEEPSEEK-FROM-SHELL', OPENROUTER_API_KEY: 'sk-or-v1-shell' },
+    );
+    expect(line(lines, 'OPENROUTER_API_KEY')).toBe(
+      'OPENROUTER_API_KEY=sk-or-v1-RESOLVED-BY-HUU',
+    );
+    expect(line(lines, 'DEEPSEEK_API_KEY')).toBe('DEEPSEEK_API_KEY=<unset>');
+  });
+
+  it('refuses an OpenRouter run when only the DeepSeek key exists', async () => {
+    // Before, this "succeeded" — by spending the DeepSeek credential. The
+    // refusal must also NAME the right variable, or it sends the user to set up
+    // exactly the key the run must not use.
+    const events: AgentEvent[] = [];
+    const savedDs = process.env.DEEPSEEK_API_KEY;
+    const savedOr = process.env.OPENROUTER_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'sk-DEEPSEEK-FROM-SHELL';
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      await expect(
+        jcodeAgentFactory(
+          task,
+          {
+            apiKey: '',
+            modelId: 'anthropic/claude-opus-5',
+            provider: 'openrouter',
+          } as AppConfig,
+          '',
+          process.cwd(),
+          (e) => events.push(e),
+          undefined,
+        ),
+      ).rejects.toThrow(/OPENROUTER_API_KEY/);
+    } finally {
+      if (savedDs === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = savedDs;
+      if (savedOr === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = savedOr;
+    }
+    const err = events.find((e) => e.type === 'error') as { message: string };
+    expect(err.message).toBe(jcodeMissingApiKeyMessage('openrouter'));
+    expect(err.message).not.toContain('DEEPSEEK_API_KEY');
   });
 });

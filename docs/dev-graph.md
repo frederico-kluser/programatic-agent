@@ -192,16 +192,26 @@ channel a node has to the node after it.
 
 ### The degradation ladder
 
-A `pi` agent has seven tools — `bash edit find grep ls read write` — and none of
-them is a web tool. The only road to the internet is `bash`, so the research
-prompt describes **shell commands** and names the exact binaries the image
-ships. It walks a three-rung ladder and stops at the first rung that **works**:
+A research agent has seven tools — `bash edit find grep ls read write` — and
+none of them is a web tool. The only road to the internet is `bash`, so the
+research prompt describes **shell commands** and names the exact binaries the
+image ships. It walks a **two-rung** ladder and stops at the first rung that
+**works**:
 
 | Rung | Command | `method` recorded |
 |---|---|---|
-| **A** — keyed search | `surf-research-skill search "…" --max 3 --quiet` | `surf-research` |
-| **B** — keyless search (Wikipedia + DuckDuckGo) | `surf-free-skill search "…" --max 3 --quiet` | `surf-free` |
-| **C** — `curl` of a URL the agent already knew | `curl` + `jq` (always present) | `direct-fetch`, or `none` |
+| **A** — keyed search (Brave, the only backend) | `surf-research-skill gate`, then `surf-search-normal "…" --task … --goal …`; raw links via `surf-research-skill search "Q1" "Q2" "Q3"` | `surf-research` |
+| **B** — `curl` of a URL the agent already knew | `curl` + `jq` (always present) | `direct-fetch`, or `none` |
+
+**There is no keyless rung.** surf v8 (`surf-agent-skill`, installed by the
+Dockerfile) searches over Brave and nothing else, and `surf-free-skill` — the
+old Wikipedia→DuckDuckGo rung — does not exist in it. Without a Brave key
+`gate` exits **78 before anything runs**, which is a configuration verdict, not
+a transient failure: retrying burns an agent card and changes nothing. The
+prompt says so explicitly, so an agent does not go hunting for a binary that is
+never coming back. `method: "surf-free"` survives only as a RETIRED value — no
+new node writes it, and an artifact carrying it is old enough that its evidence
+can no longer be re-run.
 
 **The ladder degrades on FAILURE, not merely on absence** — and that distinction
 is the whole point. `command -v` proves a binary is *installed*; it does not

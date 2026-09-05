@@ -59,6 +59,7 @@ import { Orchestrator } from '../../orchestrator/index.js';
 import { GitClient } from '../../git/git-client.js';
 import type { AgentFactory } from '../../orchestrator/types.js';
 import type { LlmClientContext } from '../llm-client-factory.js';
+import { resolveRunProvider } from '../providers.js';
 import { detectKnowledge, type KnowledgeStatus } from '../knowledge-detect.js';
 import { generateRunId } from '../run-id.js';
 import type {
@@ -97,7 +98,16 @@ import { checkWritePartition, formatWritePartitionViolations, type TaskSpec } fr
 import { compileKnowledgePipeline } from './knowledge-to-pipeline.js';
 import { landEpoch, type LandEpochResult } from './epoch-landing.js';
 import { devPaths, devSessionPaths, ROUTER_PREFIX, type DevSessionPaths } from './dev-protocol.js';
-import { collapseDevModelPolicy, pickModelRung, resolveDevModels } from './dev-model-policy.js';
+import { devModelProviderIndex } from './model-catalog-index.js';
+import {
+  checkDevModelPolicy,
+  collapseDevModelPolicy,
+  devModelRefusals,
+  formatDevModelIssues,
+  modelKnownFor,
+  pickModelRoute,
+  resolveDevModels,
+} from './dev-model-policy.js';
 import type { KnowledgeGap, KnowledgeRequest } from './knowledge-schema.js';
 import {
   FITNESS_COMMANDS_GAP,
@@ -923,7 +933,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
    * NOT acceptable is silence — the flags read as promises, so they are logged
    * AND carried into the approval gate's warnings, where a human signs.
    *
-   * The 12 methodologies are the EPOCH compiler's surface: each one compiles a
+   * The methodologies are the EPOCH compiler's surface: each one compiles a
    * structure (an extra step, a merge gate, a critic rubric) into a graph the
    * PLANNER wrote. `compileGraphPipeline` deliberately refuses to do that —
    * adding steps nobody drew is the exact decision a devgraph takes back from
@@ -952,6 +962,12 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
   const stopRequested = (): boolean => args.gracefulSignal?.aborted === true;
   const epochs: DevEpochRecord[] = [];
 
+  // "Which providers serve this id", from huu's own shipped catalog UNIONED
+  // with whatever the audited repo ships. That union is what the model
+  // preflight below judges against.
+  const modelIndex = devModelProviderIndex(cwd);
+  const isKnownModel = modelKnownFor(modelIndex, config.provider);
+
   // Every role, resolved. Only `planner` is read from here — it is the one
   // call the driver makes itself. The compilers get the RAW policy, because a
   // role it does not name must keep OMITTING `modelId` so the orchestrator's
@@ -959,6 +975,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
   const models = resolveDevModels(
     dev.models,
     config.modelId,
+    isKnownModel,
   );
 
   let sessionId = args.sessionId?.trim() || generateRunId();
@@ -1161,8 +1178,36 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
     );
   }
 
-  // Model preflight skipped in v3.0 — the model registry is not available.
-  // Id validation happens at the factory level when the first agent is built.
+  // THE MODEL PREFLIGHT, restored. It exists to move ONE failure earlier: a
+  // role routed to an id this run's provider does not serve used to survive
+  // until the first agent was spawned — worktree created, branch created,
+  // blackboard committed — and only then die on "model not found". Refusing
+  // here costs the user nothing but the message.
+  //
+  // Refuse on positive contradiction, warn on absence of evidence: the catalog
+  // is a hand-maintained recommendation list, not a registry, so an id it has
+  // never heard of is reported and RUN (huu cannot enumerate what an endpoint
+  // serves), while an id the catalog places on another endpoint only is a stop.
+  {
+    const issues = checkDevModelPolicy({
+      policy: dev.models,
+      provider: config.provider,
+      index: modelIndex,
+    });
+    for (const issue of issues) {
+      if (issue.severity === 'warn') log('warn', `model routing: ${issue.message}`);
+    }
+    const refusals = devModelRefusals(issues);
+    if (refusals.length > 0) {
+      for (const refusal of refusals) log('error', `model routing: ${refusal.message}`);
+      return finish(
+        'model-preflight-failed',
+        knowledge,
+        false,
+        `${refusals.length} role(s) routed to a model ${config.provider ?? 'this run'} does not serve:\n${formatDevModelIssues(refusals)}`,
+      );
+    }
+  }
 
   // Fail fast on the user's own uncommitted work. Every epoch ends in a merge
   // into this branch, and that merge refuses on a dirty tree — better to say
@@ -1809,9 +1854,10 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
           // runs on the `recon` role. Unset ⇒ the field is omitted and the run
           // model applies, exactly as today.
           ...(() => {
-            const recon = pickModelRung(
+            const recon = pickModelRoute(
               dev.models?.recon,
-            );
+              isKnownModel,
+            )?.model;
             return recon ? { subagentModelId: recon } : {};
           })(),
           // Only `chainOfVerification` reads this — every other option shapes
@@ -1980,6 +2026,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
           // the failure the chain exists to prevent.
           const collapsed = collapseDevModelPolicy(
             dev.models,
+            isKnownModel,
           );
           return collapsed ? { models: collapsed } : {};
         })(),
@@ -2161,9 +2208,19 @@ function isUsableVerifyCommands(value: DevVerifyCommands | undefined): value is 
 }
 
 /**
- * Map an {@link AppConfig} onto the backend-aware context the planner's chat
+ * Map an {@link AppConfig} onto the PROVIDER-aware context the planner's chat
  * client needs.
+ *
+ * `provider` is carried through and the key travels in the neutral `apiKey`
+ * field. The old shape (`deepseekApiKey`) was honored by `buildChatClient`
+ * only when the resolved provider was `deepseek`, so an OpenRouter dev session
+ * would have thrown "API key missing" while holding the right key.
  */
 export function llmContextFor(config: AppConfig): LlmClientContext {
-  return { backend: config.backend ?? 'jcode', deepseekApiKey: config.apiKey };
+  const backend = config.backend ?? 'jcode';
+  return {
+    backend,
+    provider: resolveRunProvider(backend, config.provider),
+    apiKey: config.apiKey,
+  };
 }

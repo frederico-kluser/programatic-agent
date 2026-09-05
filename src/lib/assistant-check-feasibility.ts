@@ -59,9 +59,13 @@ export async function analyzeCheckFeasibility(
   const fallbackModel = 'moonshotai/kimi-k2.6';
   const modelId = (input.modelId ?? fallbackModel).trim();
 
+  // Provider-NEUTRAL fallback: `apiKey` (not the legacy `deepseekApiKey`,
+  // which `buildChatClient` honors only when the resolved provider is
+  // `deepseek` — passing it here would silently drop the credential of an
+  // OpenRouter context).
   const ctx: LlmClientContext = input.llmContext ?? {
     backend: 'jcode',
-    deepseekApiKey: apiKey,
+    apiKey,
   };
   let chat;
   try {

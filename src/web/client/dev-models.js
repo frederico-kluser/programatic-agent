@@ -20,6 +20,55 @@
  * No DOM access at import or call time — `dev-models.test.js` runs it in Node.
  */
 
+/* ── Which presets the ACTIVE PROVIDER can actually run ────────────────────
+   `/dev` makes routing a REQUIRED decision: the form opens with a preset
+   already selected. That is only honest if the selected preset can RUN — and
+   most of them cannot, on most providers: `hetero`, `thrifty` and `monoculture`
+   route the planner (and usually the critic) to ids only openrouter.ai serves,
+   `roster` routes three roles there, and `AppConfig.provider` is ONE provider
+   for the whole session. On a machine with only a DeepSeek key that made the
+   DEFAULT path a 400 from `checkDevModelPolicy`, with nothing on screen to
+   explain it.
+
+   The verdict is NOT recomputed here. `/api/bootstrap` ships
+   `devModelPresetProviders`, produced by the same `checkDevModelPolicy` that
+   refuses the POST, so the form and the border can never give two answers. A
+   server that doesn't advertise it (an older build) answers "runnable" for
+   everything and the worst case is the 400 that already existed — degrading
+   toward the server's authority, never around it. */
+
+/**
+ * Can `preset` run on `provider`?
+ * @param {Record<string, string[]> | null | undefined} table preset → provider ids
+ * @param {string} preset
+ * @param {string} [provider] the active provider id
+ */
+export function presetRunnable(table, preset, provider) {
+  if (!table || typeof table !== 'object' || !provider) return true;
+  const list = table[preset];
+  if (!Array.isArray(list)) return true;
+  return list.includes(provider);
+}
+
+/**
+ * The preset the form should OPEN on for `provider` — the recommended split
+ * when the provider can serve it, otherwise the best one it CAN serve.
+ *
+ * Falls back to the raw list when nothing is runnable (a provider huu has no
+ * preset for): the server refuses the impossible body either way, and offering
+ * an empty selector would be worse than offering a refused one.
+ * @param {Record<string, string[]> | null | undefined} table
+ * @param {string[]} names preset names, in the server's order
+ * @param {string} [provider]
+ */
+export function defaultPreset(table, names, provider) {
+  const list = Array.isArray(names) ? names.filter((n) => typeof n === 'string') : [];
+  if (!list.length) return 'hetero';
+  const runnable = list.filter((n) => presetRunnable(table, n, provider));
+  const pool = runnable.length ? runnable : list;
+  return pool.includes('hetero') ? 'hetero' : pool[0];
+}
+
 /** The role→id object a preset prescribes; `{}` for an unknown/absent preset. */
 export function presetPolicy(presets, preset) {
   if (!presets || typeof presets !== 'object') return {};
@@ -77,6 +126,24 @@ export function buildDevModelsPayload({ roles, presets, preset, values } = {}) {
   if (!Object.keys(pinned).length) return {};
   if (known && matchesPreset(list, presets, preset, values)) return { modelsPreset: preset };
   return { models: pinned };
+}
+
+/**
+ * The fallback id the POST still has to carry (`modelId` is REQUIRED by the
+ * contract) derived from the role fields themselves — `worker` first because it
+ * is the role that does most of the work, then `planner`, then whatever else is
+ * pinned. `''` when the panel pins nothing at all; the caller supplies the
+ * catalog default then.
+ *
+ * Pure and here rather than in `dev.js` so the exact id the form would send is
+ * assertable without a DOM — the default `/dev` path is proved end to end by
+ * assembling this body and posting it at a real server.
+ * @param {string[]} [roles]
+ * @param {Record<string, string>} [values]
+ */
+export function fallbackModelIdFrom(roles, values) {
+  const pick = (role) => (((values || {})[role]) || '').trim();
+  return pick('worker') || pick('planner') || (roles || []).map(pick).find(Boolean) || '';
 }
 
 /** One-line description of what {@link buildDevModelsPayload} will send. */

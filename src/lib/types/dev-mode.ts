@@ -6,6 +6,7 @@
  * `../lib/types/dev-mode.js`.
  */
 
+import type { LlmProvider } from '../providers.js';
 import type { DevGraph } from '../dev-graph/graph-types.js';
 import type { ReviewFinding } from './pipeline.js';
 
@@ -97,59 +98,212 @@ export type DevModelRole =
    */
   | 'judge'
   /** The merge-conflict resolver → `Pipeline.integrationModelId`. */
-  | 'integration';
+  | 'integration'
+  /**
+   * THE DEBATE PAIR (`methodology.debate`). The roster document names an
+   * adversarial pair — `advogado` (defends the design) and `promotor` (attacks
+   * it) — and the `--debate` methodology is the step that finally runs them:
+   * `Sustentar as escolhas` → `Contestar as escolhas` → `Debate resolvido?`,
+   * compiled between the global recon and the fronts.
+   *
+   * They are two roles, not one, precisely so they can be routed to DIFFERENT
+   * FAMILIES. A debate between two instances of the same model is a monologue
+   * with extra tokens: the measured failure of naive multi-agent debate (it
+   * often fails to beat plain chain-of-thought) is what heterogeneity is the
+   * antidote to, and it is the only property here that cannot be recovered by
+   * a better prompt.
+   *
+   * With NO routing both fall back to `AppConfig.modelId`, which is homogeneous
+   * — say so rather than hide it (`docs/dev-mode.md`), and route them.
+   */
+  | 'advocate'
+  /** See {@link DevModelRole} `'advocate'` — the other half of the pair. */
+  | 'prosecutor';
 
 /**
- * Role → model id. Partial by design: a role left unset OMITS the field on the
+ * WHERE one role runs: the model, and the provider whose endpoint serves it.
+ *
+ * The provider half is the part that was missing while a policy value was a
+ * bare string. `AppConfig.provider` is ONE provider for the whole run, so a
+ * roster that mixes vendors is only expressible if each role can say which
+ * endpoint its id belongs to — otherwise `z-ai/glm-5.2` travels to
+ * api.deepseek.com and dies inside the first agent, after its worktree and
+ * branch already exist.
+ *
+ * `provider` absent means "whatever provider the run is on", which is exactly
+ * what a bare string has always meant. Leave it unset for an id BOTH endpoints
+ * serve (`deepseek/…` is in the catalog under both) — that keeps the route
+ * portable. Set it for an id only one endpoint serves, and the preflight can
+ * then refuse the mismatch at the border with no catalog lookup at all.
+ */
+export interface DevModelRoute {
+  /**
+   * A model id, or an ordered chain of fallback rungs (`"a/x, b/y"`) — see
+   * `modelRungs` in `dev-mode/dev-model-policy.ts`. Written in huu's canonical
+   * catalog shape (`vendor/model`); `modelIdForProvider` renames it for the
+   * endpoint at the last moment.
+   */
+  model: string;
+  /**
+   * Provider whose endpoint serves {@link model}. Absent ⇒ inherit the run's
+   * provider (`AppConfig.provider`).
+   */
+  provider?: LlmProvider;
+}
+
+/**
+ * What a role may be written as at an INPUT surface (a CLI flag, a POST body,
+ * a preset table). A bare string keeps meaning exactly what it meant, and it
+ * may carry an explicit provider as a `<provider>:` prefix
+ * (`"openrouter:anthropic/claude-opus-5"`) — the one form that survives a
+ * round-trip through a plain `Record<string, string>` JSON payload, which is
+ * what `/api/bootstrap` hands the browser and what the browser posts back.
+ */
+export type DevModelRouteInput = string | DevModelRoute;
+
+/**
+ * Role → route. Partial by design: a role left unset OMITS `modelId` on the
  * emitted step, so the existing `AppConfig.modelId` fallback applies and the
  * compiled pipeline is byte-identical to today's.
  */
-export type DevModelPolicy = Partial<Record<DevModelRole, string>>;
+export type DevModelPolicy = Partial<Record<DevModelRole, DevModelRoute>>;
+
+/** The same policy as an untrusted/loose surface may write it. */
+export type DevModelPolicyInput = Partial<Record<DevModelRole, DevModelRouteInput>>;
 
 /** Named policies the CLI and the web offer. */
-export type DevModelPreset = 'hetero' | 'thrifty' | 'monoculture' | 'uniform';
+export type DevModelPreset = 'hetero' | 'thrifty' | 'monoculture' | 'roster' | 'uniform';
 
+/**
+ * `deepseek/…` ids are deliberately written WITHOUT a provider: both endpoints
+ * serve them (the catalog carries a `deepseek` and an `openrouter` entry for
+ * each), so an unqualified route is portable and inherits the run's provider.
+ * Only the ids a single endpoint serves carry the `openrouter:` prefix — and
+ * that prefix is what makes a preset self-describing, so the preflight can
+ * refuse a provider mismatch WITHOUT consulting a catalog that may not ship
+ * with the audited repository.
+ */
 const DS = 'deepseek/deepseek-v4-pro';
+const DS_FLASH = 'deepseek/deepseek-v4-flash';
 
 export const DEV_MODEL_PRESETS = {
-  /** ★ The default: strong blind leader, cheap swarm, critic from ANOTHER family. */
+  /**
+   * ★ Strong blind leader, cheap swarm, critic from ANOTHER family.
+   *
+   * An OPENROUTER preset, and it cannot be anything else: a cross-family critic
+   * needs an endpoint that fronts more than one family, and OpenRouter is the
+   * only one huu speaks. Run it with `--provider=openrouter`; on DeepSeek the
+   * preflight refuses it by name instead of letting `z-ai/glm-5.2` reach
+   * api.deepseek.com.
+   */
   hetero: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
-    critic: 'moonshotai/kimi-k2.6',
+    critic: 'openrouter:moonshotai/kimi-k2.6',
     reporter: DS,
     judge: DS,
     integration: DS,
+    // The debate pair reuses the two families this preset ALREADY pays for —
+    // the DeepSeek family that writes the code and the Moonshot family that
+    // already audits it — so `--debate` is cross-family by construction
+    // without adding a vendor, a key or a billing surface to the preset.
+    advocate: DS,
+    prosecutor: 'openrouter:moonshotai/kimi-k2.6',
   },
   /** Same as `hetero`, with the reporter demoted — it is mechanical prose over a diff. */
   thrifty: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
-    critic: 'moonshotai/kimi-k2.6',
-    reporter: 'deepseek/deepseek-v4-flash',
+    critic: 'openrouter:moonshotai/kimi-k2.6',
+    reporter: DS_FLASH,
     judge: DS,
     integration: DS,
+    // NOT demoted, unlike the reporter. Demoting ONE side of a debate buys a
+    // few cents and hands the judge exactly the asymmetry its anonymized
+    // rubric exists to remove: the weaker writer loses on prose rather than on
+    // argument. Thrifty's economy comes from the reporter, not from here.
+    advocate: DS,
+    prosecutor: 'openrouter:moonshotai/kimi-k2.6',
   },
   /**
    * Everything on the worker's model — INCLUDING the critic. This is
    * explicitly the configuration the evidence flags as the weakest
    * assumption; it exists so the cross-family critic can be A/B'd against it,
    * not as a recommendation.
+   *
+   * The planner stays on the same leader as `hetero` ON PURPOSE: the arm under
+   * test is the CRITIC, so changing the leader too would confound the
+   * comparison. That also makes this an OpenRouter preset.
    */
   monoculture: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
     critic: DS,
     reporter: DS,
     judge: DS,
     integration: DS,
+    // Same family on BOTH sides of the debate, deliberately — this preset is
+    // the A/B baseline, and the debate's heterogeneity claim is exactly the
+    // kind of thing that has to be measured against a monoculture arm rather
+    // than assumed. It is the one preset where this is not a defect.
+    advocate: DS,
+    prosecutor: DS,
+  },
+  /**
+   * The heterogeneous ROSTER: one endpoint (OpenRouter), five vendors, each
+   * role on the model whose failure mode it can least afford.
+   *
+   *   planner     V4 Pro           — the blind leader decomposes; it reads only
+   *                                  a digest, so reasoning beats context here.
+   *   recon       V4 Pro           — the ARCHITECT. Front recon writes the task
+   *                                  specs, i.e. it decides the decomposition;
+   *                                  a vague atlas produces vague findings.
+   *   worker      V4 Flash         — the fan-out. Cheapest per token, and every
+   *                                  worker's output is read by a critic.
+   *   critic      GPT-5.6 Sol      — the PROSECUTOR, and cross-family from the
+   *                                  DeepSeek workers by construction. A model
+   *                                  auditing its own family is the single most
+   *                                  fragile assumption in this design.
+   *   reporter    GLM-5.3 Flash    — retrieval-and-summarize over a long diff:
+   *                                  1.31M of context for ~$0.08/Mtok.
+   *   judge       Claude Opus 5    — the strongest model in the roster, on the
+   *                                  role whose failure is SILENT (every check
+   *                                  has a forward `default: true`).
+   *   integration V4 Pro           — resolves conflicts in code the DeepSeek
+   *                                  workers wrote; same family is an asset for
+   *                                  a merge, unlike for an audit.
+   *
+   *   advocate    Claude Opus 5    — the adversarial PAIR the roster document
+   *   prosecutor  GPT-5.6 Sol        names (advogado / promotor), which
+   *                                  `--debate` finally has a step for. Two
+   *                                  vendors, no new model: both ids are
+   *                                  already in this roster, so turning the
+   *                                  debate on costs a preset nothing.
+   *
+   * KNOWN OVERLAP, stated rather than hidden: `judge` and `advocate` are both
+   * Opus 5, so the debate's judge shares a family with one debater. With five
+   * models over nine roles some overlap is unavoidable, and this is why the
+   * judge's rubric is ANONYMIZED — it is never told which brief is whose. A
+   * session that wants full independence routes `--judge-model=` to a sixth
+   * family; the compiler stamps whatever the policy names.
+   */
+  roster: {
+    planner: DS,
+    recon: DS,
+    worker: DS_FLASH,
+    critic: 'openrouter:openai/gpt-5.6-sol',
+    reporter: 'openrouter:z-ai/glm-5.3-flash',
+    judge: 'openrouter:anthropic/claude-opus-5',
+    integration: DS,
+    advocate: 'openrouter:anthropic/claude-opus-5',
+    prosecutor: 'openrouter:openai/gpt-5.6-sol',
   },
   /** Every role falls back to `AppConfig.modelId` — today's behavior, byte-identical. */
   uniform: {},
-} as const satisfies Record<DevModelPreset, DevModelPolicy>;
+} as const satisfies Record<DevModelPreset, DevModelPolicyInput>;
 
 /** One parallel workstream within an epoch. */
 export interface DevFront {
@@ -493,6 +647,25 @@ export interface DevMethodology {
    * becomes a plan nobody downstream can correct.
    */
   chainOfVerification?: boolean;
+  /**
+   * Compile an ADVERSARIAL DEBATE over the epoch's design decisions, between
+   * the global recon and the fronts: one agent writes the decision record, a
+   * second one from ANOTHER model family attacks it, and a judge with an
+   * ANONYMIZED rubric routes on two enumerated outcomes.
+   *
+   * It is a methodology and not a free-running discussion on purpose. The
+   * debate emits PROSE into two files huu named in advance; the graph is the
+   * compiler's, fixed, revalidated by `PipelineSchema` + `validateTopology`;
+   * the judge's verdict is one of two labels with the forward one as
+   * `default: true`. Nothing here lets a model emit `steps`, `dependsOn` or a
+   * path — the MANIFESTO boundary dev mode already lives inside.
+   *
+   * Heterogeneity is the whole mechanism: {@link DevModelRole} gains
+   * `advocate` and `prosecutor` so the two sides can be routed to different
+   * families, and every preset but `monoculture` (the A/B baseline) does.
+   * Two agents of the SAME model agreeing is not evidence of anything.
+   */
+  debate?: boolean;
 }
 
 /** Everything `runDevMode` needs beyond the shared `AppConfig`. */

@@ -162,7 +162,13 @@ import {
   ALL_BACKENDS,
   type AgentBackendKind,
 } from './orchestrator/backends/registry.js';
-import { parseProvider, providerToBackend } from './lib/providers.js';
+import {
+  PROVIDERS,
+  parseProvider,
+  providerInfo,
+  providerToBackend,
+  resolveRunProvider,
+} from './lib/providers.js';
 import type { AppConfig, Pipeline } from './lib/types.js';
 import type { LlmProvider } from './lib/providers.js';
 import { installSafeTerminal } from './ui/safe-terminal.js';
@@ -442,7 +448,9 @@ async function main(): Promise<void> {
     process.env.HUU_RAM_PERCENT = String(resolveRamPercent(ramPercentArg));
   }
 
-  // --provider=<name> picks the LLM provider for jcode (deepseek).
+  // --provider=<name> picks the LLM provider jcode dispatches to. It is a
+  // SEPARATE axis from --backend: both providers map to the same `jcode` kind,
+  // so the choice has to travel on its own all the way to the credential.
   const providerArg = args
     .filter((a) => a.startsWith('--provider='))
     .map((a) => a.slice('--provider='.length))
@@ -451,7 +459,12 @@ async function main(): Promise<void> {
   if (providerArg !== undefined) {
     const parsed = parseProvider(providerArg);
     if (!parsed) {
-      console.error(t('cli.err_unknown_provider', { value: providerArg }));
+      console.error(
+        t('cli.err_unknown_provider', {
+          value: providerArg,
+          valid: PROVIDERS.map((p) => p.id).join(', '),
+        }),
+      );
       process.exit(1);
     }
     providerFromCli = parsed;
@@ -610,28 +623,32 @@ async function main(): Promise<void> {
     }
 
     // The `provider` field (when set) is the source of truth and overrides
-    // `backend`: deepseek → jcode. Falls back to `backend`
-    // for configs written before provider selection existed.
+    // `backend`: both providers map to jcode. Falls back to `backend` for
+    // configs written before provider selection existed.
     const effectiveBackend: AgentBackendKind = runConfig.provider
       ? providerToBackend(runConfig.provider)
       : runConfig.backend;
+    // `resolveRunProvider` — never `defaultProviderForBackend` — because a
+    // `stub` run must resolve to NO provider (and therefore no credential),
+    // not to the fallback DeepSeek.
+    const effectiveProvider = resolveRunProvider(effectiveBackend, runConfig.provider);
     const bundle = selectBackend(effectiveBackend);
     let apiKey = '';
     let endpoint: string | undefined;
     if (bundle.requiresApiKey) {
-      // The backend bundle OWNS the name of the credential it needs
-      // (`selectBackend(kind).apiKeySpecName`). Hard-coding the name here is
-      // what once asked a `--backend=jcode` headless run for the OpenRouter
-      // key and hard-exited even with DEEPSEEK_API_KEY set; reading it off the
-      // bundle keeps this branch correct for whatever backend comes next.
-      const specName = bundle.apiKeySpecName ?? 'deepseek';
-      const spec = findSpec(specName);
+      // The PROVIDER owns the name of the credential, not the bundle:
+      // `selectBackend('jcode').apiKeySpecName` is undefined precisely because
+      // jcode serves two providers. Reading it here is what made a
+      // `provider: "openrouter"` config hard-exit demanding DEEPSEEK_API_KEY
+      // while a perfectly good OPENROUTER_API_KEY was exported.
+      const info = effectiveProvider ? providerInfo(effectiveProvider) : undefined;
+      const spec = info ? findSpec(info.apiKeySpecName) : undefined;
       if (spec) apiKey = resolveApiKey(spec);
       if (!apiKey) {
         console.error(
           t('cli.err_auto_no_key', {
-            provider: spec?.label ?? bundle.label,
-            envVar: spec?.envVar ?? specName,
+            provider: info?.label ?? spec?.label ?? bundle.label,
+            envVar: spec?.envVar ?? info?.apiKeySpecName ?? 'API key',
             secretPath: spec?.secretMountPath ?? '/run/secrets/<key>',
           }),
         );
@@ -644,7 +661,7 @@ async function main(): Promise<void> {
       apiKey: apiKey || 'stub',
       modelId: runConfig.modelId,
       backend: effectiveBackend,
-      /* provider removed from AppConfig */
+      provider: effectiveProvider,
       endpoint,
     };
 
@@ -670,10 +687,17 @@ async function main(): Promise<void> {
   // pipeline file: the planner writes one per epoch and huu compiles it into
   // the same `dependsOn` wave graph a hand-authored pipeline would produce.
   if (filtered[0] === 'dev') {
+    // The provider travels WITH the backend, never re-derived downstream: it is
+    // what names the credential `runDevCli` resolves, the base URL the planner's
+    // chat client dials and the `--provider-profile` every jcode agent spawns
+    // with. This used to be dropped here — `huu dev --provider=openrouter` was
+    // REFUSED for exactly that reason — and dropping it is what would make a
+    // session resolve one provider's key and spend it at the other's endpoint.
     const code = await runDevCli({
       args: filtered.slice(1),
       cwd: process.cwd(),
       backend: backendKindFromCli ?? 'jcode',
+      ...(providerFromCli ? { provider: providerFromCli } : {}),
       concurrency: concurrencyArg,
       autoScale,
     });
@@ -730,6 +754,9 @@ async function main(): Promise<void> {
       args,
       env: process.env,
       lockedBackend,
+      // Carried explicitly: `providerToBackend` is many-to-one, so the server
+      // cannot recover `--provider=openrouter` from `lockedBackend` alone.
+      lockedProvider: providerFromCli ?? undefined,
       initialPipeline,
       defaultAutoScale: autoScale,
       defaultConcurrency: concurrencyArg,
@@ -754,6 +781,7 @@ async function main(): Promise<void> {
       conflictResolverFactory={initialBundle.conflictResolverFactory}
       requiresApiKey={initialBundle.requiresApiKey}
       backend={lockedBackend}
+      provider={providerFromCli ?? undefined}
       autoStart={autoStart}
       autoScale={autoScale}
       concurrency={concurrencyArg}

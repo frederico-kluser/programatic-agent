@@ -166,6 +166,16 @@ export const DEV_METHODOLOGIES: readonly MethodologyDefinition[] = [
     plannerBullet:
       '- `chainOfVerification` — every claim in the briefing you are reading was RE-CHECKED against the repository by a second agent, and anything unreproducible was demoted into `unknowns`. So read `unknowns` as load-bearing, not as filler: it is now a measured statement of what this run does not know. Plan around those gaps explicitly — send a front to find out — rather than assuming the missing detail.',
   },
+  {
+    key: 'debate',
+    flag: 'debate',
+    label: 'Adversarial debate',
+    description:
+      "Two agents from DIFFERENT model families argue this epoch's design decisions before any front starts — one records them, the other attacks them — and an anonymized judge rules, capped at two rounds. Like every methodology, it also switches every task's critic to HOLD instead of waiving at the round cap.",
+    usage: 'debate adversarial das escolhas antes das frentes (e crítico em hold)',
+    plannerBullet:
+      '- `debate` — your plan\'s design decisions will be ARGUED ADVERSARIALLY before any front starts, by two agents from different model families, and a judge rules on the record. So write each front\'s `rationale` as a DECISION and not as a description: what was chosen, what was rejected, and what would show the choice was wrong. A rationale that only restates the title gives the debate nothing to argue about and the epoch pays for two agents that found nothing.',
+  },
 ];
 
 /**

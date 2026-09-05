@@ -14,11 +14,11 @@ import {
   type AgentBackendKind,
 } from '../orchestrator/backends/registry.js';
 import {
+  detectForeignKeySpec,
   findSpec,
   maskKey,
   resolveApiKey,
   resolveApiKeyWithSource,
-  findMissingKeysForBackend,
   findMissingKeysForProvider,
   type ApiKeySpec,
 } from '../lib/api-key.js';
@@ -27,7 +27,12 @@ import {
   loadKeyPool,
   type KeyPoolState,
 } from '../lib/api-key-pool.js';
-import { PROVIDERS, type ProviderInfo } from '../lib/providers.js';
+import {
+  PROVIDERS,
+  providersForBackend,
+  resolveRunProvider,
+  type ProviderInfo,
+} from '../lib/providers.js';
 import { loadRecommendedModels } from '../models/catalog.js';
 import { supportsThinking } from '../lib/model-factory.js';
 import {
@@ -51,9 +56,11 @@ export interface BackendInfo {
   /** True when a usable key is already resolvable (env, mount, or saved). */
   hasKey: boolean;
   /**
-   * Registry name of this backend's primary credential (e.g. 'deepseek').
-   * The browser uses it to look up the per-session key it keeps in memory
-   * and to send that key with each run — see the browser-only key flow.
+   * Registry name of this backend's credential — present ONLY for a backend
+   * that serves exactly one provider, and therefore `undefined` for `jcode`.
+   * The browser must look the spec up on the PROVIDER it selected
+   * (`/api/providers` → `keySpecs`), which is the only object that knows
+   * whether this run spends the DeepSeek key or the OpenRouter one.
    */
   apiKeySpecName?: string;
   /** False for stub — surfaced as a no-cost "demo" backend in the UI. */
@@ -114,17 +121,20 @@ export interface PipelineInfo {
   steps: StepInfo[];
 }
 
+/**
+ * "Could a run on this backend launch at all?" — true when AT LEAST ONE of the
+ * providers it serves has its credential resolvable. It is deliberately NOT
+ * "the first provider has a key": with only `OPENROUTER_API_KEY` exported, that
+ * reading reported jcode as key-less while a perfectly runnable OpenRouter run
+ * was one click away. The per-provider truth lives in `listProvidersInfo()`,
+ * which is what the launch form actually gates on.
+ */
 function backendHasKey(kind: AgentBackendKind): boolean {
   const bundle = selectBackend(kind);
   if (!bundle.requiresApiKey) return true;
-  if (false) {
-    // Azure needs BOTH the key and the endpoint to actually run.
-    return false;
-  }
-  if (kind === 'jcode') {
-    return findMissingKeysForBackend('jcode').length === 0;
-  }
-  return true;
+  const provs = providersForBackend(kind);
+  if (provs.length === 0) return true;
+  return provs.some((p) => findMissingKeysForProvider(p).length === 0);
 }
 
 /** Every backend the browser may offer, annotated with live key presence. */
@@ -153,6 +163,14 @@ export function listBackendsInfo(): BackendInfo[] {
 export type KeyValidation =
   | { status: 'valid' }
   | { status: 'invalid'; httpStatus: number }
+  /**
+   * The value is ANOTHER provider's credential (its prefix belongs to a
+   * different, more specific registry spec). Refused before anything is
+   * persisted: saving it here would file an `sk-or-…` OpenRouter key under the
+   * name `deepseek` and ship it to api.deepseek.com. `belongsTo` is the spec
+   * name it really is; `label` is that spec's human label.
+   */
+  | { status: 'wrong-key'; belongsTo: string; label: string }
   | { status: 'unverifiable'; reason: string };
 
 /**
@@ -167,16 +185,31 @@ export async function validateKeyValue(
   const v = value.trim();
   if (!v) return { status: 'unverifiable', reason: 'empty value' };
 
+  // Cross-spec check FIRST — it is the only one that can catch the DeepSeek /
+  // OpenRouter mix-up (`sk-or-…` also satisfies `sk-`), and it must run before
+  // any caller persists the value.
+  const foreign = detectForeignKeySpec(spec, v);
+  if (foreign) {
+    return { status: 'wrong-key', belongsTo: foreign.name, label: foreign.label };
+  }
+
   // DeepSeek and other specs: no cheap probe available.
   return { status: 'unverifiable', reason: 'no validator for this key' };
 }
 
-/** Selectable models for a backend, with thinking-capability annotation. */
+/**
+ * Selectable models, with thinking-capability annotation.
+ *
+ * `provider` is the sharp filter and the one the browser always sends: `jcode`
+ * serves both DeepSeek and OpenRouter, so filtering by backend alone offers a
+ * Claude entry to a DeepSeek run.
+ */
 export function listModelsInfo(
   cwd: string,
   backend: AgentBackendKind,
+  provider?: LlmProvider,
 ): ModelInfo[] {
-  const models = loadRecommendedModels(cwd, backend);
+  const models = loadRecommendedModels(cwd, backend, provider);
   return models.map((m) => ({
     id: m.id,
     label: m.label,
@@ -200,8 +233,12 @@ export async function listModelsForBackend(
   cwd: string,
   backend: AgentBackendKind,
   _key: string,
+  provider?: LlmProvider,
 ): Promise<{ models: ModelInfo[]; source: 'recommended' }> {
-  return { models: listModelsInfo(cwd, backend), source: 'recommended' };
+  return {
+    models: listModelsInfo(cwd, backend, resolveRunProvider(backend, provider)),
+    source: 'recommended',
+  };
 }
 
 function specToInfo(spec: ApiKeySpec): KeySpecInfo {
@@ -214,15 +251,24 @@ function specToInfo(spec: ApiKeySpec): KeySpecInfo {
   };
 }
 
-/** Which credentials (if any) the given backend still needs before a run. */
-export function keyStatus(backend: AgentBackendKind): KeyStatus {
+/**
+ * Which credentials (if any) a run still needs, keyed on the PROVIDER.
+ *
+ * Backend-keyed, this function answered for jcode's FIRST provider, so an
+ * OpenRouter launch form reported `deepseek` missing and the run button stayed
+ * disabled while `OPENROUTER_API_KEY` was right there. `provider` undefined
+ * means "no provider will be called" (stub) → nothing is required.
+ */
+export function keyStatus(
+  backend: AgentBackendKind,
+  provider?: LlmProvider,
+): KeyStatus {
   const bundle = selectBackend(backend);
-  if (!bundle.requiresApiKey || backend === 'stub') {
+  const runProvider = resolveRunProvider(backend, provider);
+  if (!bundle.requiresApiKey || runProvider === undefined) {
     return { ok: true, missing: [] };
   }
-  const missing = findMissingKeysForBackend(backend).map(
-    specToInfo,
-  );
+  const missing = findMissingKeysForProvider(runProvider).map(specToInfo);
   return { ok: missing.length === 0, missing };
 }
 

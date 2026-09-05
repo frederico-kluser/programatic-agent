@@ -47,6 +47,15 @@
 //      M3 a critic rubric        (`standards`, `writeSet` → `ReviewSpec.prompt`)
 //      M4 a merge gate command   (`lintGate` → `Pipeline.mergeGate`)
 //      M5 a front-judge clause   (`tdd`, `writeSet` → the `verificar` condition)
+//      M6 a BLOCK before the fronts, plus the prompt block that delivers its
+//                                output (`debate`: two work steps + an
+//                                anonymized gate, and the brief block injected
+//                                into every front's recon). M6 is M1+M2 that
+//                                also has to SAY where its artefact is: a
+//                                check's `reason` never reaches the next
+//                                step's prompt, so a step that produces
+//                                knowledge for later steps must write a FILE
+//                                and name it in their prompts.
 //    Two of those are ACCUMULATORS on purpose — `collectMergeGate` and the
 //    judge's `verifyClauses` array — because several options want the one
 //    `mergeGate` field and the one clause list, and an option that overwrote
@@ -92,8 +101,54 @@ import {
 const FRONT_JUDGE_MAX_RUNS = 2;
 const EPOCH_GATE_MAX_RUNS = 2;
 
-/** Visit ceiling for a compiled epoch. 4 fronts + tail + rework loops ≈ 26. */
-const EPOCH_MAX_NODE_EXECUTIONS = 50;
+/**
+ * The `debate` round cap — the ceiling on how many times the pair may argue.
+ *
+ * A CAP, not a target: the gate's `default: true` is the FORWARD outcome, so
+ * reaching it forwards the epoch with the record as it stands rather than
+ * looping. Two is the same number the other gates use, and it is deliberately
+ * low — the `contestado` arm re-pends the advocate's whole downstream cone
+ * (every front, the tail, the gates), so each extra round is an epoch's worth
+ * of node executions against {@link EPOCH_MAX_NODE_EXECUTIONS}.
+ *
+ * MEASURED: dropping this to 1 saves only 3 visits in the worst case (82 vs
+ * 85 with the plan gate still re-pending the debate), because the cost is not
+ * the rounds — it is which cone a rework re-pends. That is why the fix for the
+ * `--plan-review --debate` overflow is the redirect in
+ * {@link buildPlanCheckStep}, not a smaller cap here.
+ */
+const DEBATE_MAX_ROUNDS = 2;
+
+/**
+ * Visit ceiling for a compiled epoch — the LAST-RESORT backstop for a runaway
+ * activation loop, never a cost budget (per-check `maxRuns` is the cost
+ * budget; one work-step visit already fans out to up to `front.maxTasks`
+ * agents).
+ *
+ * RE-MEASURED, not estimated. The old comment here said "4 fronts + tail +
+ * rework loops ≈ 26" against a cap of 50, and that estimate had been wrong for
+ * a long time: replaying the REAL `runDagWaves` loop over every one of the
+ * 2^13 methodology combinations at {@link DEV_MAX_FRONTS} fronts, with every
+ * gate taking its backward arm until its own `maxRuns` forces the forward
+ * default (the pessimal strategy — verified to dominate 20 000 random ones),
+ * gives:
+ *
+ *   worst case WITHOUT `debate` .......... 70   (tdd+planReview+traceability+characterization)
+ *   worst case WITH `debate` ............. 79   (the same four, plus debate)
+ *
+ * So 50 was already ~20 short of what THIS compiler could emit before the
+ * debate existed — 2304 of the 4096 debate-free combinations blew it — and an
+ * epoch that blew it died on `recordRunError` after paying for every agent up
+ * to that point, with the sealing step never running. 96 clears the measured
+ * 79 by ~20% and still catches a genuine runaway (an unbounded loop trips any
+ * finite cap; the margin only decides how much is burned first).
+ *
+ * `compileEpochPipeline — the node-execution budget` in the test file GUARDS
+ * this: it re-runs the measurement above and fails if any combination stops
+ * fitting, or if the worst case moves off its pinned value. A new methodology
+ * that shifts the graph therefore cannot reintroduce the overflow in silence.
+ */
+const EPOCH_MAX_NODE_EXECUTIONS = 96;
 
 /** Step titles are shown in the kanban; keep them scannable. */
 const MAX_TITLE_CHARS = 40;
@@ -294,9 +349,17 @@ interface CompileCtx {
   model: (role: DevModelRole) => { modelId?: string };
 }
 
+/**
+ * A step carries a model, never a provider: `AppConfig.provider` is one
+ * provider per run, and the pipeline schema has no per-step provider field to
+ * stamp. So a route's `provider` is NOT dropped silently — it is enforced one
+ * layer up, by `checkDevModelPolicy` at the session border, which refuses a
+ * role whose id the run's provider cannot serve BEFORE any worktree exists.
+ * When a step grows a provider of its own, this is the function that fills it.
+ */
 function makeModelStamper(models: DevModelPolicy | undefined): CompileCtx['model'] {
   return (role) => {
-    const modelId = models?.[role]?.trim();
+    const modelId = models?.[role]?.model.trim();
     return modelId ? { modelId } : {};
   };
 }
@@ -834,13 +897,18 @@ function buildFrontReconStep(
   const paths = ctx.paths;
   const names = frontStepNames(index, front.title, frontStages(ctx.opts.methodology));
   const tasksPath = paths.frontTasks(epoch, front.id);
+  // The recon WAITS on the debate gate, and that edge is the whole delivery
+  // mechanism: only a later wave sees a tree where the two briefs are merged
+  // and committed. Citing the paths without the edge would point every recon
+  // at files that do not exist yet.
+  const debate = ctx.opts.methodology?.debate === true;
 
   return {
     type: 'work',
     name: names.recon,
     scope: 'project',
     files: [],
-    dependsOn: [reconStepName(), ...depVerifyNames],
+    dependsOn: [reconStepName(), ...(debate ? [debateCheckStepName()] : []), ...depVerifyNames],
     produces: tasksPath,
     ...ctx.model('recon'),
     prompt: `${RECON_EXPLORATION_BLOCK}
@@ -863,7 +931,7 @@ ${front.reconPrompt}
 === READ FIRST ===
 - \`${paths.atlas(epoch)}\` — the epoch atlas: stack, conventions, landmines, and the section naming the files this front will touch.
 - \`${devPaths.goal}\` — the goal, verbatim.
-
+${debate ? `\n${debateBriefBlock(ctx)}\n` : ''}
 ${ctx.ns(devFindingsProtocol(epoch, `${front.id}-recon`))}
 
 ${ctx.ns(taskSpecContract(epoch, front.id, front.maxTasks))}
@@ -1112,7 +1180,7 @@ When you finish, a separate reviewer reads \`git diff\` on your branch and judge
 Verify ALL of:
 ${verifyClauses.map((clause, i) => `${i + 1}) ${clause}`).join('\n')}
 
-This is run $runs of this check. If every clause holds, answer "approved". If any fails, answer "rework" and name precisely which task, which clause, and what is missing — that text is the only thing the retry agents receive.
+This is run $runs of this check. If every clause holds, answer "approved". If any fails, answer "rework" and name precisely which task, which clause, and what is missing. Your text does NOT reach the retry agents — huu re-runs the step from its own prompt — so write it as the RECORD of why this front was sent back: it lands in the run log and on this check's card, where a human reads it. Name the task and the file.
 
 ${COORDINATOR_RULES}`,
     outcomes: [
@@ -1124,6 +1192,374 @@ ${COORDINATOR_RULES}`,
   };
 
   return [...(characterize ? [characterize] : []), ...(tests ? [tests] : []), work, verify];
+}
+
+// ─────────────────────────────── the debate (`debate`) ──────────────────────
+//
+// The 13th methodology, and the only one whose steps are AGENTS ARGUING. It
+// compiles between the global recon and the fronts:
+//
+//   0. Recon do objetivo
+//   ├─ Sustentar as escolhas   (work, writes <epoch>/debate/A.md)
+//   ├─ Contestar as escolhas   (work, dependsOn ↑, writes <epoch>/debate/B.md)
+//   └─ Debate resolvido?       (check: convergiu ↦ 1a recon (DEFAULT, forward)
+//                                      contestado ↦ Sustentar (backward))
+//
+// FOUR properties keep this inside the narrow dev-mode exemption from
+// MANIFESTO differential #2 ("zero LLM planner at run time"), and none of them
+// is decorative:
+//
+//  1. The human underwrites the METHOD by passing `--debate`. Off by default,
+//     and off ⇒ not one byte of this file's output changes.
+//  2. The SHAPE is huu's, fixed, and revalidated by `PipelineSchema` +
+//     `validateTopology` like every other epoch. The debaters cannot add a
+//     step, an edge or a front.
+//  3. The debaters emit PROSE into two files huu named in advance. Nothing
+//     they write is parsed as structure — no `steps`, no `dependsOn`, no path
+//     huu did not already know. They remain structurally incapable of emitting
+//     a graph.
+//  4. The judge answers ONE of two enumerated labels, and the FORWARD one is
+//     `default: true`. Judge failure, an unknown label and the round cap all
+//     land on "the epoch proceeds", never on a loop.
+//
+// WHAT IT IS NOT: a place where an LLM decides the design. The debate produces
+// a RECORD (decisions, objections, accepted risks) that the front recons read
+// as input; the judge rules on whether that record is COMPLETE, not on who won.
+//
+// HOW THE RESULT REACHES THE FRONTS: the only step→step channel in huu is the
+// file system of the integration worktree, and only once it is COMMITTED — a
+// judge's `reason` never reaches the next step's prompt. So the debate's whole
+// output is two committed files, and each front's recon (a) waits on the
+// debate check, so its worktree branches from a tree that already has them,
+// and (b) is told to read them by path. Neither `produces` nor `scope: memory`
+// fits: those fan a step OUT into one task per listed file, and the debate is
+// input to every front, not a work list.
+//
+// WHAT `writes` DOES HERE — and what it does NOT. Both debate steps declare
+// `writes: ['<epoch>/debate/**']`. That is a DECLARATION of surface, and huu
+// uses it in exactly one place: `validateTopology`'s static disjunction, which
+// rejects two CONCURRENT steps whose write globs intersect. The advocate and
+// the prosecutor are not concurrent (the prosecutor `dependsOn` the advocate),
+// so that check has no pair to compare and passes vacuously; the runtime
+// partition check returns early too, because each step has `files: []` and so
+// fans out to exactly one task (`filesByAgent.size < 2`). It is NOT
+// containment: neither agent's toolset is restricted, neither step declares a
+// `review`, and their diffs merge without a gate. `0. Recon do objetivo` has
+// carried the same shape since dev mode existed, so this is not a new hole —
+// but the declaration must not be read as a sandbox. What actually keeps the
+// two agents off each other's file is the prompt ("Never edit `A.md`") plus
+// the fact that they run in different waves.
+
+/** The advocate's step. Unnumbered, like the plan-review pair: it is inserted
+ *  between the recon and the fan-out, and the tail owns `N+1`…`N+3`. */
+function advocateStepName(): string {
+  return 'Sustentar as escolhas';
+}
+
+/** The prosecutor's step. */
+function prosecutorStepName(): string {
+  return 'Contestar as escolhas';
+}
+
+/** The anonymized judge — the only node of the debate that routes. */
+function debateCheckStepName(): string {
+  return 'Debate resolvido?';
+}
+
+/**
+ * The debate's blackboard directory. Built inline from the epoch dir for the
+ * same reason `plan-review.md` is: it is one option's artefact, not part of
+ * the path set every epoch has.
+ */
+function debateDir(ctx: CompileCtx): string {
+  return `${ctx.paths.epochDir(ctx.opts.epoch)}/debate`;
+}
+
+/**
+ * The two brief paths — deliberately `A.md` and `B.md`.
+ *
+ * THE ANONYMIZATION IS IN THE NAMES. `advogado.md` / `promotor.md` would hand
+ * the judge the mapping the rubric exists to withhold, and no amount of prose
+ * afterwards takes it back: a filename in a shell listing is not something a
+ * model can be asked to unsee. Two neutral letters carry no role, no vendor
+ * and no model.
+ */
+function debateBriefPaths(ctx: CompileCtx): { a: string; b: string } {
+  const dir = debateDir(ctx);
+  return { a: `${dir}/A.md`, b: `${dir}/B.md` };
+}
+
+/**
+ * The output skeleton BOTH briefs answer in, byte for byte.
+ *
+ * A shared skeleton is the second half of the anonymization: if one side wrote
+ * headed sections and the other wrote prose, the judge could tell them apart
+ * by SHAPE without being told anything. It also gives the judge's clauses
+ * something mechanical to check — "every decision has a verdict line" is a set
+ * comparison, not a taste.
+ */
+const DEBATE_ANONYMITY_RULES = `=== ANONYMITY (non-negotiable — this is the point of the exercise) ===
+Your brief is read by a judge that is NOT told WHICH MODEL wrote it. (Your role is a different matter — the two files answer different questions, so which one is the record and which is the attack is plain from their content, and hiding that was never the goal.) Do not identify yourself in it, in any way:
+- never name the model, the vendor or the family you are (no "as Claude", no "GPT", no "as an AI assistant by …");
+- never name your ROLE ("advocate", "prosecutor", "advogado", "promotor", "defence", "attack") or the other agent's;
+- no signature, no greeting, no meta-commentary about being one side of a debate.
+Discussing a model as SUBJECT MATTER is fine — if the epoch's work is about models, name them. What is forbidden is identifying the AUTHOR of this brief.`;
+
+/**
+ * The advocate: writes the DECISION RECORD.
+ *
+ * It is the first cognitive op of the debate and the one that has to be
+ * ground-truthed — a decision record invented from the goal alone would give
+ * the prosecutor nothing real to attack. Hence the atlas and the goal as
+ * mandatory reads, and "cite the file" as the bar for a decision.
+ */
+function buildAdvocateStep(ctx: CompileCtx): PipelineStep {
+  const { epoch, goal } = ctx.opts;
+  const paths = ctx.paths;
+  const { a, b } = debateBriefPaths(ctx);
+  return {
+    type: 'work',
+    name: advocateStepName(),
+    scope: 'project',
+    files: [],
+    dependsOn: [reconStepName()],
+    writes: [`${debateDir(ctx)}/**`],
+    ...ctx.model('advocate'),
+    prompt: `${ctx.ns(DEV_SKIP_RULE)}
+
+${DEV_STEP_BOUNDARY}
+
+You are writing the DECISION RECORD for epoch ${epoch} of a huu development run, before any front starts. ONE cognitive op: state the design decisions this epoch rests on, each with the alternative it rejects. You implement NOTHING and you change no source.
+
+Another agent will attack this record next, and a judge rules on the result. A record that hides a decision does not survive that; a record that states one clearly and defends it does.
+
+=== THE GOAL (written by the human, never reinterpret it) ===
+${goal}
+
+=== THIS EPOCH ===
+${ctx.opts.plan.epochGoal}
+
+=== THE FRONTS THIS EPOCH WILL RUN ===
+${ctx.opts.plan.fronts.map((f) => `- **${f.id}** (${f.title}): ${f.rationale}`).join('\n')}
+
+=== READ FIRST (all of it, before writing a line) ===
+- \`${paths.atlas(epoch)}\` — the epoch atlas the recon just wrote: stack, conventions, landmines, per-front file map.
+- \`${devPaths.goal}\` — the goal, verbatim.
+
+=== WRITE \`${a}\` ===
+Create the directory if needed. Exactly these sections, in this order:
+
+\`\`\`markdown
+## Decisões
+### D1 — <the decision, one imperative sentence>
+- **Escolhido:** <what this epoch will do>
+- **Rejeitado:** <the concrete alternative, named — not "doing nothing">
+- **Por quê:** <the reason, grounded in the atlas, the goal or a file you read — cite the path>
+- **Falsificaria:** <the observation that would prove this choice wrong>
+
+### D2 — …
+
+## Riscos assumidos
+- <one line each: a risk this epoch accepts on purpose, and why it is acceptable>
+\`\`\`
+
+=== WHAT COUNTS AS A DECISION ===
+- The front partition itself (why THIS split and not another), where a shared file is owned, the order the fronts run in.
+- Any choice the atlas leaves open that the work cannot proceed without.
+- At most 6 decisions. Ranking them is part of the job: a record of twenty is a record of none.
+- If a "decision" has no alternative anyone would seriously choose, it is not a decision — leave it out.
+
+=== HARD RULES ===
+- Write ONLY \`${a}\`. Change no source, write no other file.
+- Every "Por quê" points at something real — a path, an atlas line, the goal. A reason you cannot point at belongs in \`## Riscos assumidos\`, not in \`## Decisões\`.
+- If you are re-running because the judge sent the debate back, READ \`${b}\` first and REWRITE \`${a}\` whole: fold every sustained objection into the decision it hits, and move what you still refuse to change into \`## Riscos assumidos\` with the reason. Never append a second copy.
+
+${DEBATE_ANONYMITY_RULES}`,
+  };
+}
+
+/**
+ * The prosecutor: attacks the record.
+ *
+ * `dependsOn` the advocate, so it runs in a LATER wave and reads a tree where
+ * `A.md` is already merged and committed — the only channel that exists.
+ *
+ * The per-decision verdict line is what makes the judge's clauses mechanical:
+ * "every decision in A has a verdict in B" is a set comparison, and a set
+ * comparison is the shape of check a judge can actually settle.
+ */
+function buildProsecutorStep(ctx: CompileCtx): PipelineStep {
+  const { epoch, goal } = ctx.opts;
+  const paths = ctx.paths;
+  const { a, b } = debateBriefPaths(ctx);
+  return {
+    type: 'work',
+    name: prosecutorStepName(),
+    scope: 'project',
+    files: [],
+    dependsOn: [advocateStepName()],
+    writes: [`${debateDir(ctx)}/**`],
+    ...ctx.model('prosecutor'),
+    prompt: `${ctx.ns(DEV_SKIP_RULE)}
+
+${DEV_STEP_BOUNDARY}
+
+You are attacking the decision record of epoch ${epoch} of a huu development run, before any front starts. ONE cognitive op: find where these decisions break. You implement NOTHING, you change no source, and you do NOT rewrite the record.
+
+=== THE GOAL (written by the human, never reinterpret it) ===
+${goal}
+
+=== THIS EPOCH ===
+${ctx.opts.plan.epochGoal}
+
+=== READ FIRST (all of it, before writing a line) ===
+- \`${a}\` — the decision record under attack. Every decision carries an id (D1, D2, …).
+- \`${paths.atlas(epoch)}\` — the epoch atlas: stack, conventions, landmines, per-front file map.
+- \`${devPaths.goal}\` — the goal, verbatim.
+
+=== WRITE \`${b}\` ===
+Exactly these sections, in this order, one entry per decision id in \`${a}\` — none skipped:
+
+\`\`\`markdown
+## Veredito por decisão
+- D1: SUSTENTADA — <one line: why the objection you looked for does not land>
+- D2: CONTESTADA — <one line: the failure this decision produces>
+
+## Objeções
+### D2
+- **Falha prevista:** <the concrete failure — the input, the file, the merge, the command that breaks>
+- **Evidência:** <a path you read, a command you ran with its exit code, an atlas line you quote>
+- **Alternativa mais barata:** <the specific thing to do instead — not "reconsider">
+\`\`\`
+
+=== WHAT MAKES AN OBJECTION LEGITIMATE ===
+- CONTESTADA requires a concrete failure and evidence you can point at: a path, a quoted atlas line, a command with its exit code. A confident story about how something "could" break is not evidence — that decision is SUSTENTADA and your doubt goes in its one-line reason.
+- Attack the DECISION, never the writing. Length, tone and confidence are not defects.
+- "I could not find a problem with this one" is a correct and cheap answer, and SUSTENTADA is the right verdict for it. A record where you contested everything is a record nobody can act on — you are looking for the objections that survive, not for a score.
+- At most 4 CONTESTADA verdicts. If more than four decisions are genuinely broken, the epoch has a bigger problem than a debate can fix: say so in the worst one's objection.
+
+=== HARD RULES ===
+- Write ONLY \`${b}\`. Never edit \`${a}\` — the record is the other side's to revise, and a debate where one side rewrites the other's brief has decided nothing.
+- Change no source. You are attacking a plan, not fixing code.
+- Every decision id in \`${a}\` appears exactly once under \`## Veredito por decisão\`. A missing id is a malformed brief, not a shorter one.
+- If you are re-running because the judge sent the debate back, re-read \`${a}\` (it has been revised) and REWRITE \`${b}\` whole against the new version. Never append.
+
+${DEBATE_ANONYMITY_RULES}`,
+  };
+}
+
+/**
+ * The judge, with an ANONYMIZED rubric.
+ *
+ * It is never told which brief came from which agent or which model, and its
+ * clauses are set comparisons over the two files rather than a quality
+ * ranking. That matters more here than anywhere else in dev mode: a judge that
+ * knows "the strong model wrote A" has a reason to agree with A, and in a
+ * roster where the judge shares a family with one debater (see
+ * `DEV_MODEL_PRESETS.roster`) that reason is real.
+ *
+ * The verdict is about the STATE OF THE RECORD, not about a winner. There is
+ * no "the advocate wins" outcome to route on, because a debate that picked a
+ * winner would be an LLM deciding the design — the thing the exemption does
+ * not cover.
+ */
+function buildDebateCheckStep(ctx: CompileCtx, forwardName: string): PipelineStep {
+  const { epoch } = ctx.opts;
+  const { a, b } = debateBriefPaths(ctx);
+  return {
+    type: 'check',
+    name: debateCheckStepName(),
+    dependsOn: [prosecutorStepName()],
+    maxRuns: DEBATE_MAX_ROUNDS,
+    ...ctx.model('judge'),
+    condition: `You are the debate gate for epoch ${epoch}, in the integration worktree with shell access.
+
+Two independent agents produced the two briefs below. You are NOT told which agent or which MODEL wrote either one, the letters are labels and not a ranking, and you must not try to work it out — judge the RECORD, never the authors. Their ROLES are plain from the files themselves and are not hidden: what is withheld is the model behind each role, so that no answer can be swayed by a family you happen to share.
+- \`${a}\` — a decision record: decisions with the alternative each one rejects, plus accepted risks.
+- \`${b}\` — an attack on that record: one verdict per decision, plus the objections behind the CONTESTADA ones.
+
+Verify ALL of:
+1) Both files EXIST and carry their sections — \`${a}\` has \`## Decisões\` and \`## Riscos assumidos\`; \`${b}\` has \`## Veredito por decisão\` and (when it contests anything) \`## Objeções\`.
+2) COVERAGE: every decision id in \`${a}\` appears exactly once under \`## Veredito por decisão\` in \`${b}\`. List the ids from both files and compare the sets — a decision nobody examined is the failure this gate exists to catch.
+3) EVIDENCE: every \`CONTESTADA\` verdict has an entry under \`## Objeções\` naming a concrete predicted failure AND evidence that points at something — a path, a quoted atlas line, a command with its exit code. Spot-check one cited path with \`ls\` or \`cat\`: a path that does not exist in this tree is not evidence.
+4) RESOLUTION: every \`CONTESTADA\` decision is either revised in \`${a}\` (the decision now says something different) or listed in \`${a}\`'s \`## Riscos assumidos\` with a reason. An objection that is neither answered nor accepted leaves the epoch about to build something one side says is broken.
+5) ANONYMITY: neither brief identifies the MODEL that wrote it — no model name, vendor or family presented as the writer, no signature, no "as an AI assistant by …". This is the clause that matters: a model discussed as SUBJECT MATTER is fine; a model claimed as the author is not. A brief that names its own role ("as the advocate…") is untidy rather than disqualifying — the roles are already legible from the files — so note it and move on.
+
+=== HOW TO WEIGH THEM (read this before answering) ===
+- LENGTH IS NOT EVIDENCE. The longer brief is not the better one, and a brief that settles a decision in one line beats one that restates it in ten.
+- ORDER IS NOT EVIDENCE. Neither the letters nor the reading order implies precedence or quality.
+- CONFIDENCE IS NOT EVIDENCE. A flat "this breaks because X, see file:line" outweighs an emphatic claim with nothing behind it.
+- You are not picking a winner. Contested decisions are an ACCEPTABLE outcome as long as they are recorded and accepted — the record's job is to make them visible to the fronts, not to make them disappear.
+
+This is run $runs of this gate. If every clause holds, answer "convergiu". If any fails, answer "contestado" and name the clause and the decision id — that sends the debate back for one more round. Your text does NOT reach the debaters: huu re-runs them from their own prompts, and what they revise is the two files. So write it as the RECORD of why the round was refused — it lands in the run log and on this gate's card, where a human reads it.
+
+${COORDINATOR_RULES}`,
+    outcomes: [
+      // default MUST be the forward/safe path: it fires on judge failure,
+      // unknown label and the `maxRuns` cap. "convergiu" means the epoch
+      // proceeds to the fronts WITH whatever record exists — an unresolved
+      // debate must never be able to hold an epoch hostage.
+      { label: 'convergiu', nextStepName: forwardName, default: true },
+      // Back to the RECORD, not to the attack: what a contested epoch needs is
+      // a revised decision, and the attack is re-run right after it anyway.
+      { label: 'contestado', nextStepName: advocateStepName() },
+    ],
+  };
+}
+
+/**
+ * The one thing about `--debate` that can be wrong without producing an error:
+ * both sides on the same model.
+ *
+ * Heterogeneity is not a nicety here, it is the mechanism — the published
+ * result on naive multi-agent debate is that it often fails to beat plain
+ * chain-of-thought, and different FAMILIES is the lever that changes that.
+ * Two instances of one model agreeing is a monologue that costs two agents.
+ *
+ * It is a WARNING and never a refusal, for the same reason every other
+ * degradation here warns: an unroutable session must still be able to run the
+ * method the human asked for. `undefined` policy ⇒ both roles fall back to
+ * `AppConfig.modelId`, which is the homogeneous case by construction.
+ */
+function debateHeterogeneityWarnings(models: DevModelPolicy | undefined): string[] {
+  const advocate = models?.advocate?.model.trim();
+  const prosecutor = models?.prosecutor?.model.trim();
+  if (!advocate || !prosecutor) {
+    return [
+      'debate is on but the advocate and/or the prosecutor is not routed — both fall back to the run model, so the two sides are the SAME model. Route them to different families (--models=roster, or --advocate-model/--prosecutor-model) or read the result as one model talking to itself',
+    ];
+  }
+  if (advocate === prosecutor) {
+    return [
+      `debate is on but both sides are routed to "${advocate}" — a debate between two instances of one model is a monologue; route them to different families`,
+    ];
+  }
+  const family = (id: string): string => id.split('/')[0]!.toLowerCase();
+  if (family(advocate) === family(prosecutor)) {
+    return [
+      `debate is on but the advocate ("${advocate}") and the prosecutor ("${prosecutor}") come from the same family "${family(advocate)}" — heterogeneity is what the debate rests on; this is the monoculture arm, not the default`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * What each front's recon is told about the debate. Injected into the recon
+ * and not into the work steps on purpose: the recon is the step that WRITES
+ * the task specs, i.e. the step where a design decision still changes
+ * something — by the time a worker reads its spec, the decision is already in
+ * it. It also keeps the debate off N×M worker prompts.
+ */
+function debateBriefBlock(ctx: CompileCtx): string {
+  const { a, b } = debateBriefPaths(ctx);
+  return `=== THE DEBATE ON THIS EPOCH'S DESIGN (the human enabled the adversarial debate for this run) ===
+Before you, two agents argued this epoch's design decisions and a judge ruled on the record. Read BOTH before you split anything:
+- \`${a}\` — the decisions, each with the alternative it rejected and what would falsify it, plus the risks this epoch accepts;
+- \`${b}\` — one verdict per decision (SUSTENTADA / CONTESTADA) and the objections behind the contested ones.
+What that binds you to:
+- A decision marked SUSTENTADA is SETTLED. Implement it; do not re-open it and do not quietly split the work a different way.
+- A decision marked CONTESTADA is an ACCEPTED RISK, not permission to redesign. Name it in the affected spec's "Context" so the agent that executes it knows what is uncertain and why.
+- If either file is missing (the debate did not converge and the gate forwarded), record that in your findings shard and plan from the atlas alone. Never invent a verdict.`;
 }
 
 /** The work step of the plan-validation pair (`planReview`). Unnumbered: it is inserted between the recon block and the fan-out, and the tail already owns the `N+1`…`N+3` numbers. */
@@ -1197,6 +1633,30 @@ ${ctx.ns(DEV_SKIP_RULE)}`,
  * default, so the maxRuns cap forwards with the findings recorded — never an
  * infinite loop. `rework` loops back to the global recon, whose activation
  * cone re-pends every spec, the audit and this check itself.
+ *
+ * WITH `debate` ON, `rework` aims one node lower: at the debate GATE instead
+ * of the global recon. Not a tuning knob — a scope statement, plus the fix for
+ * a measured overflow:
+ *
+ *  - SCOPE. This gate rules on the SPECS. The debate rules on the DESIGN. Two
+ *    specs colliding on a file is not a reason to re-argue which design the
+ *    epoch rests on, and a settled decision record that gets re-opened every
+ *    time the split is re-cut is a record of nothing.
+ *  - COVERAGE IS IDENTICAL. Every first-wave front recon declares the debate
+ *    gate in its `dependsOn`, so the gate's activation cone contains exactly
+ *    what this arm exists to re-pend — every spec, the audit, and this check —
+ *    while leaving the two argued briefs (and the atlas) standing.
+ *  - COST. Replaying `runDagWaves`, `--plan-review --debate` at 4 fronts went
+ *    from 85 worst-case node executions to 79, because the advocate and the
+ *    prosecutor stop re-running on every plan rework. The overflow this fixes
+ *    was fatal, not slow: `runDagWaves` answers a blown ceiling with
+ *    `recordRunError`, so the epoch is LOST after paying for every agent it
+ *    already ran.
+ *
+ * The arm is CONDITIONAL because the flag-off graph must stay exactly what
+ * this file always emitted — same steps, same edges, same outcomes — and with
+ * `debate` off there is no gate to aim at anyway: the global recon is then the
+ * only node whose cone covers the specs.
  */
 function buildPlanCheckStep(ctx: CompileCtx, forwardName: string): PipelineStep {
   const { epoch } = ctx.opts;
@@ -1214,7 +1674,7 @@ Read \`${paths.epochDir(epoch)}/plan-review.md\` and the shard \`${paths.finding
 2) The declared write-set disjointness check was actually performed ACROSS ALL fronts' specs — the review either lists the collisions it found or states the union is disjoint. This is the clause that keeps two parallel agents from owning the same file.
 3) Every \`"kind": "blocker"\` finding in the shard comes with a verdict that says WHAT must change — a blocker nobody can act on is a fail; name it.
 
-This is run $runs of this gate. If every clause holds, answer "approved". If any fails, answer "rework" and state precisely what the plan must fix — that text sends the epoch back to the recon agents, and they re-split from it.
+This is run $runs of this gate. If every clause holds, answer "approved". If any fails, answer "rework" and state precisely what the plan must fix — that sends the epoch back to the recon agents. Your text does NOT reach them: they re-split from the specs and the atlas, not from your verdict. So write it as the RECORD of why the plan was refused — it lands in the run log and on this gate's card, where a human reads it.
 
 ${COORDINATOR_RULES}`,
     outcomes: [
@@ -1222,7 +1682,11 @@ ${COORDINATOR_RULES}`,
       // unknown label and the maxRuns cap — the run continues WITH the
       // auditor's findings recorded, never in a loop.
       { label: 'approved', nextStepName: forwardName, default: true },
-      { label: 'rework', nextStepName: reconStepName() },
+      {
+        label: 'rework',
+        nextStepName:
+          ctx.opts.methodology?.debate === true ? debateCheckStepName() : reconStepName(),
+      },
     ],
   };
 }
@@ -1493,6 +1957,22 @@ export function compileEpochPipeline(opts: CompileEpochOptions): CompiledEpoch {
   const stages = frontStages(opts.methodology);
   const tdd = stages.tdd;
   const planReview = opts.methodology?.planReview === true;
+
+  // The debate, between the global recon and the fan-out. Its gate forwards to
+  // the FIRST front's recon: `sorted.order[0]` is topologically first, so it
+  // always has zero effective dependencies and its recon is always emitted
+  // right after this block — the forward `default` therefore always points at
+  // a later step, which is the invariant every check here has to satisfy.
+  // Aiming the arrow at a step that is already pending is a no-op on the happy
+  // path and the correct re-entry after a `contestado` round.
+  if (opts.methodology?.debate === true) {
+    steps.push(buildAdvocateStep(ctx));
+    steps.push(buildProsecutorStep(ctx));
+    steps.push(
+      buildDebateCheckStep(ctx, frontStepNames(0, sorted.order[0]!.title, stages).recon),
+    );
+    warnings.push(...debateHeterogeneityWarnings(opts.models));
+  }
 
   // Index of each front's judge, so a dependent front can wait on it.
   const verifyNameById = new Map<string, string>();

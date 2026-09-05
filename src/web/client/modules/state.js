@@ -51,9 +51,47 @@ export function setSessionKey(name, value) {
   if (!name) return;
   try { sessionStorage.setItem(keyStoreName(name), value); } catch {}
 }
+/**
+ * @deprecated The BACKEND does not name the credential: `jcode` serves both
+ * DeepSeek and OpenRouter, so the server now reports `apiKeySpecName:
+ * undefined` for it. Ask the PROVIDER instead — `activeKeySpec(S)`.
+ */
 export function backendSpecName(id, boot) {
   const b = ((boot && boot.backends) || []).find((x) => x.id === id);
   return b ? b.apiKeySpecName : undefined;
+}
+
+/**
+ * The credential spec the CURRENTLY SELECTED provider requires, straight from
+ * `/api/providers` (`listProvidersInfo` → `keySpecs`). THE single answer to
+ * "which key does this run need", client-side.
+ *
+ * Every hard-coded `'openrouter'` in the ⚙ Settings panel used to answer it
+ * instead — which is why a key saved there never reached a DeepSeek run: the
+ * run read the ACTIVE provider's spec while the panel wrote to a fixed one.
+ *
+ * @returns {{name: string, label: string, hint?: string, validatePrefix?: string}|null}
+ */
+export function activeKeySpec(S) {
+  const info = providerInfoById(S, S.provider);
+  const specs = (info && info.keySpecs) || [];
+  return specs.length ? specs[0] : null;
+}
+
+/** The spec NAME of the active provider's credential, or '' when unknown. */
+export function activeKeySpecName(S) {
+  const spec = activeKeySpec(S);
+  return spec ? spec.name : '';
+}
+
+/**
+ * The spec NAME a GIVEN provider needs — for rows that carry their own
+ * provider (the run queue), where `S.provider` is the wrong question.
+ */
+export function providerKeySpecName(S, id) {
+  const p = providerInfoById(S, id);
+  const specs = (p && p.keySpecs) || [];
+  return specs.length ? specs[0].name : '';
 }
 
 /* ---------------- Provider helpers ---------------- */

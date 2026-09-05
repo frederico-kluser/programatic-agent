@@ -1,6 +1,6 @@
 ---
 name: authoring-agent-prompts
-description: Cross-LLM prompt-engineering knowledge for huu step prompts, judge conditions and memory-recon prompts — the 12 techniques (atomic decomposition, structural tags, explicit output contract, role+stakes, few-shot, parsimonious negatives, CoT only in judges, self-check, variable injection, lean system prompt, mechanical fixed-enum judges, empirical iteration) tied to the produces MEMORY CONTRACT, $file/$hint fan-out, scope memory, forward-default CheckStep verdicts and the pi backend. Use when writing or sharpening a pipeline step prompt, designing a judge verdict, authoring a memory recon prompt, targeting a small model, or making a prompt provider-agnostic across pi's many providers.
+description: Cross-LLM prompt-engineering knowledge for huu step prompts, judge conditions and memory-recon prompts — the 12 techniques (atomic decomposition, structural tags, explicit output contract, role+stakes, few-shot, parsimonious negatives, CoT only in judges, self-check, variable injection, lean system prompt, mechanical fixed-enum judges, empirical iteration) tied to the produces MEMORY CONTRACT, $file/$hint fan-out, scope memory, forward-default CheckStep verdicts and the jcode backend. Use when writing or sharpening a pipeline step prompt, designing a judge verdict, authoring a memory recon prompt, targeting a small model, or keeping a prompt portable across whichever provider the backend is pointed at.
 metadata:
   version: 0.1.0
   type: knowledge
@@ -11,8 +11,8 @@ metadata:
 ## When to use
 
 Writing or sharpening any per-step prompt, CheckStep `condition`, or memory
-recon prompt — especially for small models or to stay portable across pi's
-15+ providers. Pairs with authoring-pipelines (step/check shapes) and
+recon prompt — especially for small models or to stay portable when the
+backend's provider changes. Pairs with authoring-pipelines (step/check shapes) and
 editing-default-pipelines (the 7 bundled defaults). The full prose +
 sources live in `docs/prompting-playbook.md` (pt-BR twin alongside).
 
@@ -78,16 +78,36 @@ get there.
     judge outcome fires on the kanban, tighten the wording the failure came
     from.
 
-## pi backend grain (default: `@mariozechner/pi-coding-agent`, OpenRouter)
+## jcode backend grain (`jcode` CLI subprocess, DeepSeek V4 Pro)
 
-- Loads project instructions itself (AGENTS.md / SYSTEM.md / on-demand
-  skills) — don't re-paste repo layout, conventions, or architecture.
-- Tools are bare UNIX (read/bash/edit/write/grep) — don't document tool APIs
-  or teach the CLI; state task + acceptance.
-- Model is pluggable across 15+ providers — keep prompts provider-agnostic
-  (schema + delimiters + examples, not a model's quirks).
+- **There is no system-prompt slot.** The role/scope/rules header is huu's own
+  and rides inside the FIRST USER MESSAGE
+  (`_shared/build-message.ts` → `agents-md-generator.ts`), so a step prompt
+  that writes `System:` framing just lands as more user text.
+- **The whole message travels as ONE argv string**, capped at
+  `JCODE_MAX_PROMPT_BYTES = 32 * 4096` (`backends/jcode/factory.ts:112`;
+  131071 bytes accepted / 131072 → E2BIG, measured). Over the 60 steps of the
+  7 bundled pipelines the full first-turn message peaks at 12581 bytes
+  (p50 4524, fixed header 1514) — so lean prompts have a hard ceiling behind
+  them, not only a style preference.
+- **Every run is stateless.** `JCODE_MEMORY_ENABLED=false`
+  (`backends/jcode/hermetic.ts:261`) — zero embeddings, no memory across
+  turns. The prompt plus the worktree ARE the context; nothing carries over
+  from a previous agent, so never write "as we discussed".
+- **No tool restriction is passed.** `buildJcodeArgs` emits only
+  `run --no-update --provider-profile <p> --model <id> -- <prompt>`
+  (`factory.ts:77`), so every agent holds jcode's full default toolset. A
+  "report, never fix" or "read-only" boundary in a prompt is PROSE, not
+  permission — write it as an acceptance condition someone can check.
+- **One provider is wired today**, not a menu: `hermetic.ts:116-120`
+  materializes a single `deepseek-v4-pro` profile against
+  `https://api.deepseek.com/v1`. Keep prompts provider-agnostic anyway
+  (schema + delimiters + examples, not a model's quirks) — that is portability
+  insurance for the next provider, not a description of the current wiring.
 - Reliable shape is *task + acceptance*, not *step-by-step keystrokes*: say
-  what must be TRUE when done. Deep dive: `docs/pi-coding-agent.md`.
+  what must be TRUE when done. Deep dive:
+  `.agents/skills/integrating-llm-backends/SKILL.md` — `docs/pi-coding-agent.md`
+  is only a REMOVED-backend marker.
 
 ## Anti-patterns (and the fix)
 
@@ -106,11 +126,12 @@ get there.
 ## References
 
 - `docs/prompting-playbook.md` (+ `docs/prompting-playbook.pt-BR.md`) — full
-  technique prose, the pi notes, and cited sources (Anthropic, OpenAI
-  GPT-4.1 + structured outputs, Gemini, Chain-of-Thought, pi).
+  technique prose and cited sources (Anthropic, OpenAI GPT-4.1 + structured
+  outputs, Gemini, Chain-of-Thought). Its backend section is STALE — it still
+  names a backend deleted in v3.0; trust the grain section above instead.
 - Related skills: authoring-pipelines (WorkStep/CheckStep schema, `produces`
   link, the memory scope), editing-default-pipelines (how the 7 bundled
-  defaults apply all of this), integrating-llm-backends (the pi backend).
+  defaults apply all of this), integrating-llm-backends (the jcode backend).
 - `src/lib/memory-contract.ts` (auto-appended MEMORY CONTRACT);
   `docs/memory-scope.md` (`$hint`/`filesFrom` semantics).
 

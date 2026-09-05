@@ -33,7 +33,15 @@ export const GAP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
  * - `repo`       — read only the code; every claim cites a path.
  * - `convention` — load the skill/router surface FIRST, then VERIFY it against
  *                  the code (a rule the code contradicts is a finding, not a rule).
- * - `external`   — web research through the surf CLI, with citations.
+ * - `external`   — web research through the surf CLI, with citations. The
+ *                  lane is REAL, not decorative: `knowledge-blackboard.ts`
+ *                  writes the surf v8 command lines, its exit-code table
+ *                  (`78` = no search key, and retrying cannot create one) and
+ *                  the URL-plus-excerpt citation rule into the gap spec, and
+ *                  every answer it produces travels FENCED — see
+ *                  `fenceUntrustedWebContent` and the note on `sources` below.
+ *                  Text that came off the web is DATA in this system; it is
+ *                  never an instruction to whoever reads it next.
  */
 export const KnowledgeGapKindSchema = z.enum(['repo', 'convention', 'external']);
 
@@ -116,7 +124,20 @@ export const KnowledgeBriefSchema = z.object({
    * schema: a shape that cannot check a citation should not pretend to.
    */
   facts: z.array(z.string().min(1).max(300)).max(20).default([]),
-  /** Where the facts were verified: repo-relative paths, or URLs for `external`. */
+  /**
+   * Where the facts were verified: repo-relative paths, or URLs for
+   * `external`.
+   *
+   * Deliberately still a bare string array. A `z.string().url()` here would
+   * reject the whole brief over one malformed citation — losing eleven good
+   * facts to punish one — and this schema's job is to keep an honest answer
+   * parseable, not to grade it. The URL requirement is stated where it can be
+   * ACTED on instead: the `external` route block demands a URL plus the
+   * shortest proving excerpt, and an `external` section whose `sources` is
+   * empty is rendered into the digest saying exactly that ("NENHUMA — nada
+   * aqui foi verificado contra a web"), so an uncited web claim is visible
+   * rather than silently equal to a cited one.
+   */
   sources: z.array(z.string().min(1).max(300)).max(20).default([]),
   /**
    * What the agent could NOT verify. REQUIRED — no default — while `facts` and

@@ -42,6 +42,7 @@ import {
 } from 'node:fs';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { findSpec } from './api-key-registry.js';
+import { DEFAULT_PROVIDER, providerInfo, type LlmProvider } from './providers.js';
 
 /** Where the wrapper mounts the host bundle. Stable — the Dockerfile symlinks into it. */
 export const JCODE_CONTAINER_DIR = '/opt/jcode';
@@ -288,9 +289,9 @@ export function jcodeMissingExecutableMessage(): string {
 }
 
 /**
- * The message the jcode backend shows when it has NO DeepSeek credential to
- * hand the subprocess — neither one huu resolved for the run nor one inherited
- * from the environment.
+ * The message the jcode backend shows when it has NO credential to hand the
+ * subprocess — neither one huu resolved for the run nor one inherited from the
+ * environment.
  *
  * Sibling of {@link jcodeMissingExecutableMessage}, same shape and same reason:
  * the raw failure ("DEEPSEEK_API_KEY not found in environment", emitted by
@@ -299,18 +300,24 @@ export function jcodeMissingExecutableMessage(): string {
  * it as an env var, it arrives as a secret MOUNT. So the message must say which
  * variable the provider profile reads and every way to supply it.
  *
- * Names come from the `deepseek` spec in the registry, so the profile's
+ * Keyed on the PROVIDER, defaulting to {@link DEFAULT_PROVIDER}: jcode serves
+ * two, and telling an OpenRouter user to export `DEEPSEEK_API_KEY` would send
+ * them to set up exactly the credential the run must NOT spend. Every name is
+ * read from that provider's spec in the registry, so the profile's
  * `api_key_env`, the Docker wrapper's mount and this text cannot drift apart.
  */
-export function jcodeMissingApiKeyMessage(): string {
-  const spec = findSpec('deepseek');
+export function jcodeMissingApiKeyMessage(
+  provider: LlmProvider = DEFAULT_PROVIDER,
+): string {
+  const info = providerInfo(provider);
+  const spec = findSpec(info.apiKeySpecName);
   const envVar = spec?.envVar ?? 'DEEPSEEK_API_KEY';
   const envFileVar = spec?.envFileVar ?? 'DEEPSEEK_API_KEY_FILE';
   const secretMountPath = spec?.secretMountPath ?? '/run/secrets/deepseek_api_key';
   return [
-    `jcode: no DeepSeek API key available (${envVar} would reach the subprocess empty).`,
+    `jcode: no ${info.label} API key available (${envVar} would reach the subprocess empty).`,
     '',
-    'The `deepseek-v4-pro` provider profile reads its credential from the',
+    `The jcode provider profile for ${info.label} reads its credential from the`,
     `${envVar} environment variable (\`api_key_env\` in jcode's config.toml —`,
     'see docs/jcode-setup-guide.md §3.1), and huu resolved no key to put there.',
     'Supply it in ANY of these ways:',
@@ -319,6 +326,6 @@ export function jcodeMissingApiKeyMessage(): string {
     `     into the container, where it arrives as ${secretMountPath};`,
     `  2. export ${envVar}=<key> before starting huu; or`,
     `  3. point ${envFileVar} at a file containing the key.`,
-    'Keys are issued at https://platform.deepseek.com.',
+    `Keys are issued at ${info.keysUrl}.`,
   ].join('\n');
 }

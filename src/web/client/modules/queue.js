@@ -3,7 +3,7 @@
 import { saveRun, listRuns, deleteRun, clearRuns, buildRunRecord, buildSyntheticRecord, exportRunsJson, downloadText, uid } from '../db.js';
 import { parseTimeoutMinutes, relinkQueue, settleQueue, summarizeQueue, groupQueueItems, queueGroupKey, fanOutBatch } from '../queue-util.js';
 import { esc, toast, shortDir, projectName, fmtDur, fmtNum, humanize } from './utils.js';
-import { $, S, api, pipeIcon, providerInfoById, providerReady, sessionKey, backendSpecName, globalTimeoutMinutes } from './state.js';
+import { $, S, api, pipeIcon, providerInfoById, providerReady, sessionKey, providerKeySpecName, globalTimeoutMinutes } from './state.js';
 import { renderStepper, goStep, showView } from './launch.js';
 import { t } from '../i18n.js';
 
@@ -238,7 +238,9 @@ export function dispatchQueueItem(i) {
 async function postRun(i) {
   const q = S.queue;
   const item = q.items[i];
-  const apiKey = sessionKey(backendSpecName(item.backend, S.boot));
+  // Keyed on the QUEUED ITEM's provider: two rows in the same queue may target
+  // different providers, and the backend they share names neither credential.
+  const apiKey = sessionKey(providerKeySpecName(S, item.provider));
   const endpoint = sessionKey('azureEndpoint');
   try {
     const r = await api('/api/run', {

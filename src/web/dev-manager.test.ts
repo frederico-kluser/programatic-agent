@@ -8,6 +8,7 @@ import type { Server } from 'node:http';
 import { createWebServer } from './server.js';
 import { runDevMode } from '../lib/dev-mode/dev-driver.js';
 import { DEV_METHODOLOGIES } from '../lib/dev-mode/methodology-registry.js';
+import { DEV_MODEL_ROLES } from '../lib/dev-mode/dev-model-policy.js';
 import { GRAPHS_DIR, writeGraph } from '../lib/dev-graph/graph-store.js';
 import type { DevGraph } from '../lib/dev-graph/graph-types.js';
 
@@ -285,7 +286,7 @@ describe('web server — development mode', () => {
     });
     const session = (await (await fetch(base + '/api/dev')).json()).session;
     expect(Object.keys(session.models).sort()).toEqual(
-      ['critic', 'integration', 'judge', 'planner', 'recon', 'reporter', 'worker'].sort(),
+      [...DEV_MODEL_ROLES].sort(),
     );
     for (const [role, id] of Object.entries(session.models)) {
       expect(id, role).toBe('stub-model');
@@ -319,7 +320,9 @@ describe('web server — development mode', () => {
       goal: 'com preset',
       modelId: 'fallback-model',
       backend: 'jcode',
-      provider: 'deepseek',
+      // `hetero` is an OPENROUTER preset: a cross-family critic needs an
+      // endpoint that fronts more than one family, and that is the only one.
+      provider: 'openrouter',
       apiKey: 'sk-or-test-key-0000',
       approval: 'each-epoch',
       skipKnowledgeBootstrap: true,
@@ -330,6 +333,68 @@ describe('web server — development mode', () => {
     expect(session.models.worker).toBe('deepseek/deepseek-v4-pro'); // from the preset
     expect(session.models.critic).toBe('moonshotai/kimi-k2.6'); // cross-family, from the preset
     expect(session.models.reporter).toBe('deepseek/deepseek-v4-flash'); // explicit wins
+  });
+
+  // The browser derives the required `modelId` from the `worker` role input,
+  // and a preset now shows `<provider>:`-prefixed ids in those inputs. The
+  // run-level model carries NO provider (`AppConfig.provider` already says
+  // which endpoint the session spends on), so the prefix must be stripped here.
+  //
+  // MUTATION KILLED: passing `params.modelId` straight through. Every step
+  // nothing routed would be stamped `openrouter:vendor/model` and the endpoint
+  // would answer "model not found" on a name huu invented.
+  it('strips a provider prefix from the run-level modelId', async () => {
+    await post(base, '/api/dev', {
+      goal: 'prefixo no modelo do run',
+      modelId: 'openrouter:anthropic/claude-opus-5',
+      backend: 'jcode',
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key-0000',
+      approval: 'each-epoch',
+      skipKnowledgeBootstrap: true,
+    });
+    const session = (await (await fetch(base + '/api/dev')).json()).session;
+    expect(session.modelId).toBe('anthropic/claude-opus-5');
+    // …and every unrouted role reads back the same bare id.
+    expect(session.models.worker).toBe('anthropic/claude-opus-5');
+  });
+
+  // THE BUG THIS WAVE FIXES, at the web border. `hetero` routes two roles to
+  // ids only openrouter.ai serves, while `AppConfig.provider` is ONE provider
+  // for the whole run — so on DeepSeek those two ids used to reach
+  // api.deepseek.com and die inside the first agent, after its worktree and
+  // branch already existed.
+  //
+  // READ THIS WITH ITS OTHER HALF. The body below is assembled BY HAND: it
+  // pairs a preset with a provider that cannot serve it, which is precisely
+  // what the border exists to refuse, and refusing it must never be relaxed.
+  // What the browser assembles ON ITS OWN is a different question and it has a
+  // different answer — `client/dev-default-path.test.js` posts the untouched
+  // form's body at this same server, for EVERY provider, and requires 200.
+  // Pinning only this half is how the default `/dev` path stayed a 400.
+  //
+  // MUTATION KILLED: dropping the `checkDevModelPolicy` refusal from
+  // `DevSessionManager.start` (or letting the preset's `openrouter:` prefixes
+  // be parsed away). The POST goes back to 200 and a doomed session opens.
+  it('REFUSES a hand-assembled preset/provider pair the endpoint cannot serve', async () => {
+    const { status, json } = await post(base, '/api/dev', {
+      goal: 'preset no provedor errado',
+      modelId: 'deepseek/deepseek-v4-pro',
+      backend: 'jcode',
+      provider: 'deepseek',
+      apiKey: 'sk-test-key-0000',
+      approval: 'each-epoch',
+      skipKnowledgeBootstrap: true,
+      modelsPreset: 'hetero',
+    });
+    expect(status).toBe(400);
+    // Actionable: which roles, which ids, and where they DO work.
+    expect(json.error).toContain('planner');
+    expect(json.error).toContain('critic');
+    expect(json.error).toContain('z-ai/glm-5.2');
+    expect(json.error).toContain('openrouter');
+    // No session was opened.
+    expect((await (await fetch(base + '/api/dev')).json()).session).toBeNull();
   });
 
   // Credential routing: the spec name comes from `selectBackend(kind)`, never
@@ -375,32 +440,47 @@ describe('web server — development mode', () => {
     }
   });
 
-  // The strongest available proof that the policy REACHES `runDevMode`: the pi
-  // model-registry preflight lives inside the driver and nowhere else, so only
-  // a policy that actually got there can trip it.
-  it('the policy reaches runDevMode — an unknown worker id fails the driver preflight', async () => {
-    await post(base, '/api/dev', {
-      goal: 'preflight de modelo',
-      modelId: 'deepseek/deepseek-v4-pro',
-      backend: 'jcode',
-      provider: 'deepseek',
-      apiKey: 'sk-or-test-key-0000',
+  // The proof that the routing policy REACHES `runDevMode`: the manager -> driver
+  // seam is spied at the top of this file, so the `dev` literal the manager
+  // handed over is directly observable.
+  //
+  // The OLD vehicle was the pi model-registry preflight inside the driver: an
+  // unknown worker id stopped the session with `model-preflight-failed`. That
+  // registry left with the pi backend — `dev-driver.ts` now says "Model
+  // preflight skipped in v3.0 — the model registry is not available", and an
+  // unknown id is caught at the factory when the first agent is built. So the
+  // side effect is gone; the thing it was proving is asserted head-on instead.
+  it('the policy reaches runDevMode — verbatim, in the dev literal', async () => {
+    vi.mocked(runDevMode).mockClear();
+    const { status } = await post(base, '/api/dev', {
+      goal: 'roteamento chega ao driver',
+      modelId: 'stub-model',
+      backend: 'stub',
       approval: 'each-epoch',
       skipKnowledgeBootstrap: true,
-      models: { worker: 'nobody/invented-this-model' },
+      models: { worker: 'nobody/invented-this-model', planner: 'z-ai/glm-5.2', bogus: 'x' },
     });
-    let session: any;
-    for (let i = 0; i < 80; i++) {
-      session = (await (await fetch(base + '/api/dev')).json()).session;
-      if (!session.active) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    expect(session.active).toBe(false);
-    expect(session.stoppedBecause).toBe('model-preflight-failed');
-    expect(session.detail).toMatch(/nobody\/invented-this-model/);
-    // …and the `planner` carve-out holds: an id the pi registry has never heard
-    // of is FINE there, because the planner never runs as a pi agent.
-    expect(session.detail).not.toMatch(/planner:/);
+    expect(status).toBe(200);
+
+    const spy = vi.mocked(runDevMode);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const dev = spy.mock.calls[0]![0].dev;
+    // VERBATIM: what the browser routed is what the driver runs — the manager
+    // re-derives nothing and substitutes nothing. An id no catalog has heard of
+    // travels untouched, which is exactly what makes a typo debuggable.
+    expect(dev.models).toEqual({
+      worker: { model: 'nobody/invented-this-model' },
+      planner: { model: 'z-ai/glm-5.2' },
+    });
+    // …and the unknown ROLE never crosses the seam.
+    expect(dev.models).not.toHaveProperty('bogus');
+
+    // The snapshot the browser reads back is that same policy, with every role
+    // it did not name falling back to `modelId`.
+    const session = (await (await fetch(base + '/api/dev')).json()).session;
+    expect(session.models.worker).toBe('nobody/invented-this-model');
+    expect(session.models.planner).toBe('z-ai/glm-5.2');
+    expect(session.models.judge).toBe('stub-model');
   });
 
   // ── runIds carry the run's phase ────────────────────────────────────────

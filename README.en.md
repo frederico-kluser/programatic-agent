@@ -730,6 +730,22 @@ the spawn, where it decides three things at once: jcode's `--provider-profile`,
 the `--model` namespace, and the environment variable the key is injected into
 — and every OTHER provider's key is stripped from the subprocess environment.
 
+**A run asks for the provider's key — exactly one of them.** The credential
+gate is keyed on the provider, not the backend (`providerBound`,
+`src/lib/api-key-registry.ts`): the ACTIVE provider's key is enforced even when
+its spec is not marked `required`, and the other provider's key is never asked
+for. Only `OPENROUTER_API_KEY` on the machine? The OpenRouter run starts and
+nothing demands `DEEPSEEK_API_KEY`. Only the DeepSeek one? Same, mirrored. With
+two providers behind one backend, binding the key to the *backend* would have
+made a single run demand both.
+
+And pasting a key into the wrong provider's prompt is **refused**, not merely
+warned about: `sk-or-…` satisfies DeepSeek's `sk-` prefix, so a prefix test
+alone could never separate the two. The discrimination is cross-spec — another
+spec's strictly more specific prefix wins (`detectForeignKeySpec`). A value
+that matches no known format still only warns, because key formats change and
+a shape huu doesn't recognize must not lock you out.
+
 Deep dive: [`docs/onboarding.md#backends-deep-dive`](docs/onboarding.md#backends-deep-dive).
 
 ---
@@ -816,6 +832,39 @@ replan`. The plan compiles into an ordinary `huu-pipeline-v2` with `dependsOn`
 edges, so the wave scheduler, the `scope: memory` fan-out, the judges and the
 deterministic merge run **unchanged**. Independent fronts become ready in the
 same wave and share one worker pool.
+
+**Methodologies — 13 checkboxes, all off by default.** `--tdd`,
+`--plan-review`, `--write-set`, `--verify-claims`, `--debate` and eight more
+change what an epoch **enforces**; with none of them on, the compiled pipeline
+is the one it always was, byte for byte. The 13th is `--debate`: before any
+front starts, two agents argue the plan's decisions — one defends them
+(`A.md`), the other attacks them (`B.md`), one `SUSTENTADA`/`CONTESTADA`
+verdict per decision — and a judge whose rubric is **anonymized by model**
+closes the record. There is no "the advocate won" outcome: a sustained decision
+gets implemented, a contested one becomes a named risk in the affected front's
+spec. Turning on *any* methodology also switches every task's critic to HOLD
+(park the card for a human) instead of a silent waive at the round cap.
+
+**Per-role routing — `--models=<preset>`.** The nine roles (`planner`, `recon`,
+`worker`, `critic`, `reporter`, `judge`, `integration`, `advocate`,
+`prosecutor`) can each land on a different model, and every route carries the
+**provider** alongside the id — `openrouter:anthropic/claude-opus-5`. Presets:
+`uniform` (everything on the run's model, today's behavior), `hetero`,
+`thrifty`, `monoculture` and `roster` — the last one five vendors over a single
+endpoint, one per role. Per-role flags (`--critic-model=`, `--judge-model=`,
+`--advocate-model=`, …) override the preset, and a value may be a
+comma-separated **fallback chain**.
+
+**The model preflight — refusal happens at the border.** A role routed to an id
+the catalog places on ANOTHER endpoint is a **refusal, exit 1**, before any
+worktree or branch exists: `hetero`, `thrifty`, `monoculture` and `roster` pin
+ids only OpenRouter serves, so under `--provider=deepseek` they stop at the
+command line instead of dying inside the first agent. Absence of evidence is a
+**warning**, never a refusal — an id no catalog entry mentions runs anyway,
+because the catalog is a recommendation list, not a registry. On `/dev`, the
+presets the active provider cannot run come back **disabled** with a tooltip
+naming the provider that serves them, decided by the SAME function that refuses
+the POST.
 
 > **Does this contradict the manifesto?** It does, in two places, and the doc
 > says so plainly: differential #2 is "zero LLM planner at run time", and the
@@ -991,11 +1040,11 @@ unretouched:
   share of commits credit "Claude" as author or co-author. That's not a
   flaw — it's context. Evaluate it as you would any new tool from one
   person.
-- **Version.** `5.2.0`, published on npm as
+- **Version.** `6.0.0`, published on npm as
   [`huu-pipe`](https://www.npmjs.com/package/huu-pipe) and as the
   `ghcr.io/frederico-kluser/huu` image. The [CHANGELOG](CHANGELOG.md)
   follows Keep a Changelog.
-- **Tests and CI.** Over **2,200 test cases** (Vitest) across 156 colocated
+- **Tests and CI.** **4,094 test cases** (Vitest) across 173 colocated
   files, run by CI (`.github/workflows/gate.yml`) on every push and pull
   request along with the rest of the gate. Running
   `npm run typecheck && npm test` before every commit is still the

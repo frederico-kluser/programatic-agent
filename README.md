@@ -738,6 +738,22 @@ decide de uma vez o `--provider-profile` do `jcode`, o namespace do
 `--model` e a variável de ambiente em que a chave é injetada — e as chaves
 dos **outros** provedores são removidas do ambiente do subprocesso.
 
+**A chave que o run pede é a do provedor — exatamente uma.** O portão de
+credencial é indexado pelo provedor, não pelo backend (`providerBound`,
+`src/lib/api-key-registry.ts`): a chave do provedor ATIVO é exigida mesmo
+quando o spec não está marcado como `required`, e a do outro provedor não é
+pedida. Só tem `OPENROUTER_API_KEY` na máquina? O run OpenRouter roda e nada
+pergunta pela `DEEPSEEK_API_KEY`. Só tem a da DeepSeek? Idem, ao contrário.
+Com dois provedores atrás do mesmo backend, amarrar a chave ao *backend* faria
+um único run exigir as duas.
+
+E colar a chave no prompt do provedor errado é **recusado**, não apenas
+avisado: `sk-or-…` satisfaz o prefixo `sk-` da DeepSeek, então um teste de
+prefixo sozinho nunca separaria os dois. A discriminação é cruzada — vence o
+prefixo mais específico de outro spec (`detectForeignKeySpec`). Um valor que
+não casa com formato nenhum continua só avisando, porque formato de chave
+muda e uma forma desconhecida não pode trancar você do lado de fora.
+
 A fundo: [`docs/onboarding.pt-BR.md#backends-a-fundo`](docs/onboarding.pt-BR.md#backends-a-fundo).
 
 ---
@@ -824,6 +840,39 @@ aterrissar → replanejar`. O plano vira um pipeline `huu-pipeline-v2` comum com
 arestas `dependsOn`, então o escalonador de ondas, o fan-out `scope: memory`,
 os juízes e o merge determinístico rodam **sem nenhuma mudança**. Frentes
 independentes ficam prontas na mesma onda e dividem um pool de workers.
+
+**Metodologias — 13 caixinhas, todas desligadas por padrão.** `--tdd`,
+`--plan-review`, `--write-set`, `--verify-claims`, `--debate` e mais oito
+mudam o que a época **exige**; sem nenhuma delas o pipeline compilado é o de
+sempre, byte por byte. A 13ª é `--debate`: antes de qualquer frente começar,
+dois agentes argumentam as decisões do plano — um sustenta (`A.md`), o outro
+contesta (`B.md`), um veredito `SUSTENTADA`/`CONTESTADA` por decisão — e um
+juiz de rubrica **anonimizada por modelo** fecha o registro. Não existe
+desfecho "o advogado ganhou": decisão sustentada é implementada, decisão
+contestada vira risco nomeado no spec da frente. Ligar *qualquer* metodologia
+também troca o crítico de cada tarefa para HOLD (para o card e espera um
+humano) em vez de waive silencioso no teto de rodadas.
+
+**Roteamento por papel — `--models=<preset>`.** Os nove papéis (`planner`,
+`recon`, `worker`, `critic`, `reporter`, `judge`, `integration`, `advocate`,
+`prosecutor`) podem cair em modelos diferentes, e cada rota carrega o
+**provedor** junto com o id — `openrouter:anthropic/claude-opus-5`. Presets:
+`uniform` (tudo no modelo do run, o comportamento de sempre), `hetero`,
+`thrifty`, `monoculture` e `roster` — este último cinco fornecedores sobre um
+endpoint só, um por papel. Flags por papel (`--critic-model=`,
+`--judge-model=`, `--advocate-model=`, …) sobrescrevem o preset, e um valor
+pode ser uma **cadeia de fallback** separada por vírgula.
+
+**Preflight de modelo — a recusa acontece na borda.** Um papel roteado para um
+id que o catálogo coloca em OUTRO endpoint é **recusa com exit 1**, antes de
+existir worktree ou branch: `hetero`, `thrifty`, `monoculture` e `roster` fixam
+ids que só a OpenRouter serve, então sob `--provider=deepseek` eles param na
+linha de comando em vez de morrer dentro do primeiro agente. Ausência de
+evidência é **aviso**, nunca recusa — um id que nenhuma entrada do catálogo
+menciona roda assim mesmo, porque o catálogo é lista de recomendação, não
+registro. Na `/dev`, os presets que o provedor ativo não roda vêm
+**desabilitados** com tooltip dizendo qual provedor os serve, decidido pela
+MESMA função que recusa o POST.
 
 > **Isto contraria o manifesto?** Contraria, em dois pontos, e o doc diz isso
 > com todas as letras: o diferencial #2 é "zero planner LLM em runtime", e o
@@ -1000,12 +1049,12 @@ estado real, sem retoque:
   IA**: boa parte dos commits credita "Claude" como autor ou co-autor.
   Isso não é defeito — é contexto. Avalie como você avaliaria qualquer
   ferramenta nova de uma pessoa só.
-- **Versão.** `5.2.0`, publicada no npm como
+- **Versão.** `6.0.0`, publicada no npm como
   [`huu-pipe`](https://www.npmjs.com/package/huu-pipe) e como imagem
   `ghcr.io/frederico-kluser/huu`. O [CHANGELOG](CHANGELOG.md) segue Keep
   a Changelog.
-- **Testes e CI.** São mais de **2.200 casos de teste** (Vitest) em 156
-  arquivos colocados, rodados pela CI (`.github/workflows/gate.yml`) em todo
+- **Testes e CI.** São **4.094 casos de teste** (Vitest) em 173 arquivos
+  colocados, rodados pela CI (`.github/workflows/gate.yml`) em todo
   push e pull request junto com o resto do gate. Rodar
   `npm run typecheck && npm test` antes de cada commit continua sendo
   **convenção do contribuidor** — a CI só avisa depois —, reforçável

@@ -136,6 +136,21 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
   // `required: true`, so these stay invisible to it. Web research is an
   // OPTIONAL capability — a missing key degrades the research step (see
   // docs/dev-mode.md), it must never block a run.
+  //
+  // WHICH OF THEM STILL SEARCHES: only `brave`. The installed surf is v8 and
+  // it dispatches over Brave alone — no Tavily, no Parallel, no keyless tier,
+  // and exit 78 before anything runs when the Brave key is missing.
+  //
+  // `tavily` and `parallel` are therefore KEPT, not deleted, and the choice is
+  // deliberate. Deleting them costs three things and buys nothing: the run
+  // would lose the `tvly-` prefix that is the registry's ONLY non-`sk-`
+  // discriminant, which is what makes `detectForeignKeySpec` provably able to
+  // tell one provider's key from another's; the resolver would stop
+  // recognising keys users already persisted under those names; and a surf
+  // downgrade would stop working. What they may never do is imply that
+  // research is possible — `EnsureSurfKeysResult.searchReady` looks at `brave`
+  // and only `brave`, so a Tavily-only machine is told the truth instead of
+  // discovering it at the first exit 78.
   {
     name: 'tavily',
     envVar: 'TAVILY_API_KEY',
@@ -164,7 +179,7 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
     secretMountPath: '/run/secrets/brave_api_key',
     hostSecretScope: 'huu-brave-key',
     label: 'Brave Search (web research)',
-    hint: 'API key from brave.com/search/api',
+    hint: 'API key from brave.com/search/api — the ONLY search backend; without it the `external` lane cannot be answered',
     required: false,
   },
 ];

@@ -273,6 +273,106 @@ pool. A front that declares `dependsOnFronts` waits on the other's judge — the
 compiler sorts fronts topologically and breaks cycles by dropping edges (with
 a warning) rather than losing the epoch.
 
+## The on-demand researcher (`external` gaps)
+
+A knowledge gap declares a **lane** — `repo`, `convention` or `external` — and
+the lane is written into that gap's own spec file, not into the shared step
+prompt, so one agent in the wave can be ordered to search the web while the
+next is forbidden to. `external` is the on-demand researcher: when a material
+question cannot be answered from this codebase, one cheap agent goes and looks,
+and comes back with **evidence carrying citations**.
+
+### What it runs
+
+The lane names the installed CLI exactly, because a spec that describes a
+different tool costs the agent its whole card discovering the truth:
+
+```bash
+surf-research-skill gate            # exit 0 = a usable key · exit 78 = none
+surf-search-normal "<one question>" \
+  --task "…" --goal "…" --insights "…" --deliverable "…"
+surf-research-skill search "Q1" "Q2" "Q3"   # raw links, no synthesis
+```
+
+`gate` is the probe because it is the only verb that answers **without** a key.
+The four brief flags are what separate a usable answer from a summary of
+summaries. `--sub-agents` sets the fan-out: default 10, **maximum 20**.
+
+There is **one** search backend and **no keyless tier**. A missing key is not a
+slow path, it is the end of the road.
+
+> **The container pins its own surf version** (`ARG SURF_VERSION` in the
+> `Dockerfile`), so the CLI inside an image can be older than the one on your
+> host. The spec handles that instead of assuming: if `gate` comes back as an
+> unknown command, the agent falls back to `surf-research-skill search "…"`,
+> uses what it gets, and records the mismatch in `unknowns` — a real finding
+> about the image, not a reason to conclude there is no web.
+
+### Exit codes decide what happens next
+
+| Code | Meaning | Retry? |
+| --- | --- | --- |
+| `0` | Answered. | — |
+| `1` | Ran, found nothing. Real degradation, not a broken setup. | No |
+| `2` | The command line was wrong (`--sub-agents` outside 1..20). | Fix the argv |
+| `78` | No usable search key — emitted *before* anything runs. | Never |
+| `143` | The harness killed the call on its timeout. | Once, narrower |
+
+`classifySurfExit()` (`src/lib/surf-research.ts`) owns that table, so the
+prompt and the code cannot disagree about which failures are worth retrying.
+
+### Without a key, huu records the absence — it never invents one
+
+`ensureSurfKeys()` reports `searchReady` separately from `written`: a machine
+configured with a legacy key really does get a `keys.json`, and research still
+cannot run. The agent is told to write both brief files anyway, with empty
+`facts`, empty `sources`, `confidence: "low"` and the absence spelled out in
+`unknowns` — *"`surf-research-skill gate` exited 78, so nothing here was
+verified against the web"*. The digest then renders that section saying
+**nada aqui foi verificado contra a web**. Fabricating a URL is forbidden
+outright: nobody downstream can check a citation against the web, so a
+plausible-and-wrong source survives to the end of the session.
+
+### Web content is DATA, never an instruction
+
+This is the part that protects you. Text fetched from the web is written by
+people huu cannot vet, and it travels: into the researcher's context, into its
+brief, into the consolidated digest, and finally into the **blind planner's**
+prompt — under a sentence that says *"treat what it states as true"*. That is
+[indirect prompt injection](https://arxiv.org/abs/2302.12173): the attacker
+never talks to huu, they only have to get a sentence onto a page an agent will
+read. Prompt-level defenses alone are not airtight
+([AgentDojo](https://arxiv.org/abs/2406.13352)), so huu does it structurally as
+well as textually — the shape
+[CaMeL](https://arxiv.org/abs/2503.18813) describes, keeping the data path off
+the control path, with the
+[instruction hierarchy](https://arxiv.org/abs/2404.13208) stated in the text on
+top:
+
+1. **Fenced.** Every `external` answer is wrapped in
+   `<<<HUU-UNTRUSTED-WEB-DATA>>>` … `<<<END-HUU-UNTRUSTED-WEB-DATA>>>`, and the
+   sentinels are stripped from the payload — so the content can never close its
+   own fence and continue as trusted prose.
+2. **Datamarked.** Every line inside is prefixed with `| `. No web line starts
+   at column zero, so none can forge a `## heading` or a `=== SECTION ===` in
+   the document it lands in. Nothing is lost: every word survives.
+3. **Neutralized and counted.** Override imperatives, forged turn markers
+   (`<|im_start|>`) and role reassignments are rewritten to a visible
+   `[huu-neutralized:…]` marker — never deleted. The section then says how many
+   fired, so an attack is *reported*, not silently cleaned.
+4. **Ordered.** The rule that explains the fence is placed **before** it: an
+   instruction that follows untrusted text is the one that text is best placed
+   to talk over.
+
+Repo and convention sections are deliberately **not** fenced. The fence is the
+signal, and a marker on every section would stop meaning anything.
+
+The agent runs the search itself, so huu never sees the CLI's stdout and cannot
+fence it. That boundary is covered by a standing order in the spec: a result
+that tells the agent to change its task, skip the spec or report success is an
+**attack**, and the response is to finish the assigned job and name the source
+in `unknowns`. Reporting it beats the answer it displaced.
+
 ## Methodology options
 
 Thirteen checkboxes in the dev form (the **Methodology** fieldset, right above

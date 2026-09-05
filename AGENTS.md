@@ -94,20 +94,24 @@ defines this as enforceable by machine in a future wave.
               orchestrator/ (worker pool, stage lifecycle, merge;
                 global-scheduler.ts multiplexes N runs)
                 ↓
-              orchestrator/backends/ (pluggable agent SDKs:
-                pi/      — @mariozechner/pi-coding-agent (the only user-facing
-                           backend; provider OpenRouter|Azure chosen via
-                           LlmProvider — see src/lib/providers.ts)
-                azure/   — internal dispatch kind serving the Azure AI Foundry
-                           provider (docs/azure-backend.md)
+              orchestrator/backends/ (HOW an agent is executed — the dispatch
+                kind, never the vendor:
+                jcode/   — the only user-facing backend; spawns the `jcode`
+                           CLI as a subprocess (prompt in argv, provider
+                           profile from a hermetic config.toml huu writes,
+                           credential injected as an env var)
                 stub/    — no-LLM mock for smoke tests
-                registry.ts — single dispatch from kind → factory)
+                _shared/ — message building + spawn lifecycle helpers
+                registry.ts — single dispatch from kind → factory;
+                           AgentBackendKind = 'jcode' | 'stub')
                 ↓
               git/ (worktree manager, branch ops, preflight, merge)
                 ↓
-              lib/ (types, pipeline-io, file-scanner, run-id, status,
+              lib/ (types, providers (LlmProvider + the provider table),
+                    pipeline-io, file-scanner, run-id, status,
                     init-docker, docker-reexec, active-run-sentinel,
-                    api-key, prune, debug-logger, run-logger, repo-lock,
+                    api-key, api-key-registry, prune, debug-logger,
+                    run-logger, repo-lock,
                     run-many (headless multi-run driver),
                     screen-fsm, assistant-check-feasibility,
                     i18n/ — en + pt-BR catalogs behind a `t()` that THROWS on a
@@ -117,6 +121,38 @@ defines this as enforceable by machine in a future wave.
 ```
 
 Dependencies flow **downward only** — lower layers never import upper layers.
+
+### Backend × provider — two axes, never one
+
+Confusing these two is what made an OpenRouter run demand `DEEPSEEK_API_KEY`.
+They are orthogonal:
+
+- **Backend = *how* an agent is executed.** `AgentBackendKind = 'jcode' | 'stub'`
+  (`src/orchestrator/backends/registry.ts`). `jcode` spawns the `jcode` CLI as a
+  subprocess; `stub` calls no model at all. There is no `pi` and no `azure`.
+- **Provider = *where* the call goes and *which credential it spends*.**
+  `LlmProvider = 'deepseek' | 'openrouter'` (`src/lib/providers.ts`). Each entry
+  in `PROVIDERS` carries its `defaultBaseUrl`, its `apiKeySpecName` and — for a
+  single-vendor endpoint — its `modelNamespace`, which `modelIdForProvider()`
+  uses to render huu's OpenRouter-shaped catalog id the way that endpoint names
+  models (only the provider's OWN prefix is ever stripped).
+
+**One backend serves N providers**: `jcode` serves both. A backend therefore
+cannot name the credential a run will spend — the `apiKeySpecName` of
+`selectBackend('jcode')` is `undefined` on purpose, and the authority is
+`apiKeySpecNameForProvider(provider)`. In `src/lib/api-key-registry.ts` the
+binding axis is `providerBound?: LlmProvider`: a spec bound to the ACTIVE
+provider is enforced regardless of its `required` flag, so a run asks for
+exactly the one key it is about to spend.
+
+The user's choice travels as `AppConfig.provider` through the TUI, the CLI and
+the web server down to the spawn, where it selects three things at once
+(`src/orchestrator/backends/jcode/factory.ts`, `buildJcodeArgs`): the
+`--provider-profile` block, the `--model` namespace, and the env var the key
+lands in — and every OTHER provider's key is stripped from the child env. The
+hermetic `config.toml` (`backends/jcode/hermetic.ts`) is GENERATED from the
+provider table, one `[providers.<profile>]` block per provider, and never
+contains a credential — only the `api_key_env` name.
 
 ### Visual conventions
 

@@ -91,10 +91,10 @@ Essa frase tem algumas afirmações que vale destacar:
   dela. O [MANIFESTO](MANIFESTO.md) desenvolve essa tese.
 - **Em modo `per-file`, um agente recebe um arquivo.** O prompt é
   idêntico entre os N agentes — só `$file` é substituído. Sem
-  degradação de contexto entre agentes, sem drift de escopo. O Pi
-  coding agent (backend padrão) roda com `thinking=medium` em todo
-  modelo que suporta, pra que o modelo troque latência por qualidade na
-  sua missão única.
+  degradação de contexto entre agentes, sem drift de escopo. Cada
+  agente é um subprocesso `jcode` novo (o backend padrão), rodando
+  *stateless* — zero embeddings, nenhuma memória entre turnos: todo o
+  contexto vai pra sua missão única.
 - **Pipelines são portáteis, não presos a um provider.** Um
   `huu-pipeline-v1.json` é um artefato versionado — comite, compartilhe
   como gist, contribua pro cookbook. O know-how de *como decompor essa
@@ -125,9 +125,11 @@ executá-lo com rigor, é exatamente o trabalho pro huu.**
 
 ## Início rápido
 
-**Pré-requisitos:** Node.js ≥ 20, `git` e Docker (obrigatório). Para o
-backend padrão, exporte uma `OPENROUTER_API_KEY`
-([openrouter.ai/keys](https://openrouter.ai/keys)).
+**Pré-requisitos:** Node.js ≥ 20, `git` e Docker (obrigatório). Exporte a
+chave do **provedor** que você vai usar: `DEEPSEEK_API_KEY`
+([platform.deepseek.com](https://platform.deepseek.com)) no padrão, ou
+`OPENROUTER_API_KEY` ([openrouter.ai/keys](https://openrouter.ai/keys)) se
+rodar com `--provider=openrouter`.
 
 ### Docker
 
@@ -135,7 +137,7 @@ backend padrão, exporte uma `OPENROUTER_API_KEY`
 git clone https://github.com/frederico-kluser/huu
 cd huu
 docker build -t huu:local .
-export OPENROUTER_API_KEY=sk-or-...
+export DEEPSEEK_API_KEY=sk-...          # ou OPENROUTER_API_KEY=sk-or-... com --provider=openrouter
 HUU_IMAGE=huu:local huu run pipelines/huu-test-suite.pipeline.json
 ```
 
@@ -293,13 +295,14 @@ TUI no terminal.
   agente ganha uma **cor estável** e os níveis de aviso/erro saltam com glyph e
   trilha colorida; com mais de um projeto vivo, as linhas de todos se fundem num
   **stream único** ordenado por tempo, cada linha marcada com seu projeto. E
-  **tudo que o pi devolve** (resposta + raciocínio) segue espelhado em tempo
+  **tudo que o agente devolve** (resposta + raciocínio) segue espelhado em tempo
   real no **console do navegador** (DevTools → Console), com o id do agente em
   cada linha; silencie com `window.HUU_LOG_STREAM = false`.
 - **Sua key, no navegador — e agora também em ⚙ Settings, validada e
-  persistente.** Cole sua `OPENROUTER_API_KEY` no formulário de launch — é
-  **validada na hora** contra o provider e fica só na aba (`sessionStorage`),
-  como antes. Ou salve de vez em **Settings (⚙) → OpenRouter API key**:
+  persistente.** O formulário de launch renderiza **uma linha por credencial
+  que o provedor escolhido realmente exige** — cole ali e é **validada na hora**
+  contra o provider, ficando só na aba (`sessionStorage`), como antes. Ou salve
+  de vez em **Settings (⚙) → OpenRouter API key**:
   **Validate & save** checa a key contra o OpenRouter (**uma key rejeitada
   nunca é salva**), grava no store do host (`~/.config/huu/config.json` — agora
   **montado dentro do container**, então salvar em Options finalmente
@@ -319,15 +322,16 @@ TUI no terminal.
   nada"). `HUU_WEB_LOG_STREAM=1` espelha também a saída bruta dos agentes. No
   navegador, falha de launch/preflight agora dispara **toast** em vez de só
   colorir o chip da fila.
-- **Seletor de modelo com busca — o catálogo inteiro do OpenRouter.** O campo
-  **Model** é um combobox com busca (digite pra filtrar) sobre o **catálogo ao
-  vivo completo do OpenRouter** (todo modelo — 339 hoje) — sem mais dropdown de
-  dois itens. O endpoint `/models` do OpenRouter é **público**, então a lista
-  carrega **com ou sem key**, assim que você abre o seletor. Os modelos vêm
-  **com selo** (`reasoning`, e um aviso leve `no tools`) em vez de escondidos, e
-  você pode **digitar qualquer id de modelo** — até um que não esteja na lista —
-  pra rodar verbatim. A lista curta recomendada é só um fallback pra quando o
-  OpenRouter está inacessível.
+- **Seletor de modelo com busca, filtrado pelo provedor.** O campo **Model** é
+  um combobox com busca (digite pra filtrar) sobre o catálogo curado do huu
+  (`recommended-models.json`), **restrito ao provedor que você escolheu** — um
+  run DeepSeek nunca recebe uma entrada Claude, porque a api.deepseek.com só
+  serve os modelos dela. O catálogo é estático e não precisa de key, então a
+  lista carrega assim que você abre o seletor (não há busca ao vivo: a DeepSeek
+  não expõe endpoint `/models` público). Os modelos vêm **com selo**
+  (`reasoning`, e um aviso leve `no tools`) em vez de escondidos, e você pode
+  **digitar qualquer id de modelo** — até um que não esteja na lista — pra
+  rodar verbatim.
 
 > **Hoje a web roda pipelines existentes** (listar, escolher, enfileirar e
 > executar em paralelo, ajustar concorrência, parar). Os **construtores
@@ -371,7 +375,7 @@ huu --cli                 # TUI no terminal
 | `HUU_RAM_PERCENT` / `--ram-percent=<n>` | Orçamento de RAM como % do total da máquina (default `70`, faixa 10–95). Também na Web em Settings → RAM budget % — **aplicado ao vivo pela web** (vale na hora pra execuções atuais + fila, persistido no servidor). |
 | `HUU_NO_HOST_CLAMP=1` | Desliga o clamp por **disponibilidade do host** (o huu volta a planejar só pelo dial/cgroup do container). Use em hosts dedicados ao huu. |
 | `HUU_OOM_SCORE_ADJ` | Ajuste do `oom_score_adj` do processo huu (default conservador; best-effort — valor negativo só "pega" com `CAP_SYS_RESOURCE`, que nem o container tem; a alavanca real é `HUU_CHILD_OOM_SCORE_ADJ`, que sobe os subprocessos dos agentes pra +500). |
-| `HUU_PI_HERMETIC=0` | Escape de debug: desliga o **runtime pi hermético** (por padrão as sessões pi do huu NUNCA leem `~/.jcode` nem carregam extensões `pi-*` globais do npm — só os prompts do huu + AGENTS.md/CLAUDE.md da raiz do repo-alvo). `huu status` mostra o estado. |
+| `HUU_JCODE_HERMETIC=0` | Escape de debug: desliga o **runtime jcode hermético**. Por padrão todo subprocesso `jcode` recebe `JCODE_MEMORY_ENABLED=false` (zero embeddings), `JCODE_NO_TELEMETRY=1`, um `JCODE_AGENT_DIR` isolado e um `JCODE_HOME` em `~/.huu/jcode-home` com um `config.toml` que o próprio huu escreve — o `~/.jcode/config.toml` do host é **ignorado**. Com `=0`, o `process.env` vai intacto e o jcode volta a resolver a config pelo host. Passe pro container com `HUU_DOCKER_PASS_ENV=HUU_JCODE_HERMETIC`. |
 | `HUU_AGENT_MEM_SEED_MB` | Seed do footprint por-agente do AutoScaler (MiB, clamp 128–4096; default pessimista `1536`). Baixe SÓ com medição — veja `scaler`/`ema_move` no debug log. |
 | `HUU_AGENT_MEM_EMA_ALPHA` | Fator da EMA do footprint observado (0.01–1; default `0.2`). Maior = converge mais rápido do seed pro valor real. |
 
@@ -690,34 +694,45 @@ reprodutibilidade de método, poucos outros entregam o mesmo contrato.
 
 ## Provedores — qualquer modelo, sua escolha
 
-huu roda sempre pelo **pi**. O que você escolhe é o *provedor* por baixo
-dele: **OpenRouter** (padrão) ou **Azure AI Foundry**. (O backend Copilot
-foi removido na v2.2.)
+São **dois eixos**, não um — confundi-los é o que já fez um run OpenRouter
+exigir `DEEPSEEK_API_KEY`:
+
+- **Backend = *como* o agente roda.** `AgentBackendKind = 'jcode' | 'stub'`
+  (`src/orchestrator/backends/registry.ts`). O `jcode` dispara a CLI `jcode`
+  como **subprocesso**; o `stub` não chama modelo nenhum.
+- **Provedor = *para onde* a chamada vai e *qual credencial* ela gasta.**
+  `LlmProvider = 'deepseek' | 'openrouter'` (`src/lib/providers.ts`).
+
+Um backend serve **N provedores**: o `jcode` serve os dois. Por isso o
+backend não pode nomear a chave do run — quem responde isso é o provedor.
 
 ```mermaid
 flowchart LR
-    P["provider: 'openrouter' | 'azure'"]
-    P --> M["providerToBackend()<br/>providers.ts"]
-    M --> O["Pi · OpenRouter<br/>(qualquer modelo)"]
-    M --> Z["Pi · Azure AI Foundry<br/>(qualquer deployment)"]
+    P["provider: 'deepseek' | 'openrouter'"]
+    P --> M["providerInfo()<br/>providers.ts"]
+    M --> D["jcode · DeepSeek<br/>api.deepseek.com<br/>(modelos da própria DeepSeek)"]
+    M --> O["jcode · OpenRouter<br/>openrouter.ai<br/>(Claude, GPT, GLM, DeepSeek…)"]
     P -. "--stub (interno)" .-> S["Stub<br/>(sem LLM, smoke)"]
 ```
 
 | Provedor | Flag | Modelo de custo | Status |
 |---|---|---|---|
-| **OpenRouter** (padrão) | `--provider=openrouter` | Por-token via `OPENROUTER_API_KEY` — **qualquer modelo OpenRouter** | Recomendado |
-| Azure AI Foundry | `--provider=azure` | Por endpoint via `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` — qualquer deployment ([guia](docs/azure-backend.md)) | Novo |
+| **DeepSeek** (padrão) | `--provider=deepseek` | Por-token via `DEEPSEEK_API_KEY` — o mais barato; só os modelos da DeepSeek | Recomendado |
+| OpenRouter | `--provider=openrouter` | Por-token via `OPENROUTER_API_KEY` — uma chave fronteando muitos fornecedores (Claude, GPT, GLM, DeepSeek) | Estável |
 | Stub | `--stub` | Grátis, sem LLM — smoke tests / demos | Estável |
 
-A factory do Pi habilita `thinking=medium` por padrão pra todo modelo
-que suporta — o modelo pode rascunhar, criticar e revisar internamente
-antes de emitir uma resposta final. Pra trabalho per-file (um agente,
-uma missão), esse é o trade-off certo. Os dois provedores compartilham o
-mesmo orchestrator, ciclo de vida de worktree e lógica de merge.
+O catálogo do huu é escrito no formato da OpenRouter (`fornecedor/modelo`) e
+o id é **renderizado no namespace do endpoint** na hora do spawn: a
+openrouter.ai roteia *pelo* prefixo e recebe o id inteiro; a
+api.deepseek.com nomeia os modelos dela sem prefixo, então o `deepseek/` cai
+(`modelIdForProvider`). Os dois provedores compartilham o mesmo orchestrator,
+ciclo de vida de worktree e lógica de merge.
 
 Escolha o provedor na tela de launch (web e TUI) ou trave pela linha de
-comando com `--provider=`. A chave de cada provedor é carregada, editável
-e persistida em Opções — e é a mesma chave que o pi usa no run.
+comando com `--provider=`. A escolha viaja com o run até o spawn, onde
+decide de uma vez o `--provider-profile` do `jcode`, o namespace do
+`--model` e a variável de ambiente em que a chave é injetada — e as chaves
+dos **outros** provedores são removidas do ambiente do subprocesso.
 
 A fundo: [`docs/onboarding.pt-BR.md#backends-a-fundo`](docs/onboarding.pt-BR.md#backends-a-fundo).
 
@@ -871,12 +886,18 @@ huu auto pipeline.json --config config.json
 
 ```json
 {
-  "modelId": "minimax/minimax-m2.7",
-  "backend": "pi",
+  "modelId": "deepseek/deepseek-v4-flash",
+  "backend": "jcode",
+  "provider": "deepseek",
   "files": { "3. Write tests for $file": ["src/index.ts"] },
   "concurrency": 4
 }
 ```
+
+**`provider` manda em `backend`.** Quando presente, é dele que o huu deriva o
+backend (os dois provedores despacham pro `jcode`) e é ele que seleciona a
+credencial — troque por `"openrouter"` pra rodar um modelo de outro fornecedor
+com a `OPENROUTER_API_KEY`. Ausente, vale o provedor padrão do backend.
 
 - **stderr** — eventos de progresso em NDJSON (um por mudança de
   estado, throttle ~250 ms).
@@ -909,7 +930,9 @@ builds reprodutíveis:
 ```yaml
 env:
   HUU_IMAGE: ghcr.io/frederico-kluser/huu:latest   # fixe uma tag de versão
-  OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  # A chave do PROVEDOR que o seu config.json escolhe — OPENROUTER_API_KEY
+  # quando `"provider": "openrouter"`.
+  DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 steps:
   - run: npm install -g huu-pipe
   - run: huu auto pipelines/huu-security-audit.pipeline.json --config huu-ci-config.json
@@ -990,8 +1013,8 @@ Pra ninguém confundir intenção com pronto:
 
 | Estado | O quê |
 |---|---|
-| ✅ **Implementado** | Pipeline JSON v2 (work · check · memory · `dependsOn`/ondas); fan-out `per-file` e `memory`; merge determinístico `--no-ff` com fallback de conflito por agente LLM; sandbox Docker com secret-mounts; UI web (padrão) + TUI (`--cli`); modo headless `auto`; backends Pi · Azure · Stub; **multi-run** (N projetos num processo sob um orçamento compartilhado — prioridade + backfill + anúncios de saída de agente no terminal); concorrência memória-aware + guarda de memória com **contabilidade de RAM host-aware** e números honestos do tamanho da máquina; **kanban verídico** (verde = mesclado, `PAUSED` → TODO); **watchdog de liveness SSE** (streams zumbis reconectam, a fila sobrevive a um refresh); isolamento de portas via shim nativo; 7 pipelines default autônomas; telemetria de tokens/custo **por agente** + total agregado da run (`totalCost`) somado em tempo real. |
-| 🟡 **Estabilizando** | Backend GitHub Copilot (dependência opcional, SDK 0.3.x); backend Azure (novo); Pipeline Assistant / Architect flow (TUI). |
+| ✅ **Implementado** | Pipeline JSON v2 (work · check · memory · `dependsOn`/ondas); fan-out `per-file` e `memory`; merge determinístico `--no-ff` com fallback de conflito por agente LLM; sandbox Docker com secret-mounts; UI web (padrão) + TUI (`--cli`); modo headless `auto`; backend `jcode` (subprocesso CLI) servindo os provedores DeepSeek e OpenRouter, mais o backend `stub` sem LLM; **multi-run** (N projetos num processo sob um orçamento compartilhado — prioridade + backfill + anúncios de saída de agente no terminal); concorrência memória-aware + guarda de memória com **contabilidade de RAM host-aware** e números honestos do tamanho da máquina; **kanban verídico** (verde = mesclado, `PAUSED` → TODO); **watchdog de liveness SSE** (streams zumbis reconectam, a fila sobrevive a um refresh); isolamento de portas via shim nativo; 7 pipelines default autônomas; telemetria de tokens/custo **por agente** + total agregado da run (`totalCost`) somado em tempo real. |
+| 🟡 **Estabilizando** | Provedor OpenRouter (reintroduzido — o padrão é DeepSeek); Pipeline Assistant / Architect flow (TUI). |
 | 🧭 **Roadmap** | **mutation score** como métrica de primeira classe (hoje os prompts miram asserções mutation-surviving, mas o pipeline não roda o mutador); **autoria de pipeline pela web** (hoje só TUI); mais backends (ACP, Claude Code); **custo de merge/judge** no total agregado. |
 
 ---
@@ -1047,9 +1070,11 @@ CC0 — use no trabalho, em casa, onde quiser.
 **Frederico Guilherme Kluser de Oliveira**
 [kluserhuu@gmail.com](mailto:kluserhuu@gmail.com)
 
-`huu` é construído em cima de [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
-— um SDK de coding agent lean e multi-provider do Mario Zechner. O
-[post dele sobre o design](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
-vale a leitura; a sobreposição filosófica não é coincidência. O mesmo SDK
-serve tanto OpenRouter quanto Azure AI Foundry — os dois provedores que o
-pi expõe.
+Hoje o `huu` roda sobre a CLI **`jcode`**, disparada como subprocesso pelo
+backend de mesmo nome (`src/orchestrator/backends/jcode/`).
+
+Até a v3.0 ele era construído em cima de
+[`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
+— um SDK de coding agent lean e multi-provider do Mario Zechner. Esse backend
+foi removido, mas o [post dele sobre o design](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
+segue valendo a leitura: a sobreposição filosófica nunca foi coincidência.

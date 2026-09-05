@@ -2,8 +2,23 @@
  * Minimal OpenRouter client used to detect whether a model supports
  * reasoning/thinking at runtime.
  */
+import { providerInfo } from './providers.js';
 
-const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
+/**
+ * Every request in this file is built on the OpenRouter base URL the PROVIDER
+ * TABLE declares — never on a second literal copy of it.
+ *
+ * Why this matters beyond tidiness: `checkOpenRouterReachable` below is the
+ * credential probe `key-validation.ts` runs against a key the user is still
+ * typing. A second copy of the host would keep probing the OLD endpoint after
+ * `providers.ts` moved, quietly proving a key good against a host huu no longer
+ * spends it on — the exact drift the DeepSeek probe avoids by deriving its URL
+ * the same way. One declaration, one endpoint, one thing to keep correct.
+ *
+ * `defaultBaseUrl` is canonically trailing-slash-free; the strip is belt and
+ * braces so a future edit cannot produce `…/v1//models`.
+ */
+const OPENROUTER_API_BASE = providerInfo('openrouter').defaultBaseUrl.replace(/\/+$/, '');
 const CAPABILITIES_FETCH_TIMEOUT_MS = 5_000;
 
 export interface OpenRouterModel {

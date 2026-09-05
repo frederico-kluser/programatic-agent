@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { API_KEY_REGISTRY, findSpec } from '../lib/api-key.js';
+import { hasKeyProbe } from '../lib/key-validation.js';
 import {
   keyStatus,
   listBackendsInfo,
@@ -103,26 +104,51 @@ describe('validateKeyValue', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns unverifiable for every registered spec — no provider has a cheap probe', async () => {
-    // The OpenRouter (200 → valid / 401 → invalid) and Azure (endpoint first)
-    // reachability probes went away with the pi/azure backends in v3.0, and
-    // DeepSeek exposes no cheap check. A pasted key is therefore accepted with
-    // a warning rather than hard-blocking an offline/VPN user.
-    // When a real probe lands, THIS is the test to split back apart: a key the
-    // provider actively rejects (401) must come back `invalid` and never be
-    // accepted, while a network failure must stay `unverifiable`.
+  // THIS TEST REPLACES "returns unverifiable for every registered spec — no
+  // provider has a cheap probe", and the old one was right to be deleted: it
+  // pinned a LIMITATION, not a contract. It asserted `expect(fetchMock).not
+  // .toHaveBeenCalled()` for the WHOLE registry, which is precisely the
+  // behavior the probes in `lib/key-validation.ts` remove — and it left the
+  // `valid` / `invalid` arms of `KeyValidation` declared but unreachable, so
+  // the branches handling them in settings.js and launch.js were dead code.
+  // Its own comment said as much: "When a real probe lands, THIS is the test
+  // to split back apart". This is that split; the provider-shaped detail lives
+  // in `lib/key-validation.test.ts`, and what stays here is the DELEGATION.
+  it('delegates to the provider probe — a 401 is refused, a 5xx only warns', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await validateKeyValue(findSpec('deepseek')!, 'sk-rejected')).toEqual({
+      status: 'invalid',
+      httpStatus: 401,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })),
+    );
+    // Not `invalid`: a broken provider is not proof of a broken key, and
+    // `invalid` is the branch that hard-blocks the user.
+    expect(await validateKeyValue(findSpec('deepseek')!, 'sk-rejected')).toMatchObject({
+      status: 'unverifiable',
+    });
+  });
+
+  it('still answers unverifiable, with no fetch, for the specs that have no probe', async () => {
+    // Iterate the REGISTRY, not a hand-written list: a fixed list silently
+    // stops covering whatever spec is appended next. The three keys the setup
+    // flow asks for (deepseek, openrouter, brave) now have real probes and are
+    // covered in lib/key-validation.test.ts; what is left here is everything
+    // that genuinely cannot be checked.
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    // Iterate the REGISTRY, not a hand-written list: a fixed list silently
-    // stops covering whatever spec is appended next (and a spec that grew a
-    // real validator would slip through unnoticed).
-    const names = API_KEY_REGISTRY.map((s) => s.name);
+    const probeless = API_KEY_REGISTRY.filter((s) => !hasKeyProbe(s));
     // Guard against a vacuous loop: an empty/gutted registry must not make
-    // this test pass by iterating nothing. The named specs must EXIST.
-    expect(names).toEqual(
-      expect.arrayContaining(['deepseek', 'openrouter', 'artificialAnalysis']),
+    // this test pass by iterating nothing.
+    expect(probeless.map((s) => s.name)).toEqual(
+      expect.arrayContaining(['artificialAnalysis', 'tavily', 'parallel']),
     );
-    for (const spec of API_KEY_REGISTRY) {
+    for (const spec of probeless) {
       // A value SHAPED LIKE THIS SPEC's own key: the cross-spec guard must not
       // fire, so what is left is the "no probe" answer this test is about.
       const own = `${spec.validatePrefix ?? ''}whatever`;
@@ -254,13 +280,38 @@ describe('validateKeyValue — the wrong-provider key is refused before it is sa
     });
   });
 
-  it('still accepts each provider its own key shape', async () => {
-    expect(await validateKeyValue(findSpec('deepseek')!, 'sk-abcdef')).toMatchObject({
-      status: 'unverifiable',
+  it('rejects an sk-or- value offered as the BRAVE key, without probing Brave', async () => {
+    // The web boundary of the leak: all three key endpoints in `server.ts`
+    // (`/api/keys/validate`, `/api/keys/pool`, `/api/keys/pool/validate`) come
+    // through this function, and `brave` is the one non-LLM spec that owns a
+    // probe. While `brave` declared no `validatePrefix` the cross-spec guard
+    // could not judge it at all, so an OpenRouter secret pasted here was sent
+    // to api.search.brave.com in an `X-Subscription-Token` header before
+    // anyone could object.
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await validateKeyValue(findSpec('brave')!, 'sk-or-v1-abcdef')).toEqual({
+      status: 'wrong-key',
+      belongsTo: 'openrouter',
+      label: 'OpenRouter',
     });
-    expect(await validateKeyValue(findSpec('openrouter')!, 'sk-or-v1-abcdef')).toMatchObject({
-      status: 'unverifiable',
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('still accepts each provider its own key shape — and only then probes it', async () => {
+    // The cross-spec guard must not fire on a value that IS this spec's key.
+    // Previously both of these answered `unverifiable` because no probe
+    // existed; now they reach the provider, so what this pins is that the
+    // guard stayed out of the way and the probe took over.
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await validateKeyValue(findSpec('deepseek')!, 'sk-abcdef')).toEqual({
+      status: 'valid',
     });
+    expect(await validateKeyValue(findSpec('openrouter')!, 'sk-or-v1-abcdef')).toEqual({
+      status: 'valid',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

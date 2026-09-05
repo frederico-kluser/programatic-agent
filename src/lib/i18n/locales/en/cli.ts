@@ -19,14 +19,81 @@ export const cliEn = {
   'cli.usage_run': 'Usage: huu run <pipeline.json>',
   'cli.warn_tag': 'warn',
   'cli.fatal': 'fatal',
-  'cli.warn_native_removed':
-    'huu: the native (no-docker) mode was REMOVED — huu is docker-only now.\n     --yolo/--no-docker/HUU_NO_DOCKER are ignored; running inside the container with its kernel memory ceiling.',
   'cli.warn_dev_native':
-    'huu: HUU_DEV_NATIVE=1 — running on the HOST, outside the container (contributor loop).\n     Docker isolation is OFF: agents reach your shell credentials (~/.ssh, ~/.aws, …) and there is no container memory ceiling.\n     Use `npm run dev:docker` to rehearse what users actually get.',
+    'huu: HUU_DEV_NATIVE=1 — running on the HOST, outside the container (contributor loop).\n     Docker isolation is OFF: agents reach your shell credentials (~/.ssh, ~/.aws, …), and the CONTAINER memory ceiling (docker --memory) is gone.\n     The kernel ceiling is a different thing: on Linux huu wraps itself in a systemd scope that supplies one — the MemoryMax line above says so when it worked.\n     Use `npm run dev:docker` to rehearse what users actually get.',
   'cli.warn_no_cgroup':
     'huu: systemd user scope unavailable — running without a kernel memory ceiling (the software guard still applies).',
   'cli.warn_yolo':
-    'huu: --yolo: skipping Docker. The agent has access to your shell credentials (~/.ssh, ~/.aws, etc.).',
+    'huu: running on the HOST, outside the container (--yolo / --no-docker / HUU_NO_DOCKER, or the runtime you saved in `huu setup`).\n     Docker isolation is OFF: agents reach your shell credentials (~/.ssh, ~/.aws, …), and the CONTAINER memory ceiling (docker --memory) is gone.\n     The kernel ceiling is a different thing: on Linux huu wraps itself in a systemd scope that supplies one — the MemoryMax line above says so when it worked.\n     Run `huu setup` to go back to Docker, or drop the flag for this one start.',
+
+  // ── first-run setup (`huu setup`, and the gate npm start opens) ────────
+  'cli.setup_title': '\nhuu — first-run setup',
+  'cli.setup_intro':
+    'Answered once and remembered. Press Enter to take the default in [brackets]; `huu setup` reopens all of this later.',
+  'cli.setup_opt_interface_web': '  1) web  — dashboard in your browser (huu default)',
+  'cli.setup_opt_interface_cli': '  2) cli  — terminal UI (Ink TUI) in this window',
+  'cli.setup_q_interface': 'Which interface? [{default}] ',
+  'cli.setup_opt_runtime_docker':
+    '  1) docker — run inside the huu container: agents are isolated from your shell credentials and the kernel caps their memory (recommended)',
+  'cli.setup_opt_runtime_native': '  2) native — run straight on this host',
+  'cli.setup_q_runtime': 'Where should huu run? [{default}] ',
+  'cli.setup_native_cost':
+    '\n  Running natively costs you two things huu otherwise guarantees:\n    · isolation — agents reach your shell credentials (~/.ssh, ~/.aws, …)\n    · the container memory ceiling — on Linux a systemd scope still caps huu in the kernel; anywhere else only huu\u2019s own software guard is left\n',
+  'cli.setup_native_confirm': 'Run without the container anyway? [y/N] ',
+  'cli.setup_native_declined': '  keeping docker.',
+  'cli.setup_keys_header':
+    '\nAPI keys. Enter skips one; a key already in your environment or config is not asked for again.',
+  'cli.setup_key_present': '  {label}: already set via {source} ({masked}) — Enter keeps it.',
+  'cli.setup_key_required_hint': '  {label} — needed for huu to operate.',
+  'cli.setup_key_optional_hint': '  {label} — optional; Enter skips it for good.',
+  'cli.setup_key_hint': '  ({hint})',
+  'cli.setup_key_prompt': '  {label} key: ',
+  'cli.setup_key_kept': '  {label}: kept.',
+  'cli.setup_key_saved': '  {label}: saved ({masked}).',
+  'cli.setup_key_save_failed':
+    '  {label}: accepted, but NOT SAVED — huu could not write its config file, so this key is gone when this process exits.\n     Export {envVar} in your shell to use it now, and check who owns your huu config directory (a `sudo` run leaves it root-owned).',
+  'cli.setup_key_unverifiable':
+    '  {label}: could not be verified ({reason}) — that is not proof of a bad key, so huu is keeping it.',
+  'cli.setup_key_invalid': '  {label}: rejected by the provider (HTTP {status}). Try another key.',
+  'cli.setup_key_wrong':
+    '  {label}: that looks like a {belongsTo} key. Paste the {label} one instead.',
+  'cli.setup_key_skipped_required':
+    '  {label}: skipped — huu will ask again next start, or set it in Options.',
+  'cli.setup_key_skipped_optional': '  {label}: skipped. `huu setup` offers it again.',
+  'cli.setup_key_attempts': '  {label}: no accepted key after 3 tries — moving on.',
+  'cli.setup_invalid_choice': '  "{value}" is not one of the options.',
+  'cli.setup_aborted':
+    '\nhuu: setup interrupted — nothing was changed. Run `huu setup` when you want to finish it.',
+  'cli.setup_using_default': '  using the default: {value}.',
+  'cli.setup_save_failed':
+    'huu: the setup choices could not be written to disk — you will be asked again next start.',
+  'cli.setup_done': '\nhuu is set up: interface={ui}, runtime={runtime}.',
+  'cli.setup_reopen_hint': 'Change any of it later with `huu setup`.\n',
+  'cli.setup_no_tty':
+    'huu: no terminal to ask on (stdin is not a TTY) — starting with interface={ui}, runtime={runtime}.\n     Nothing was saved; run `huu setup` from a terminal to choose, or set HUU_SKIP_SETUP=1 to silence this.',
+  'cli.setup_src_env': 'an environment variable',
+  'cli.setup_src_env_file': 'a _FILE environment variable',
+  'cli.setup_src_stored': 'the key you saved',
+  'cli.setup_src_mount': 'a mounted secret',
+  'cli.setup_src_none': 'nowhere',
+
+  // ── npm start: the host orchestrator around the image build ────────────
+  'cli.start_skip_build_native':
+    'huu: runtime is native — skipping the container image build.',
+  'cli.start_docker_missing':
+    '\nhuu: docker is not installed, so the container huu normally runs in is not available.\n     Install it from https://docs.docker.com/engine/install/ — or keep going on the host.',
+  'cli.start_image_failed':
+    '\nhuu: the huu:local image could not be built (Docker is missing, stopped, or the build failed).\n     The full reason is above.',
+  'cli.start_offer_native':
+    'Start huu WITHOUT the container instead? Agents would reach your shell credentials (~/.ssh, ~/.aws, …) and lose the container memory ceiling. [y/N] ',
+  'cli.start_native_accepted':
+    'huu: starting natively for this run only. `huu setup` makes it the saved choice.',
+  'cli.start_docker_required':
+    'huu: nothing was started. Fix Docker (or run `huu setup` and pick the native runtime) and try again.',
+  'cli.warn_config_corrupt_saved':
+    'huu: {path} could not be read as JSON and has been REPLACED.\n     Your API keys were in that file — the original bytes were kept at {backup} (mode 0600).\n     Open it in an editor to copy any key back into huu; delete it once you are done.',
+  'cli.warn_config_corrupt_lost':
+    'huu: {path} could not be read as JSON and has been REPLACED.\n     huu could not save a copy of the old file (disk full, or the directory is not writable), so any API key it held is gone. Add your key again in the Options screen.',
   'cli.web_launching':
     'huu: launching the web UI inside Docker — open {url} once the container is up (a few seconds on first run, longer while the image pulls).',
   'cli.web_prefer_tui': 'Prefer the terminal UI? Run {command}.',
@@ -63,6 +130,8 @@ Usage:
   huu init-docker [...]     Scaffold compose.huu.yaml into the current repo
   huu status [...]          Inspect the latest run via .huu/debug-*.log
   huu prune [...]           List/kill orphan huu containers + stale cidfiles
+  huu setup                 Re-open the first-run setup: interface, runtime and
+                            API keys. Runs natively; nothing else is started.
   huu --dir=<path>          Run in this directory instead of the current one (default: cwd)
   huu --provider=<name>     LLM provider — the endpoint called and the key spent:
                             deepseek (default, alias ds), openrouter (alias or)
@@ -71,6 +140,7 @@ Usage:
   huu --stub                Alias for --backend=stub (no real LLM)
   huu --yolo                Skip Docker, run native on the host (agent sees your shell creds)
   huu --no-docker           Alias for --yolo / HUU_NO_DOCKER=1 — neutral spelling for CI runners
+  huu --docker              Force the container for this run, overriding a saved native runtime
   huu --cli                 Use the terminal UI instead of the default web UI
   huu --web                 Force the web UI (overrides HUU_CLI=1)
   huu --port=<n>            Web UI port (default 4888; or HUU_WEB_PORT)

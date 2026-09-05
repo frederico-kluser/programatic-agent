@@ -14,6 +14,10 @@ import { join, resolve } from 'node:path';
 import { API_KEY_REGISTRY, resolveApiKeyWithSource } from './api-key.js';
 import { osReserveBytes } from './budget.js';
 import { detectHostJcodeBundle } from './jcode-bundle.js';
+// TYPE-only: the gate reads the user's saved runtime, but must not pull the
+// config store (and its fs access) onto the wrapper path at import time.
+import type { SetupConfig } from './setup-config.js';
+import { SETUP_GATE_ENV } from './setup-flow.js';
 
 /**
  * Transparent re-exec from the host into the official Docker image.
@@ -245,8 +249,22 @@ export function resolveHostConfigDir(
   return join(xdg || join(hostHome, '.config'), 'huu');
 }
 
-/** Subcommands that run native — no docker pull, no bind mount needed. */
-const NATIVE_ONLY_SUBCOMMANDS = new Set(['init-docker', 'status', 'prune', 'lab']);
+/**
+ * Subcommands that run native — no docker pull, no bind mount needed.
+ *
+ * `setup` belongs here for the same reason the others do, plus one of its own:
+ * it is the flow that ASKS whether huu should use Docker at all. Booting a
+ * container to answer that question would make the answer unreachable exactly
+ * when Docker is the thing that is broken — and it needs the user's terminal,
+ * which a `docker run` in the middle of the wrapper path does not have.
+ */
+export const NATIVE_ONLY_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  'init-docker',
+  'status',
+  'prune',
+  'lab',
+  'setup',
+]);
 
 /**
  * CONTRIBUTOR escape hatch: run the whole CLI on the host, no docker daemon.
@@ -274,13 +292,80 @@ export function isDevNativeMode(env: NodeJS.ProcessEnv): boolean {
 export interface ReexecDecision {
   shouldReexec: boolean;
   reason: string;
+  /**
+   * True when this native run is a PRODUCT-level choice the user made — a
+   * bypass flag/env, or the `native` runtime they saved in `huu setup` — as
+   * opposed to a native run that carries no trade-off at all (inside the
+   * container, `--help`, `huu status`) or the contributor loop, which has its
+   * own louder banner.
+   *
+   * It exists so `cli.tsx` can print the no-isolation warning off the DECISION
+   * instead of re-deriving "was this a bypass?" from argv. Re-deriving is how
+   * the two got out of step before: the flags list grew a spelling the warning
+   * did not know about, and a native run went out silently.
+   */
+  nativeByChoice?: boolean;
 }
 
 /**
  * Decide whether the current invocation should re-exec into docker.
  * Pure function so tests can drive every branch directly.
+ *
+ * ## PRECEDENCE — flag > env > saved config > default
+ *
+ * This is the rule that confuses people six months later, so it is written
+ * here, once, and the order of the `if`s below IS the rule:
+ *
+ * ```
+ *   HUU_IN_CONTAINER=1        recursion guard — nothing outranks it
+ *   HUU_DEV_NATIVE=1          contributor loop
+ *   --yolo / --no-docker      FLAG: this invocation runs on the host
+ *   HUU_NO_DOCKER=1           ENV: same statement, shell-scoped
+ *   --help / native subcmds   nothing to containerize
+ *   --docker                  FLAG: force the container even with `native` saved
+ *   setup.runtime === native  CONFIG: the standing preference from `huu setup`
+ *   (default)                 docker
+ * ```
+ *
+ * Flags and env vars are statements about THIS invocation; the saved config is
+ * a standing preference. A per-invocation statement therefore always beats the
+ * standing one — typing `--docker` on a machine that saved `native` gets the
+ * container, and `--no-docker` on a machine that saved `docker` gets the host.
+ * `--docker` sits BELOW the bypasses on purpose: it exists to override the
+ * SAVED choice, not to fight a flag the same command line also carries, so
+ * `huu --docker --no-docker` runs native (the last-resort reading: the more
+ * cautious flag does not silently win an argument the user wrote themselves).
+ *
+ * `setup` is optional and defaults to "no stored preference" — every existing
+ * two-argument call site keeps its exact behaviour.
  */
-export function decideReexec(args: string[], env: NodeJS.ProcessEnv): ReexecDecision {
+/**
+ * True when the invocation carries a native-mode bypass (`--yolo` /
+ * `--no-docker` / `HUU_NO_DOCKER=1|true`).
+ *
+ * THE definition of "the user asked for the host", and {@link decideReexec}'s
+ * bypass branch is its only production caller — the predicate used to be a
+ * second copy of the same condition, which is exactly how a list of spellings
+ * grows apart from the decision that is supposed to honour it. Exported so the
+ * spellings can be pinned directly, without driving the whole decision table.
+ *
+ * Deliberately NOT `HUU_DEV_NATIVE`: that is the contributor loop
+ * ({@link isDevNativeMode}), a different door with a louder banner.
+ */
+export function hasNativeBypass(args: string[], env: NodeJS.ProcessEnv): boolean {
+  return (
+    args.includes('--yolo') ||
+    args.includes('--no-docker') ||
+    env.HUU_NO_DOCKER === '1' ||
+    env.HUU_NO_DOCKER === 'true'
+  );
+}
+
+export function decideReexec(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  setup?: Pick<SetupConfig, 'runtime'>,
+): ReexecDecision {
   if (env.HUU_IN_CONTAINER === '1') {
     return { shouldReexec: false, reason: 'already inside the huu container' };
   }
@@ -297,13 +382,12 @@ export function decideReexec(args: string[], env: NodeJS.ProcessEnv): ReexecDeci
   // so this door is deliberate and LOUD: cli.tsx prints the no-isolation
   // trade-off on every such start. Use case: targets that run their own
   // Docker (automation targets), where nesting containers is the problem.
-  if (
-    args.includes('--yolo') ||
-    args.includes('--no-docker') ||
-    env.HUU_NO_DOCKER === '1' ||
-    env.HUU_NO_DOCKER === 'true'
-  ) {
-    return { shouldReexec: false, reason: '--yolo/--no-docker: native run (no container)' };
+  if (hasNativeBypass(args, env)) {
+    return {
+      shouldReexec: false,
+      reason: '--yolo/--no-docker: native run (no container)',
+      nativeByChoice: true,
+    };
   }
   // What still runs on the host WITHOUT a bypass is NOT pipeline execution:
   // `--help` (pure print) and the host utilities below (they operate on the
@@ -315,6 +399,22 @@ export function decideReexec(args: string[], env: NodeJS.ProcessEnv): ReexecDeci
   if (firstNonFlag && NATIVE_ONLY_SUBCOMMANDS.has(firstNonFlag)) {
     return { shouldReexec: false, reason: `${firstNonFlag} runs native (operates on host fs)` };
   }
+  // `--docker` is the mirror of `--no-docker`: it exists so a machine whose
+  // SAVED runtime is `native` can still get the container for one run without
+  // rewriting the config. With nothing saved it changes nothing (docker is
+  // already the default), which is why it can sit this low.
+  if (args.includes('--docker')) {
+    return { shouldReexec: true, reason: '--docker: container forced for this run' };
+  }
+  // The standing preference from `huu setup`. Below every flag and env var
+  // above — those are statements about THIS invocation and outrank it.
+  if (setup?.runtime === 'native') {
+    return {
+      shouldReexec: false,
+      reason: 'saved setup runtime is native (huu setup)',
+      nativeByChoice: true,
+    };
+  }
   return { shouldReexec: true, reason: 'docker-only — every run executes inside the container' };
 }
 
@@ -324,16 +424,6 @@ export function decideReexec(args: string[], env: NodeJS.ProcessEnv): ReexecDeci
  * strip — `stripRemovedNativeFlags` is a no-op kept for the wrapper path.
  */
 export const REMOVED_NATIVE_FLAGS = [] as const;
-
-/** True when the invocation carries a native-mode bypass (--yolo / --no-docker / HUU_NO_DOCKER). */
-export function hasNativeBypass(args: string[], env: NodeJS.ProcessEnv): boolean {
-  return (
-    args.includes('--yolo') ||
-    args.includes('--no-docker') ||
-    env.HUU_NO_DOCKER === '1' ||
-    env.HUU_NO_DOCKER === 'true'
-  );
-}
 
 /**
  * Historically stripped the removed native-mode flags before re-exec so the
@@ -506,6 +596,13 @@ export function buildDockerArgv(opts: DockerCommandOptions): string[] {
     // Web-UI knobs: the in-container server must bind the SAME port the
     // wrapper published, and honor the host's front-end + token choices.
     'HUU_WEB_PORT', 'HUU_WEB_HOST', 'HUU_WEB_TOKEN', 'HUU_CLI',
+    // The choices the `npm start` gate resolved. They ride along for the same
+    // reason the child on the host reads them: when `markSetupComplete` could
+    // not write, the bind-mounted `config.json` does NOT hold the answers, and
+    // an in-container `decideInterfaceMode` would serve the web UI to a user
+    // who asked for the TUI — on a port the host wrapper decided not to
+    // publish. Config tier, so `--web`/`--cli`/`HUU_CLI` still outrank them.
+    SETUP_GATE_ENV.interface, SETUP_GATE_ENV.runtime,
     // Tells the in-container code (via getHuuHome()) where the host's
     // home is, so writes to `~/.huu/` and `~/Downloads/` land on the
     // bind-mounted host filesystem instead of the container's ephemeral
@@ -609,7 +706,17 @@ export function resolveHostGitIdentity(): void {
   }
 }
 
-function isDockerInstalled(): boolean {
+/**
+ * Is the `docker` BINARY on PATH? Says nothing about the daemon — `docker
+ * --version` answers from the client alone, so a stopped daemon still reports
+ * true here and is discovered later, by the command that needs it.
+ *
+ * Exported so the `npm start` wrapper can ask BEFORE it tries to build: when
+ * docker is missing entirely, `ensure-image.sh` warns and exits 0 (native-only
+ * subcommands must keep working), which would otherwise let the start sail
+ * past the one moment where offering the native runtime makes sense.
+ */
+export function isDockerInstalled(): boolean {
   const r = spawnSync('docker', ['--version'], { stdio: 'ignore' });
   return r.status === 0;
 }

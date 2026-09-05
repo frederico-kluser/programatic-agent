@@ -4,11 +4,14 @@
 
 O modo headless do huu (`huu auto`) transforma qualquer pipeline em um job de
 CI: sem TTY, sem teclado, progresso NDJSON no stderr, um único JSON final no
-stdout, exit code `0`/`1`. O huu é **docker-only** — o CLI se re-executa
+stdout, exit code `0`/`1`. O huu é **docker por padrão** — o CLI se re-executa
 dentro da imagem do huu — então o runner precisa de **Node.js ≥ 20, git e
-Docker disponível**. A execução nativa em CI (`--no-docker` /
-`HUU_NO_DOCKER=1`) foi **removida**: as flags são ignoradas com um aviso de
-uma linha e o huu roda no container mesmo assim.
+Docker disponível**. `--no-docker` / `HUU_NO_DOCKER=1` **funcionam** num
+runner sem Docker também: o huu roda o processo inteiro nativo em vez de
+re-executar no container, ao custo do isolamento de credenciais e do teto de
+memória do kernel; huu avisa em uma linha em toda execução assim. O gate de
+primeiro uso nunca trava um job sem TTY — ele segue com os defaults e avisa
+em uma linha; `HUU_SKIP_SETUP=1` silencia esse aviso.
 
 Os pipelines de auditoria report-only (Security, Quality, Docs, Performance,
 Refactor) são o encaixe natural: escrevem os achados em `.huu/audits/` e
@@ -38,14 +41,16 @@ runner (com Docker disponível)
             └─ exit:   0 quando o run terminou `done`, 1 caso contrário
 ```
 
-O wrapper roda no CI exatamente como no seu laptop: ele re-executa o huu
-dentro do container, que carrega um **teto de memória do kernel**
-(`--memory` = total do host − reserva do SO) — a única garantia que software
-não consegue minar. O antigo escape nativo para runners sem Docker foi
-removido; um job que roda huu agora precisa de Docker (os runners hospedados
-do GitHub já trazem; no GitLab use um job docker-enabled — veja a receita).
-Fixe a imagem com `HUU_IMAGE` para jobs reprodutíveis; o stdio do run passa
-direto pelo `docker run`, então o contrato NDJSON/stdout/exit-code não muda.
+O wrapper roda no CI exatamente como no seu laptop: por padrão ele
+re-executa o huu dentro do container, que carrega um **teto de memória do
+kernel** (`--memory` = total do host − reserva do SO). Um job que quer essa
+garantia precisa de Docker (os runners hospedados do GitHub já trazem; no
+GitLab use um job docker-enabled — veja a receita); um runner sem Docker
+ainda consegue rodar o huu com `--no-docker` / `HUU_NO_DOCKER=1`, trocando o
+teto por conseguir rodar, em vez de falhar de cara. Fixe a imagem com
+`HUU_IMAGE` para jobs reprodutíveis; o stdio do run passa direto pelo
+`docker run`, então o contrato NDJSON/stdout/exit-code não muda em nenhum
+dos dois casos.
 
 ## Pré-requisitos
 
@@ -227,13 +232,17 @@ Pine apenas quando precisar de determinismo acima de throughput:
 
 ## FAQ
 
-**O que aconteceu com `--no-docker` / `HUU_NO_DOCKER` / `--yolo`?**
-**Removidas.** O huu é docker-only: as flags são detectadas, um aviso de uma
-linha é impresso, e o huu re-executa no container mesmo assim. O teto de
-memória do kernel do container (`--memory`) é a única garantia que software
-não consegue minar, então execução nativa de pipeline — em CI ou em qualquer
-outro lugar — não existe mais. Um runner sem Docker não roda huu; use um job
-docker-enabled.
+**O que acontece com `--no-docker` / `HUU_NO_DOCKER` / `--yolo`?**
+**Funcionam.** O huu é docker POR PADRÃO, não docker-only: as flags são
+honradas e o huu roda o processo inteiro nativo em vez de re-executar no
+container — sem isolamento de container, sem teto `--memory` do kernel, e o
+huu imprime um aviso de uma linha em toda execução assim. `--docker` é o
+espelho, força o container mesmo com um runtime `native` salvo. No Linux uma
+execução nativa ainda ganha um teto de kernel do self-wrap do systemd (veja
+[`docs/operations.pt-BR.md#tetos-de-memória-no-kernel`](operations.pt-BR.md#tetos-de-memória-no-kernel)); fora do Linux é só
+software. Então um runner sem Docker CONSEGUE rodar o huu — com
+`--no-docker` — só troca as garantias do container por conseguir rodar, em
+vez de falhar de cara.
 
 **Preciso de `huu init-docker`?** Não. Aquilo escaffolda assets Docker para
 uso local; o CI não usa nenhum deles.

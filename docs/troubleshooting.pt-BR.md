@@ -136,10 +136,10 @@ editaram as mesmas linhas numa stage.
 
 | Sintoma | Causa → ação |
 |---|---|
-| mudanças no próprio huu não fazem efeito | Um `huu` global re-executa na imagem PUBLICADA. Itere com `scripts/huu-try` (sempre builda + roda `huu:local` via Docker; `--no-build` pula o build), ou `docker build -t huu:local . && HUU_IMAGE=huu:local huu …`. Desenvolvendo NO repo, `npm start` / `npm run dev:docker` RE-BUILDAM `huu:local` antes (`scripts/ensure-image.sh`, cache de layers ~2s) pra você nunca rodar código velho já embutido na imagem; defina `HUU_IMAGE=<other>` pra pular o rebuild como pin deliberado. Pro loop rápido, `npm run dev` (`HUU_DEV_NATIVE=1`) roda no host sem Docker nenhum — não tem imagem pra envelhecer, mas também não tem isolamento de container. (`HUU_NO_DOCKER=1` segue removida — é ignorada com um aviso.) |
+| mudanças no próprio huu não fazem efeito | Um `huu` global re-executa na imagem PUBLICADA. Itere com `scripts/huu-try` (sempre builda + roda `huu:local` via Docker; `--no-build` pula o build), ou `docker build -t huu:local . && HUU_IMAGE=huu:local huu …`. Desenvolvendo NO repo, `npm start` / `npm run dev:docker` RE-BUILDAM `huu:local` antes (`scripts/ensure-image.sh`, cache de layers ~2s) pra você nunca rodar código velho já embutido na imagem; defina `HUU_IMAGE=<other>` pra pular o rebuild como pin deliberado. Pro loop rápido, `npm run dev` (`HUU_DEV_NATIVE=1`) roda no host sem Docker nenhum — não tem imagem pra envelhecer, mas também não tem isolamento de container. (`HUU_NO_DOCKER=1` é uma porta DIFERENTE — o bypass nativo de usuário — e ela funciona; veja [operations.pt-BR.md](operations.pt-BR.md#docker-por-padrão-nativo-como-opt-in).) |
 | containers órfãos após crash | `huu prune` (usa os cidfiles gravados). |
 | rede trava na VPN | O huu auto-cria bridge com MTU casado; override com `HUU_DOCKER_NETWORK`. |
-| runner de CI sem Docker | O huu é docker-only (`--no-docker` foi removida, ignorada com um aviso) — use um runner/job docker-enabled; receitas em [ci.pt-BR.md](ci.pt-BR.md). |
+| runner de CI sem Docker | O huu é docker POR PADRÃO, não docker-only: rode com `--no-docker` / `HUU_NO_DOCKER=1` pra ir nativo em vez disso (perde o teto de memória do container), ou use um runner/job docker-enabled pra manter o teto; receitas em [ci.pt-BR.md](ci.pt-BR.md). |
 
 ## macOS: runs parados para sempre a $0 (corrigido)
 

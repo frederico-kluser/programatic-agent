@@ -6,7 +6,7 @@ This document describes the layered structure of `huu` and the design decisions 
 
 ```
 src/
-├── cli.tsx                    # entry CLI (argv, --help, --concurrency/--no-auto-scale, terminal restoration; removed --yolo/--no-docker are stripped with a notice)
+├── cli.tsx                    # entry CLI (argv, --help, --concurrency/--no-auto-scale, terminal restoration; --yolo/--no-docker/--docker resolve the runtime — flag > env > saved `huu setup` config > docker default)
 ├── app.tsx                    # screen router (welcome / assistant / editor / run / summary)
 ├── lib/
 │   ├── types.ts               # Pipeline, AgentStatus, RunManifest, AutoScaleStatus, defaults
@@ -212,12 +212,14 @@ at the very top of `cli.tsx` decides which it is.
                    │  cli.tsx top-level                          │
                    │  decideReexec(argv, env)                    │
                    │       │                                     │
-                   │       ├── HUU_NO_DOCKER/--yolo/--no-docker  │
-                   │       │     → REMOVED: notice, strip flags, │
-                   │       │       re-exec anyway (docker-only)  │
+                   │       ├── --yolo/--no-docker/      → native │
+                   │       │   HUU_NO_DOCKER=1   (loud no-isolation
+                   │       │   warning; kernel ceiling lost)      │
                    │       ├── --help/-h               → native  │
                    │       ├── init-docker|status|prune → native │
-                   │       └── otherwise               → re-exec │
+                   │       ├── --docker      → re-exec (forced)  │
+                   │       ├── setup.runtime==='native' → native │
+                   │       └── otherwise (default)      → re-exec│
                    │                                  │          │
                    │  reexecInDocker(argv):           │          │
                    │  spawn `docker run --rm -it     │           │
@@ -273,7 +275,7 @@ Key invariants:
 | Pipeline assistant | Conversational drafting with mandatory single-pass project recon | Authoring is the work; the recon is digest-only (`lib/project-digest.ts` + `lib/project-recon.ts`) so cost is bounded and the interview can ground itself in real project facts before asking ≤8 questions. |
 | Auto-scaling | Resource-bound state machine (`orchestrator/auto-scaler.ts`) | Overnight runs need concurrency to track CPU/RAM headroom without operator input. The guard fires on a **pressure ladder** (sustained over the RAM dial at L1; earlyoom-style host pressure at L2/L3; the old CPU/RAM ≥ 95% line is a legacy fallback) and **pauses** the newest agent by default (checkpoint + resume-in-place; falls back to kill+requeue when it can't checkpoint or `HUU_NO_PAUSE=1`), with a 30s cooldown after each event; admission is host-aware (clamps to host `/proc/meminfo` availability). Manual `+`/`-` disables auto-scale until `A` re-enables. |
 | API key registry | Declarative spec list (`lib/api-key-registry.ts`) | Adding a key is a one-entry append; resolver, TUI prompt, Docker-secret bind-mount, env passthrough, orphan secret-file cleanup all iterate the same list. |
-| Native escape hatch | **REMOVED** — huu is docker-only | `--yolo` / `--no-docker` / `HUU_NO_DOCKER` no longer bypass the container: the CLI detects them, prints a one-line notice, strips the flags and re-execs into Docker anyway. The container's kernel memory ceiling (`--memory`) is the one guarantee software can't undermine; the native systemd-scope wrap stays in the tree as dormant defense-in-depth. Only `--help` and the host utilities (`init-docker`, `status`, `prune`) run on the host. |
+| Native escape hatch | **Honored, not removed** — docker is the default, not the only runtime | `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` bypass the container on purpose (`decideReexec`, `docker-reexec.ts`) and run the whole CLI on the host, at the cost of container isolation and the `--memory` kernel ceiling — huu warns loudly on every such start. `--docker` mirrors it, forcing the container even over a `native` runtime saved by `huu setup`. Precedence is flag > env > saved config > default. On Linux a native run still gets a kernel ceiling from the systemd-scope self-wrap; elsewhere only the software AutoScaler guard remains. Only `--help` and the host utilities (`init-docker`, `status`, `prune`) always run on the host regardless of runtime. |
 
 ## Agent skills
 

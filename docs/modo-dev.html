@@ -313,7 +313,7 @@ huu dev "qualquer coisa" --stub --epochs=1</code></pre>
             </tr>
             <tr>
               <td><code>--models &lt;preset&gt;</code></td>
-              <td><code>hetero</code> · <code>thrifty</code> · <code>monoculture</code> · <code>uniform</code>. Veja a aba <em>Modelos e custo</em>.</td>
+              <td><code>hetero</code> · <code>thrifty</code> · <code>monoculture</code> · <code>roster</code> · <code>uniform</code>. Todos, menos <code>uniform</code>, <strong>exigem <code>--provider=openrouter</code></strong>. Veja a aba <em>Modelos e custo</em>.</td>
             </tr>
             <tr>
               <td><code>--worker-model=&lt;id&gt;</code><br><code>--critic-model=&lt;id&gt;</code>…</td>
@@ -794,11 +794,36 @@ C. EXECUÇÃO       run #2 — o pipeline planejado, com o laço de crítica por
               <td><code>deepseek-v4-pro</code></td>
             </tr>
             <tr>
+              <td><strong>roster</strong></td>
+              <td><code>deepseek-v4-pro</code></td>
+              <td><code>openai/gpt-5.6-sol</code></td>
+              <td><code>z-ai/glm-5.3-flash</code></td>
+              <td><code>deepseek-v4-flash</code> nos workers, <code>anthropic/claude-opus-5</code> no <code>judge</code>, <code>deepseek-v4-pro</code> no resto</td>
+            </tr>
+            <tr>
               <td><strong>uniform</strong></td>
               <td colspan="4" class="text-body-secondary">Todos caem no modelo global — comportamento idêntico ao de antes do roteamento existir.</td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="alert alert-warning" role="alert">
+        <h3 class="h6"><i class="bi bi-exclamation-triangle me-1"></i>Todo preset menos <code>uniform</code> exige o provedor <code>openrouter</code></h3>
+        <p class="mb-0 small">
+          Um crítico de outra família precisa de um endpoint que sirva mais de um
+          fabricante, e o OpenRouter é o único que o huu fala — por isso
+          <code>hetero</code>, <code>thrifty</code> e <code>monoculture</code> mandam o
+          <code>planner</code> (e quase sempre o <code>critic</code>) para ids que só
+          <code>openrouter.ai</code> serve, e o <code>roster</code> manda três papéis.
+          Como <code>AppConfig.provider</code> é <strong>um</strong> provedor para a
+          sessão inteira, pedir qualquer um deles em <code>--provider=deepseek</code> é
+          <strong>recusado na borda</strong> pelo preflight de modelo, nomeando papel e
+          id — antes de existir worktree, branch ou commit. Na tela <code>/dev</code> os
+          presets que o provedor selecionado não roda aparecem
+          <strong>desabilitados</strong>, e o formulário abre no melhor preset que ele
+          roda (numa máquina só com chave DeepSeek, <code>uniform</code>).
+        </p>
       </div>
 
       <p class="small text-body-secondary">

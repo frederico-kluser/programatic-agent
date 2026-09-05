@@ -36,7 +36,17 @@ import {
   type DevPlan,
   type DevState,
 } from '../types.js';
-import { DEV_MODEL_ROLES, defaultDevModelPolicy, resolveDevModels } from './dev-model-policy.js';
+import { devModelProviderIndex } from './model-catalog-index.js';
+import {
+  DEV_MODEL_ROLES,
+  checkDevModelPolicy,
+  defaultDevModelPolicy,
+  devModelRefusals,
+  formatDevModelIssues,
+  modelKnownFor,
+  parseModelRoute,
+  resolveDevModels,
+} from './dev-model-policy.js';
 import {
   activeMethodologies,
   methodologyUsageBlock,
@@ -232,13 +242,18 @@ export function formatModelRouting(
   const width = Math.max(...DEV_MODEL_ROLES.map((r) => r.length));
   const lines = [`  roteamento de modelos${preset ? ` (preset ${preset})` : ''}:`];
   for (const role of DEV_MODEL_ROLES) {
-    const routed = Boolean(policy?.[role]?.trim());
+    const route = policy?.[role];
+    const routed = Boolean(route?.model.trim());
     const note = routed
       ? role === 'planner'
         ? '  ← orquestrador cego (structured output, outside model registry)'
         : ''
       : '  ← --model';
-    lines.push(`    ${role.padEnd(width)}  ${resolved[role]}${note}`);
+    // The provider is printed only when the ROUTE pins one. An unpinned role
+    // runs on the session's provider, and repeating it on every line would
+    // hide the two that do not.
+    const via = routed && route?.provider ? `  @${route.provider}` : '';
+    lines.push(`    ${role.padEnd(width)}  ${resolved[role]}${via}${note}`);
   }
   return lines.join('\n');
 }
@@ -446,13 +461,13 @@ function parseModelFlags(
     preset = rawPreset as DevModelPreset;
   }
 
-  // `defaultDevModelPolicy` returns {} for stub on purpose: every id in
-  // the presets is served by jcode (deepseek). Say so instead of silently
-  // dropping a flag the user typed.
+  // `defaultDevModelPolicy` returns {} for stub on purpose: the stub backend
+  // calls no provider at all, so no preset id means anything to it. Say so
+  // instead of silently dropping a flag the user typed.
   const policy: DevModelPolicy = preset ? defaultDevModelPolicy(backend, preset) : {};
   if (preset && backend !== 'jcode' && Object.keys(policy).length === 0 && Object.keys(DEV_MODEL_PRESETS[preset]).length > 0) {
     warnings.push(
-      `--models=${preset} ignorado no backend ${backend}: os ids do preset são servidos pelo backend jcode (deepseek).`,
+      `--models=${preset} ignorado no backend ${backend}: os ids do preset são servidos pelo backend jcode, que é o único que chama um provedor.`,
     );
   }
 
@@ -461,12 +476,13 @@ function parseModelFlags(
     const flag = DEV_MODEL_ROLE_FLAGS[role];
     const raw = flagValue(args, flag);
     if (raw === undefined) continue;
-    const id = raw.trim();
-    if (!id) return { error: `huu dev: --${flag}=<id> expects a model id` };
+    const route = parseModelRoute(raw);
+    if (!route) return { error: `huu dev: --${flag}=<id> expects a model id` };
     // Explicit per-role flags apply on ANY backend — unlike the preset, the
     // user named this id for this role explicitly, and a custom model id in a
-    // worker slot is a legitimate thing to want.
-    policy[role] = id;
+    // worker slot is a legitimate thing to want. `<provider>:<id>` pins the
+    // endpoint for that one role; a bare id inherits the session's provider.
+    policy[role] = route;
     anyRoleFlag = true;
   }
 
@@ -556,15 +572,20 @@ export function parseDevCliArgs(args: readonly string[], backend: AgentBackendKi
   // because the run-level model is still what an unstamped step and the
   // knowledge bootstrap run use — a session with no fallback at all would
   // start and then fail deep inside an agent.
-  const explicitModel = flagValue(args, 'model')?.trim();
+  // A `<provider>:` prefix is stripped here: the RUN-LEVEL model carries no
+  // provider (`--provider=` already picked the endpoint), and a prefix left in
+  // would travel to the vendor as part of the model NAME. Copy-pasting a
+  // prefixed id out of `--models=<preset>` into `--model=` is an easy mistake
+  // now that the presets show the prefix.
+  const explicitModel = parseModelRoute(flagValue(args, 'model'))?.model;
   let modelId = explicitModel || (backend === 'stub' ? 'stub-model' : '');
   if (!modelId) {
-    const uncovered = DEV_MODEL_ROLES.filter((role) => !policy?.[role]?.trim());
+    const uncovered = DEV_MODEL_ROLES.filter((role) => !policy?.[role]?.model.trim());
     if (uncovered.length === 0) {
       // Fully routed: the worker's id is the honest run-level fallback — it is
       // the model that does the bulk of the work, including the knowledge
       // bootstrap swarm, which is not compiled from the plan.
-      modelId = policy!.worker!;
+      modelId = policy!.worker!.model.trim();
     } else {
       return {
         ok: false,
@@ -598,7 +619,9 @@ export function parseDevCliArgs(args: readonly string[], backend: AgentBackendKi
           'um método desenhado expressa metodologia DESENHANDO-A (largue o bloco tdd, desenhe um nó de portão). O desenho decide.',
       );
     }
-    const routedRoles = policy ? Object.keys(policy).filter((role) => policy[role as DevModelRole]?.trim()) : [];
+    const routedRoles = policy
+      ? Object.keys(policy).filter((role) => policy[role as DevModelRole]?.model.trim())
+      : [];
     if (routedRoles.length > 0) {
       warnings.push(
         `--graph IGNORA o roteamento por papel (${routedRoles.join(', ')}): papéis existem dentro do template de época do planner, ` +
@@ -759,7 +782,43 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
       } · resume: ${opts.resume ?? 'perguntar'}`,
     );
   }
-  err(formatModelRouting(resolveDevModels(opts.models, opts.modelId), opts.models, opts.preset));
+  // The SAME index the preflight below judges against, so the summary prints
+  // the rung that will actually run — a fallback chain resolves against this
+  // predicate, and printing rung 0 while running rung 1 would make the one line
+  // an operator reads a lie.
+  const modelIndex = devModelProviderIndex(repoRoot);
+  err(
+    formatModelRouting(
+      resolveDevModels(opts.models, opts.modelId, modelKnownFor(modelIndex, devProvider)),
+      opts.models,
+      opts.preset,
+    ),
+  );
+
+  // THE MODEL PREFLIGHT, at the cheapest border there is: the user typed these
+  // flags one line ago. `runDevMode` runs the same check (it is the authority,
+  // and the web goes through it too) — doing it here as well is what turns a
+  // session that opens, writes its goal file and stops into a refusal that
+  // never touched the repository.
+  {
+    const issues = checkDevModelPolicy({
+      policy: opts.models,
+      provider: devProvider,
+      index: modelIndex,
+    });
+    for (const issue of issues) {
+      if (issue.severity === 'warn') err(`huu dev: ${issue.message}`);
+    }
+    const refusals = devModelRefusals(issues);
+    if (refusals.length > 0) {
+      err(
+        `huu dev: ${refusals.length} papel(is) roteado(s) para um modelo que o provedor ` +
+          `${devProvider ?? 'desta sessão'} não serve:`,
+      );
+      err(formatDevModelIssues(refusals));
+      return 1;
+    }
+  }
   // Methodologies change what the run ENFORCES, so an operator reading stderr
   // has to be able to see which ones are on without reconstructing the command
   // line. Silent when none is on — that is the default and it needs no line.

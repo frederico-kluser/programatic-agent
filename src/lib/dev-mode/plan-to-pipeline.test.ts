@@ -290,13 +290,15 @@ describe('compileEpochPipeline', () => {
 // and still passes unchanged. These tests cover what the options add.
 
 const FULL_POLICY: DevModelPolicy = {
-  planner: 'lead/planner',
-  recon: 'swarm/recon',
-  worker: 'swarm/worker',
-  critic: 'other-family/critic',
-  reporter: 'swarm/reporter',
-  judge: 'swarm/judge',
-  integration: 'swarm/integration',
+  planner: { model: 'lead/planner' },
+  recon: { model: 'swarm/recon' },
+  worker: { model: 'swarm/worker' },
+  // A role may pin the ENDPOINT that serves it. The compiler stamps only the
+  // id (a step has no provider field); the pair is enforced at the border.
+  critic: { model: 'other-family/critic', provider: 'openrouter' },
+  reporter: { model: 'swarm/reporter' },
+  judge: { model: 'swarm/judge' },
+  integration: { model: 'swarm/integration' },
 };
 
 function modelOf(pipeline: Pipeline, name: string): string | undefined {
@@ -361,7 +363,7 @@ describe('compileEpochPipeline — model stamping', () => {
       plan: plan([front('a')]),
       epoch: 1,
       goal: 'g',
-      models: { worker: 'only/worker' },
+      models: { worker: { model: 'only/worker' } },
     });
     expect(modelOf(pipeline, '1b. Front a — implementar')).toBe('only/worker');
     expect(modelOf(pipeline, '0. Recon do objetivo')).toBeUndefined();
@@ -375,7 +377,7 @@ describe('compileEpochPipeline — model stamping', () => {
       plan: plan([front('a')]),
       epoch: 1,
       goal: 'g',
-      models: { worker: '   ', judge: ' spaced/judge ' },
+      models: { worker: { model: '   ' }, judge: { model: ' spaced/judge ' } },
     });
     expect(modelOf(pipeline, '1b. Front a — implementar')).toBeUndefined();
     expect(modelOf(pipeline, '1c. Front a — verificar')).toBe('spaced/judge');

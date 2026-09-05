@@ -57,7 +57,12 @@ import {
   removePoolKey,
   saveKeyPool,
 } from '../lib/api-key-pool.js';
-import { DEV_MODEL_ROLES, parseDevModelPolicy } from '../lib/dev-mode/dev-model-policy.js';
+import {
+  DEV_MODEL_ROLES,
+  devModelPresetProviders,
+  parseDevModelPolicy,
+} from '../lib/dev-mode/dev-model-policy.js';
+import { devModelProviderIndex } from '../lib/dev-mode/model-catalog-index.js';
 import { DEV_METHODOLOGIES } from '../lib/dev-mode/methodology-registry.js';
 import { WebRunManager, pickRunKey, type RunSnapshot, type StartRunParams } from './run-manager.js';
 import { DevStartRefusal, WebDevManager, type DevSessionSnapshot } from './dev-manager.js';
@@ -1058,6 +1063,18 @@ export function createWebServer(opts: WebServerOptions): {
     return w && existsSync(w) ? w : opts.cwd;
   }
 
+  /**
+   * `preset → providers that can run it`, computed ONCE (the catalogs are files
+   * on disk and `/api/bootstrap` is hit on every page load and every SSE
+   * resync). Lazy rather than eager so constructing a server still touches no
+   * filesystem.
+   */
+  let presetProviders: Record<string, string[]> | undefined;
+  function devPresetProviders(): Record<string, string[]> {
+    if (!presetProviders) presetProviders = devModelPresetProviders(devModelProviderIndex(opts.cwd));
+    return presetProviders;
+  }
+
   function bootstrapPayload(): Record<string, unknown> {
     return {
       name: 'huu',
@@ -1090,6 +1107,13 @@ export function createWebServer(opts: WebServerOptions): {
       // is added.
       devModelPresets: DEV_MODEL_PRESETS,
       devModelRoles: DEV_MODEL_ROLES,
+      // …and WHICH PROVIDER can actually run each preset, from the very
+      // `checkDevModelPolicy` that refuses the POST. /dev makes routing a
+      // required decision — the form opens with a preset already selected — so
+      // without this the client cheerfully assembles a body the border then
+      // rejects with a 400 nobody could have seen coming. Served rather than
+      // reimplemented in the browser: two copies of the rule is two answers.
+      devModelPresetProviders: devPresetProviders(),
       // The methodology checkboxes, from the SAME table the POST parser reads
       // — the /dev form renders the toggles from data, never a hardcoded copy.
       devMethodologyOptions: DEV_METHODOLOGY_OPTIONS,

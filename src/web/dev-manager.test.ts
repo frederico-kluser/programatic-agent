@@ -319,7 +319,9 @@ describe('web server — development mode', () => {
       goal: 'com preset',
       modelId: 'fallback-model',
       backend: 'jcode',
-      provider: 'deepseek',
+      // `hetero` is an OPENROUTER preset: a cross-family critic needs an
+      // endpoint that fronts more than one family, and that is the only one.
+      provider: 'openrouter',
       apiKey: 'sk-or-test-key-0000',
       approval: 'each-epoch',
       skipKnowledgeBootstrap: true,
@@ -330,6 +332,68 @@ describe('web server — development mode', () => {
     expect(session.models.worker).toBe('deepseek/deepseek-v4-pro'); // from the preset
     expect(session.models.critic).toBe('moonshotai/kimi-k2.6'); // cross-family, from the preset
     expect(session.models.reporter).toBe('deepseek/deepseek-v4-flash'); // explicit wins
+  });
+
+  // The browser derives the required `modelId` from the `worker` role input,
+  // and a preset now shows `<provider>:`-prefixed ids in those inputs. The
+  // run-level model carries NO provider (`AppConfig.provider` already says
+  // which endpoint the session spends on), so the prefix must be stripped here.
+  //
+  // MUTATION KILLED: passing `params.modelId` straight through. Every step
+  // nothing routed would be stamped `openrouter:vendor/model` and the endpoint
+  // would answer "model not found" on a name huu invented.
+  it('strips a provider prefix from the run-level modelId', async () => {
+    await post(base, '/api/dev', {
+      goal: 'prefixo no modelo do run',
+      modelId: 'openrouter:anthropic/claude-opus-5',
+      backend: 'jcode',
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key-0000',
+      approval: 'each-epoch',
+      skipKnowledgeBootstrap: true,
+    });
+    const session = (await (await fetch(base + '/api/dev')).json()).session;
+    expect(session.modelId).toBe('anthropic/claude-opus-5');
+    // …and every unrouted role reads back the same bare id.
+    expect(session.models.worker).toBe('anthropic/claude-opus-5');
+  });
+
+  // THE BUG THIS WAVE FIXES, at the web border. `hetero` routes two roles to
+  // ids only openrouter.ai serves, while `AppConfig.provider` is ONE provider
+  // for the whole run — so on DeepSeek those two ids used to reach
+  // api.deepseek.com and die inside the first agent, after its worktree and
+  // branch already existed.
+  //
+  // READ THIS WITH ITS OTHER HALF. The body below is assembled BY HAND: it
+  // pairs a preset with a provider that cannot serve it, which is precisely
+  // what the border exists to refuse, and refusing it must never be relaxed.
+  // What the browser assembles ON ITS OWN is a different question and it has a
+  // different answer — `client/dev-default-path.test.js` posts the untouched
+  // form's body at this same server, for EVERY provider, and requires 200.
+  // Pinning only this half is how the default `/dev` path stayed a 400.
+  //
+  // MUTATION KILLED: dropping the `checkDevModelPolicy` refusal from
+  // `DevSessionManager.start` (or letting the preset's `openrouter:` prefixes
+  // be parsed away). The POST goes back to 200 and a doomed session opens.
+  it('REFUSES a hand-assembled preset/provider pair the endpoint cannot serve', async () => {
+    const { status, json } = await post(base, '/api/dev', {
+      goal: 'preset no provedor errado',
+      modelId: 'deepseek/deepseek-v4-pro',
+      backend: 'jcode',
+      provider: 'deepseek',
+      apiKey: 'sk-test-key-0000',
+      approval: 'each-epoch',
+      skipKnowledgeBootstrap: true,
+      modelsPreset: 'hetero',
+    });
+    expect(status).toBe(400);
+    // Actionable: which roles, which ids, and where they DO work.
+    expect(json.error).toContain('planner');
+    expect(json.error).toContain('critic');
+    expect(json.error).toContain('z-ai/glm-5.2');
+    expect(json.error).toContain('openrouter');
+    // No session was opened.
+    expect((await (await fetch(base + '/api/dev')).json()).session).toBeNull();
   });
 
   // Credential routing: the spec name comes from `selectBackend(kind)`, never
@@ -404,8 +468,8 @@ describe('web server — development mode', () => {
     // re-derives nothing and substitutes nothing. An id no catalog has heard of
     // travels untouched, which is exactly what makes a typo debuggable.
     expect(dev.models).toEqual({
-      worker: 'nobody/invented-this-model',
-      planner: 'z-ai/glm-5.2',
+      worker: { model: 'nobody/invented-this-model' },
+      planner: { model: 'z-ai/glm-5.2' },
     });
     // …and the unknown ROLE never crosses the seam.
     expect(dev.models).not.toHaveProperty('bogus');

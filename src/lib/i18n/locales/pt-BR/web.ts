@@ -499,6 +499,8 @@ export const webPtBR = {
   'web.dev.err_no_goal': 'Escreva o objetivo primeiro',
   'web.dev.err_no_model': 'Escolha um modelo para cada papel',
   'web.dev.err_no_dir': 'Escolha a pasta do projeto',
+  'web.dev.err_preset_provider':
+    'O preset “{preset}” só roda em {providers} — troque de provedor, ou escolha um preset que este atenda.',
   'web.dev.session_started': 'Sessão iniciada ({id})',
   'web.dev.row_goal': 'Objetivo',
   'web.dev.row_project': 'Projeto',
@@ -570,9 +572,14 @@ export const webPtBR = {
   'web.preset.monoculture': 'Monocultura',
   'web.preset.monoculture_hint':
     'LINHA DE BASE A/B, não uma recomendação: todo papel — inclusive o crítico — no próprio modelo do worker. É exatamente a configuração que a evidência aponta como a mais frágil; existe para o crítico de outra família poder ser medido contra ela.',
+  'web.preset.roster': 'Elenco',
+  'web.preset.roster_hint':
+    'Um endpoint, cinco fabricantes: o modelo mais forte no juiz (cuja falha é silenciosa), o promotor de outra família que os workers e o flash barato no fan-out.',
   'web.preset.uniform': 'Uniforme',
   'web.preset.uniform_hint':
     'Todo papel no mesmo modelo — o que estiver no campo do worker. O comportamento anterior ao roteamento.',
+  'web.preset.needs_provider':
+    'Indisponível neste provedor: estes ids são servidos por {providers}.',
 
   /* ── O desenho do método (/graph) ──────────────────────────────────────────
      Só chrome. Toda REGRA que a tela enuncia — por que uma ligação foi

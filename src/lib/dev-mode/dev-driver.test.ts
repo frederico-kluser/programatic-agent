@@ -1559,14 +1559,62 @@ describe('runDevMode — orphan integration branches', () => {
 describe('runDevMode — model routing', () => {
   const ROUTED_CONFIG: AppConfig = { apiKey: 'stub', modelId: 'stub-model', backend: 'jcode' };
 
-  // CHARACTERIZATION of a LOST PROTECTION. Until v3.0 this exact call was
-  // refused at the border with `model-preflight-failed`: `planned` stayed 0
-  // and nothing had been written into the user's repo. The catalog behind that
-  // check (`model-registry-check.ts`) was deleted with the pi backend, so an id
-  // no provider serves now throws INSIDE the first agent, after its worktree
-  // and branch already exist — and only after a session has been opened and
-  // committed. Restoring the preflight must REPLACE this test.
-  it('starts a session with a worker id nothing vouches for — the preflight is gone', async () => {
+  // THE RESTORED PREFLIGHT. Until v3.0 a role routed to an id no provider
+  // served was refused at the border; the catalog behind that check
+  // (`model-registry-check.ts`) went away with the pi backend and the failure
+  // moved INSIDE the first agent, after its worktree and branch already
+  // existed. The catalog is the registry now, and the border check is back.
+  //
+  // MUTATION KILLED: deleting the `checkDevModelPolicy` block from
+  // `runDevMode` (or downgrading its refusals to warnings). Without it
+  // `planned` becomes 1, the blackboard lands, and the unservable id is
+  // stamped onto every work step — which is exactly what this test used to
+  // characterize.
+  it('REFUSES a role routed to a provider this run is not on, before anything is written', async () => {
+    let planned = 0;
+
+    const result = await runDevMode({
+      dev: {
+        goal: 'g',
+        approval: 'autonomous',
+        maxEpochs: 1,
+        skipKnowledgeBootstrap: true,
+        // The route names its own endpoint, so no catalog lookup is needed to
+        // know api.deepseek.com will not serve it.
+        models: { worker: { model: 'z-ai/glm-5.2', provider: 'openrouter' } },
+      },
+      config: { ...ROUTED_CONFIG, provider: 'deepseek' },
+      cwd: repo,
+      sessionId: SESSION,
+      agentFactory: NOOP_FACTORY,
+      knowledgePlanner: async () => knowledgeFixture([]),
+      planner: async () => {
+        planned++;
+        return planFixture();
+      },
+      orchestratorFactory: (_p, epoch) => fakeRun({ runId: `work-${epoch}` }),
+    });
+
+    expect(result.stoppedBecause).toBe('model-preflight-failed');
+    // Nothing was planned, and NOTHING was written into the user's repo — that
+    // is the whole value of moving the failure to the border.
+    expect(planned).toBe(0);
+    expect(existsSync(join(repo, devPaths.state))).toBe(false);
+    // Actionable: the role, the id, and the provider that could serve it.
+    expect(result.detail).toContain('worker');
+    expect(result.detail).toContain('z-ai/glm-5.2');
+    expect(result.detail).toContain('openrouter');
+  });
+
+  // The other half of the rule: absence of evidence is NOT evidence. huu cannot
+  // enumerate what an endpoint serves, so an id the catalog has never heard of
+  // is warned about and RUN — refusing it would refuse every model released
+  // after the shipped catalog.
+  //
+  // MUTATION KILLED: turning the `warn` branch of `checkDevModelPolicy` into a
+  // `refuse` (i.e. "unknown ⇒ reject"), which would make this session stop at
+  // `model-preflight-failed` and every new model id unusable.
+  it('RUNS an id the catalog has never heard of — unknown is not refused', async () => {
     let planned = 0;
     let compiled: { steps: { name: string; modelId?: string }[] } | undefined;
 
@@ -1576,10 +1624,13 @@ describe('runDevMode — model routing', () => {
         approval: 'autonomous',
         maxEpochs: 1,
         skipKnowledgeBootstrap: true,
-        // An id NO catalog carries, in a role the agent backend executes.
-        models: { worker: 'z-ai/glm-5.2' },
+        // An id NO catalog carries — released after this catalog shipped, or
+        // a private deployment. NOT `z-ai/glm-5.2`: huu's own catalog knows
+        // that one and knows only OpenRouter serves it, which is EVIDENCE and
+        // therefore a refusal (the test above).
+        models: { worker: { model: 'nobody/released-yesterday' } },
       },
-      config: ROUTED_CONFIG,
+      config: { ...ROUTED_CONFIG, provider: 'deepseek' },
       cwd: repo,
       sessionId: SESSION,
       agentFactory: NOOP_FACTORY,
@@ -1596,17 +1647,16 @@ describe('runDevMode — model routing', () => {
 
     expect(result.stoppedBecause).toBe('max-epochs');
     expect(planned).toBe(1);
-    // The session opened and the blackboard landed: exactly the cost of losing
-    // the border check.
+    // The session opened and the blackboard landed.
     expect(existsSync(join(repo, devPaths.state))).toBe(true);
 
-    // THE POINT, and what makes the id in this test load-bearing rather than
-    // decorative: the unvouched id was not merely tolerated at the border, it
-    // was STAMPED onto the work steps the swarm will run. Nothing between the
-    // flag and the agent looked at it.
+    // THE POINT: an id huu has no evidence about is not merely tolerated at the
+    // border, it is STAMPED onto the work steps the swarm will run — warned
+    // about, and then trusted. Refusing here would refuse every model released
+    // after the shipped catalog.
     const stamped = compiled!.steps.filter((s) => s.modelId !== undefined);
     expect(stamped.length).toBeGreaterThan(0);
-    expect(stamped.every((s) => s.modelId === 'z-ai/glm-5.2')).toBe(true);
+    expect(stamped.every((s) => s.modelId === 'nobody/released-yesterday')).toBe(true);
 
     // And it is not only in memory: the epoch artefact committed into the
     // repo carries it too, so the id an operator can read back is the same
@@ -1614,7 +1664,7 @@ describe('runDevMode — model routing', () => {
     const persisted = JSON.parse(readFileSync(join(repo, paths.pipeline(1)), 'utf8')) as {
       steps: { modelId?: string }[];
     };
-    expect(persisted.steps.some((s) => s.modelId === 'z-ai/glm-5.2')).toBe(true);
+    expect(persisted.steps.some((s) => s.modelId === 'nobody/released-yesterday')).toBe(true);
   });
 
   // The blind orchestrator is a structured-output call, not an agent, so its
@@ -1626,7 +1676,7 @@ describe('runDevMode — model routing', () => {
         approval: 'autonomous',
         maxEpochs: 1,
         skipKnowledgeBootstrap: true,
-        models: { planner: 'z-ai/glm-5.2', worker: 'deepseek/deepseek-v4-pro' },
+        models: { planner: { model: 'z-ai/glm-5.2' }, worker: { model: 'deepseek/deepseek-v4-pro' } },
       },
       config: ROUTED_CONFIG,
       cwd: repo,
@@ -1649,7 +1699,7 @@ describe('runDevMode — model routing', () => {
         approval: 'autonomous',
         maxEpochs: 1,
         skipKnowledgeBootstrap: true,
-        models: { worker: 'deepseek/deepseek-v4-pro' },
+        models: { worker: { model: 'deepseek/deepseek-v4-pro' } },
       },
       config: ROUTED_CONFIG,
       cwd: repo,
@@ -3178,7 +3228,7 @@ describe('runDevMode — what a drawing does NOT inherit from the session', () =
   });
 
   it('warns that per-role model routing is not applied to a drawing', async () => {
-    const warnings = await warningsFor({ models: { worker: 'deepseek/deepseek-v4-pro' } });
+    const warnings = await warningsFor({ models: { worker: { model: 'deepseek/deepseek-v4-pro' } } });
     expect(warnings.some((w) => w.includes('per-role model routing') && w.includes('worker'))).toBe(true);
   });
 

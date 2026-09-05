@@ -887,15 +887,24 @@ describe('web server — dev-mode routing contract on /api/bootstrap', () => {
       devModelPresets: Record<string, Record<string, string>>;
       devModelRoles: string[];
     };
-    // The four named presets, served from the same constant the compilers read.
+    // The named presets, served from the same constant the compilers read.
     expect(Object.keys(boot.devModelPresets).sort()).toEqual([
       'hetero',
       'monoculture',
+      'roster',
       'thrifty',
       'uniform',
     ]);
-    // `hetero` is the default and its critic is deliberately cross-family.
-    expect(boot.devModelPresets.hetero!.critic).toBe('moonshotai/kimi-k2.6');
+    // STILL A FLAT role → string MAP, and that is load-bearing: the browser
+    // reads these values straight into text inputs and posts the same strings
+    // back. A role that pins an endpoint says so with a `<provider>:` prefix
+    // — the one shape that survives a JSON round trip through a plain string.
+    for (const preset of Object.values(boot.devModelPresets)) {
+      for (const value of Object.values(preset)) expect(typeof value).toBe('string');
+    }
+    // `hetero` is the default and its critic is deliberately cross-family —
+    // which is only reachable through the aggregator, so it names it.
+    expect(boot.devModelPresets.hetero!.critic).toBe('openrouter:moonshotai/kimi-k2.6');
     expect(boot.devModelPresets.hetero!.worker).toBe('deepseek/deepseek-v4-pro');
     // `uniform` routes nothing — it IS today's behavior.
     expect(boot.devModelPresets.uniform).toEqual({});

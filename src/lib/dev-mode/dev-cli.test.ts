@@ -5,15 +5,11 @@
 // bare invocation without it must keep the same refusal. Per-role routing is
 // additive on top of that or it is a breaking change wearing a feature's hat.
 //
-// A THIRD pin used to guard the factory default against its own preflight: the
-// `hetero` preset routes `planner` to `z-ai/glm-5.2`, an id the agent backend
-// deliberately never carried (the blind orchestrator is a structured-output
-// call, not an agent). v3.0 removed the pi backend and, with it,
-// `model-registry-check.ts` — the only catalog a preflight could consult — so
-// NOTHING validates a model id at parse time any more. The block below
-// CHARACTERIZES that: ids are taken at face value and an id nothing serves is
-// only discovered inside the first agent. Restoring the preflight must replace
-// those tests, not slip past them.
+// A THIRD pin guards the PARSER's boundary: `parseDevCliArgs` is pure, so it
+// still takes every id at face value — the model preflight needs the catalog,
+// which is I/O, and it runs one layer out in `runDevCli`. What the parser owns
+// is the SHAPE: a bare id, or `<provider>:<id>` when the role has to name the
+// endpoint that serves it.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,7 +31,7 @@ import { GRAPHS_DIR } from '../dev-graph/graph-store.js';
 import { findSample } from '../dev-graph/graph-samples.js';
 import type { DevGraph } from '../dev-graph/graph-types.js';
 import { runDevMode, type DevModeResult } from './dev-driver.js';
-import { DEV_MODEL_ROLES, resolveDevModels } from './dev-model-policy.js';
+import { DEV_MODEL_ROLES, defaultDevModelPolicy, resolveDevModels } from './dev-model-policy.js';
 import type { OrphanBranch } from './orphan-branches.js';
 import {
   DEV_DEFAULT_MAX_EPOCHS,
@@ -148,10 +144,11 @@ describe('parseDevCliArgs — model routing', () => {
   it('applies a preset on its own', () => {
     const opts = parseOk(['g', '--model=fallback/one', '--models=hetero']);
     expect(opts.preset).toBe('hetero');
-    expect(opts.models).toEqual(DEV_MODEL_PRESETS.hetero);
-    // The preset is a copy — mutating it must not corrupt the shared table.
-    opts.models!.worker = 'mutated';
+    expect(opts.models).toEqual(defaultDevModelPolicy('jcode', 'hetero'));
+    // The preset is a DEEP copy — mutating a route must not corrupt the table.
+    opts.models!.worker!.model = 'mutated';
     expect(DEV_MODEL_PRESETS.hetero.worker).not.toBe('mutated');
+    expect(defaultDevModelPolicy('jcode', 'hetero').worker!.model).not.toBe('mutated');
   });
 
   it('lets a per-role flag beat the preset, leaving every other role on it', () => {
@@ -161,24 +158,27 @@ describe('parseDevCliArgs — model routing', () => {
       '--models=hetero',
       `--${DEV_MODEL_ROLE_FLAGS.critic}=deepseek/deepseek-v4-pro`,
     ]);
-    expect(opts.models?.critic).toBe('deepseek/deepseek-v4-pro');
-    expect(opts.models?.worker).toBe(DEV_MODEL_PRESETS.hetero.worker);
-    expect(opts.models?.planner).toBe(DEV_MODEL_PRESETS.hetero.planner);
+    expect(opts.models?.critic).toEqual({ model: 'deepseek/deepseek-v4-pro' });
+    expect(opts.models?.worker).toEqual(defaultDevModelPolicy('jcode', 'hetero').worker);
+    expect(opts.models?.planner).toEqual(defaultDevModelPolicy('jcode', 'hetero').planner);
   });
 
   it('exposes a flag for every role, and reads each one', () => {
     const args = ['g'];
     for (const role of DEV_MODEL_ROLES) args.push(`--${DEV_MODEL_ROLE_FLAGS[role]}=deepseek/deepseek-v4-pro`);
     const opts = parseOk(args);
-    for (const role of DEV_MODEL_ROLES) expect(opts.models?.[role], role).toBe('deepseek/deepseek-v4-pro');
+    for (const role of DEV_MODEL_ROLES) {
+      expect(opts.models?.[role], role).toEqual({ model: 'deepseek/deepseek-v4-pro' });
+    }
   });
 
   it('makes --model OPTIONAL once a preset routes every role', () => {
     const opts = parseOk(['g', '--models=hetero']);
-    expect(opts.models).toEqual(DEV_MODEL_PRESETS.hetero);
+    expect(opts.models).toEqual(defaultDevModelPolicy('jcode', 'hetero'));
     // The run-level fallback still has to be a real id — an unstamped step and
-    // the knowledge bootstrap run both use it. The worker's model is it.
-    expect(opts.modelId).toBe(DEV_MODEL_PRESETS.hetero.worker);
+    // the knowledge bootstrap run both use it. The worker's model is it, and it
+    // is the bare id: `AppConfig.modelId` has never carried a provider.
+    expect(opts.modelId).toBe('deepseek/deepseek-v4-pro');
   });
 
   it('keeps --model REQUIRED when routing leaves roles uncovered', () => {
@@ -199,6 +199,35 @@ describe('parseDevCliArgs — model routing', () => {
     expect(parseFail(['g', '--model=m', `--${DEV_MODEL_ROLE_FLAGS.worker}=  `])).toContain('expects a model id');
   });
 
+  // A PREFIX WITH NOTHING AFTER IT NAMES NO MODEL. It used to parse as the
+  // literal id `"openrouter:"` — accepted by the flag (which only rejects
+  // `undefined`), stamped onto every worker step, and sent to the endpoint
+  // verbatim. A typo must be a usage error, never an id.
+  //
+  // MUTATION KILLED: `parseRung` falling through to `{ model: value }` when the
+  // tail after a recognized `<provider>:` is empty.
+  it('rejects a provider prefix with an empty tail', () => {
+    for (const raw of ['openrouter:', 'deepseek:', 'openrouter:   ']) {
+      expect(
+        parseFail(['g', '--model=m', `--${DEV_MODEL_ROLE_FLAGS.worker}=${raw}`]),
+        raw,
+      ).toContain('expects a model id');
+    }
+    // …and a chain whose LAST rung is an empty tail is refused whole: dropping
+    // the rung silently would change which model actually runs.
+    expect(
+      parseFail(['g', '--model=m', `--${DEV_MODEL_ROLE_FLAGS.worker}=a/x, openrouter:`]),
+    ).toContain('expects a model id');
+    // The nearby legitimate shapes still parse.
+    expect(
+      parseOk(['g', '--model=m', `--${DEV_MODEL_ROLE_FLAGS.worker}=openrouter:z-ai/glm-5.2`]).models,
+    ).toEqual({ worker: { model: 'z-ai/glm-5.2', provider: 'openrouter' } });
+    expect(
+      parseOk(['g', '--model=m', `--${DEV_MODEL_ROLE_FLAGS.worker}=deepseek/deepseek-r1:free`])
+        .models,
+    ).toEqual({ worker: { model: 'deepseek/deepseek-r1:free' } });
+  });
+
   it('drops a preset on a backend it cannot serve, and says so', () => {
     const opts = parseOk(['g', '--models=hetero'], 'stub');
     expect(opts.models).toEqual({});
@@ -207,30 +236,55 @@ describe('parseDevCliArgs — model routing', () => {
   });
 });
 
-describe('parseDevCliArgs — model ids are taken at face value (no preflight)', () => {
-  // CHARACTERIZATION of a LOST PROTECTION, not a blessing. This exact
-  // invocation was REFUSED until v3.0: the parser checked every pi-executed
-  // role against `model-registry-check.ts` and named the near-miss ids
-  // (`z-ai/glm-5.1`) in the refusal. That module was deleted with the pi
-  // backend — `dev-cli.ts` says so where the check used to run — so an id no
-  // provider serves is now discovered only when the first agent is built,
-  // after its worktree and branch already exist. Restoring a preflight must
-  // REPLACE this test.
+describe('parseDevCliArgs — the parser reads SHAPE, the preflight reads catalogs', () => {
+  // The parser is PURE: the model preflight needs `recommended-models.json`,
+  // which is I/O, so it lives in `runDevCli` and in `runDevMode`. What must NOT
+  // happen here is a refusal — an id this parser cannot vouch for still parses,
+  // and is judged one layer out where the catalog is readable.
   it('accepts a role id no catalog vouches for — nothing validates it here', () => {
     const opts = parseOk(['g', '--model=deepseek/deepseek-v4-pro', `--${DEV_MODEL_ROLE_FLAGS.worker}=z-ai/glm-5.2`]);
-    expect(opts.models?.worker).toBe('z-ai/glm-5.2');
+    expect(opts.models?.worker).toEqual({ model: 'z-ai/glm-5.2' });
+  });
+
+  // MUTATION KILLED: dropping the `<provider>:` form from `parseModelRoute`, or
+  // letting `parseModelFlags` store the raw string. A role could then no longer
+  // say which endpoint serves it, and the whole mixed roster collapses back to
+  // "one provider per run, ids that die inside the first agent".
+  it('reads the endpoint a role pins, and leaves a bare id inheriting the run', () => {
+    const opts = parseOk([
+      'g',
+      '--model=deepseek/deepseek-v4-pro',
+      `--${DEV_MODEL_ROLE_FLAGS.critic}=openrouter:anthropic/claude-opus-5`,
+      `--${DEV_MODEL_ROLE_FLAGS.worker}=deepseek/deepseek-v4-flash`,
+    ]);
+    expect(opts.models?.critic).toEqual({
+      model: 'anthropic/claude-opus-5',
+      provider: 'openrouter',
+    });
+    expect(opts.models?.worker).toEqual({ model: 'deepseek/deepseek-v4-flash' });
+  });
+
+  // MUTATION KILLED: passing `--model` through raw. A prefix copy-pasted out of
+  // a preset would become part of the model NAME on the wire, on every step the
+  // routing did not stamp.
+  it('strips a provider prefix from --model — the run-level id carries none', () => {
+    const opts = parseOk(['g', '--model=openrouter:anthropic/claude-opus-5']);
+    expect(opts.modelId).toBe('anthropic/claude-opus-5');
+    expect(opts.models).toBeUndefined();
   });
 
   it('parses the planner id the factory default depends on', () => {
     // `z-ai/glm-5.2` never belonged to an agent-backend catalog ON PURPOSE:
     // the blind orchestrator is a structured-output call, not an agent. The
-    // shipped `hetero` preset routes the planner there, so the flag and the
-    // preset must both keep producing exactly that id.
+    // shipped `hetero` preset routes the planner there — now saying out loud
+    // that only OpenRouter serves it.
     const opts = parseOk(['g', '--model=deepseek/deepseek-v4-pro', `--${DEV_MODEL_ROLE_FLAGS.planner}=z-ai/glm-5.2`]);
-    expect(opts.models?.planner).toBe('z-ai/glm-5.2');
-    // And the factory default carries exactly that id, so it must parse too.
-    expect(DEV_MODEL_PRESETS.hetero.planner).toBe('z-ai/glm-5.2');
-    expect(parseOk(['g', '--models=hetero']).models?.planner).toBe('z-ai/glm-5.2');
+    expect(opts.models?.planner).toEqual({ model: 'z-ai/glm-5.2' });
+    expect(DEV_MODEL_PRESETS.hetero.planner).toBe('openrouter:z-ai/glm-5.2');
+    expect(parseOk(['g', '--models=hetero']).models?.planner).toEqual({
+      model: 'z-ai/glm-5.2',
+      provider: 'openrouter',
+    });
   });
 
   it('every shipped preset parses on the jcode backend', () => {
@@ -239,7 +293,7 @@ describe('parseDevCliArgs — model ids are taken at face value (no preflight)',
     // in `dev-cli.ts` IS those same keys — so a preset added, dropped or
     // renamed could never fail here. Spelled out, the shipped set is a
     // decision this test has to be updated to change.
-    const SHIPPED = ['hetero', 'thrifty', 'monoculture', 'uniform'] as const;
+    const SHIPPED = ['hetero', 'thrifty', 'monoculture', 'roster', 'uniform'] as const;
     expect(Object.keys(DEV_MODEL_PRESETS).sort()).toEqual([...SHIPPED].sort());
 
     for (const name of SHIPPED) {
@@ -253,7 +307,7 @@ describe('parseDevCliArgs — model ids are taken at face value (no preflight)',
     // above); a flag the human typed for one role is honored everywhere,
     // because a custom deployment id in a worker slot is legitimate.
     const opts = parseOk(['g', `--${DEV_MODEL_ROLE_FLAGS.worker}=vendor/custom-deployment`, '--model=m'], 'stub');
-    expect(opts.models?.worker).toBe('vendor/custom-deployment');
+    expect(opts.models?.worker).toEqual({ model: 'vendor/custom-deployment' });
   });
 });
 
@@ -342,11 +396,13 @@ describe('formatPlan', () => {
 
 describe('formatModelRouting', () => {
   it('lists every role with its effective id, marking the ones on --model', () => {
-    const policy = { ...DEV_MODEL_PRESETS.hetero };
+    const policy = defaultDevModelPolicy('jcode', 'hetero');
     const block = formatModelRouting(resolveDevModels(policy, 'fallback/one'), policy, 'hetero');
     expect(block).toContain('preset hetero');
     for (const role of DEV_MODEL_ROLES) expect(block, role).toContain(role);
-    expect(block).toContain(DEV_MODEL_PRESETS.hetero.critic);
+    expect(block).toContain('moonshotai/kimi-k2.6');
+    // The two roles that pin an endpoint say so; the five that inherit do not.
+    expect(block.match(/@openrouter/g)).toHaveLength(2);
     // The planner id is shown WITH the reason it is exempt from the preflight.
     expect(block).toContain('structured output');
     expect(block).not.toContain('← --model');
@@ -656,7 +712,7 @@ describe('parseDevCliArgs — --graph warns, never refuses, about what a drawing
     const warnings = opts.warnings.join(' ');
     expect(warnings).toContain('roteamento por papel');
     expect(warnings).toContain('meta.modelId');
-    expect(opts.models).toEqual(DEV_MODEL_PRESETS.hetero);
+    expect(opts.models).toEqual(defaultDevModelPolicy('jcode', 'hetero'));
   });
 
   it('stays silent about both when neither was asked for', () => {

@@ -98,7 +98,16 @@ import { checkWritePartition, formatWritePartitionViolations, type TaskSpec } fr
 import { compileKnowledgePipeline } from './knowledge-to-pipeline.js';
 import { landEpoch, type LandEpochResult } from './epoch-landing.js';
 import { devPaths, devSessionPaths, ROUTER_PREFIX, type DevSessionPaths } from './dev-protocol.js';
-import { collapseDevModelPolicy, pickModelRung, resolveDevModels } from './dev-model-policy.js';
+import { devModelProviderIndex } from './model-catalog-index.js';
+import {
+  checkDevModelPolicy,
+  collapseDevModelPolicy,
+  devModelRefusals,
+  formatDevModelIssues,
+  modelKnownFor,
+  pickModelRoute,
+  resolveDevModels,
+} from './dev-model-policy.js';
 import type { KnowledgeGap, KnowledgeRequest } from './knowledge-schema.js';
 import {
   FITNESS_COMMANDS_GAP,
@@ -953,6 +962,12 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
   const stopRequested = (): boolean => args.gracefulSignal?.aborted === true;
   const epochs: DevEpochRecord[] = [];
 
+  // "Which providers serve this id", from huu's own shipped catalog UNIONED
+  // with whatever the audited repo ships. That union is what the model
+  // preflight below judges against.
+  const modelIndex = devModelProviderIndex(cwd);
+  const isKnownModel = modelKnownFor(modelIndex, config.provider);
+
   // Every role, resolved. Only `planner` is read from here — it is the one
   // call the driver makes itself. The compilers get the RAW policy, because a
   // role it does not name must keep OMITTING `modelId` so the orchestrator's
@@ -960,6 +975,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
   const models = resolveDevModels(
     dev.models,
     config.modelId,
+    isKnownModel,
   );
 
   let sessionId = args.sessionId?.trim() || generateRunId();
@@ -1162,8 +1178,36 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
     );
   }
 
-  // Model preflight skipped in v3.0 — the model registry is not available.
-  // Id validation happens at the factory level when the first agent is built.
+  // THE MODEL PREFLIGHT, restored. It exists to move ONE failure earlier: a
+  // role routed to an id this run's provider does not serve used to survive
+  // until the first agent was spawned — worktree created, branch created,
+  // blackboard committed — and only then die on "model not found". Refusing
+  // here costs the user nothing but the message.
+  //
+  // Refuse on positive contradiction, warn on absence of evidence: the catalog
+  // is a hand-maintained recommendation list, not a registry, so an id it has
+  // never heard of is reported and RUN (huu cannot enumerate what an endpoint
+  // serves), while an id the catalog places on another endpoint only is a stop.
+  {
+    const issues = checkDevModelPolicy({
+      policy: dev.models,
+      provider: config.provider,
+      index: modelIndex,
+    });
+    for (const issue of issues) {
+      if (issue.severity === 'warn') log('warn', `model routing: ${issue.message}`);
+    }
+    const refusals = devModelRefusals(issues);
+    if (refusals.length > 0) {
+      for (const refusal of refusals) log('error', `model routing: ${refusal.message}`);
+      return finish(
+        'model-preflight-failed',
+        knowledge,
+        false,
+        `${refusals.length} role(s) routed to a model ${config.provider ?? 'this run'} does not serve:\n${formatDevModelIssues(refusals)}`,
+      );
+    }
+  }
 
   // Fail fast on the user's own uncommitted work. Every epoch ends in a merge
   // into this branch, and that merge refuses on a dirty tree — better to say
@@ -1810,9 +1854,10 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
           // runs on the `recon` role. Unset ⇒ the field is omitted and the run
           // model applies, exactly as today.
           ...(() => {
-            const recon = pickModelRung(
+            const recon = pickModelRoute(
               dev.models?.recon,
-            );
+              isKnownModel,
+            )?.model;
             return recon ? { subagentModelId: recon } : {};
           })(),
           // Only `chainOfVerification` reads this — every other option shapes
@@ -1981,6 +2026,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
           // the failure the chain exists to prevent.
           const collapsed = collapseDevModelPolicy(
             dev.models,
+            isKnownModel,
           );
           return collapsed ? { models: collapsed } : {};
         })(),

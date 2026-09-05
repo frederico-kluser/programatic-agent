@@ -6,6 +6,7 @@
  * `../lib/types/dev-mode.js`.
  */
 
+import type { LlmProvider } from '../providers.js';
 import type { DevGraph } from '../dev-graph/graph-types.js';
 import type { ReviewFinding } from './pipeline.js';
 
@@ -98,37 +99,106 @@ export type DevModelRole =
   | 'judge'
   /** The merge-conflict resolver → `Pipeline.integrationModelId`. */
   | 'integration';
+// WHERE THE DEBATE ROLES GO. The roster document names an adversarial pair —
+// `advogado` (defends the work) and `promotor` (attacks it) — that huu has no
+// step for yet: there is no debate node in the epoch template, so a role here
+// would name a job nothing runs. They belong in this union the moment that step
+// exists, next to `critic` (which is today the prosecutor's only home), and
+// `ALL_ROLES` in `dev-model-policy.ts` will refuse to compile until both are
+// listed there too.
 
 /**
- * Role → model id. Partial by design: a role left unset OMITS the field on the
+ * WHERE one role runs: the model, and the provider whose endpoint serves it.
+ *
+ * The provider half is the part that was missing while a policy value was a
+ * bare string. `AppConfig.provider` is ONE provider for the whole run, so a
+ * roster that mixes vendors is only expressible if each role can say which
+ * endpoint its id belongs to — otherwise `z-ai/glm-5.2` travels to
+ * api.deepseek.com and dies inside the first agent, after its worktree and
+ * branch already exist.
+ *
+ * `provider` absent means "whatever provider the run is on", which is exactly
+ * what a bare string has always meant. Leave it unset for an id BOTH endpoints
+ * serve (`deepseek/…` is in the catalog under both) — that keeps the route
+ * portable. Set it for an id only one endpoint serves, and the preflight can
+ * then refuse the mismatch at the border with no catalog lookup at all.
+ */
+export interface DevModelRoute {
+  /**
+   * A model id, or an ordered chain of fallback rungs (`"a/x, b/y"`) — see
+   * `modelRungs` in `dev-mode/dev-model-policy.ts`. Written in huu's canonical
+   * catalog shape (`vendor/model`); `modelIdForProvider` renames it for the
+   * endpoint at the last moment.
+   */
+  model: string;
+  /**
+   * Provider whose endpoint serves {@link model}. Absent ⇒ inherit the run's
+   * provider (`AppConfig.provider`).
+   */
+  provider?: LlmProvider;
+}
+
+/**
+ * What a role may be written as at an INPUT surface (a CLI flag, a POST body,
+ * a preset table). A bare string keeps meaning exactly what it meant, and it
+ * may carry an explicit provider as a `<provider>:` prefix
+ * (`"openrouter:anthropic/claude-opus-5"`) — the one form that survives a
+ * round-trip through a plain `Record<string, string>` JSON payload, which is
+ * what `/api/bootstrap` hands the browser and what the browser posts back.
+ */
+export type DevModelRouteInput = string | DevModelRoute;
+
+/**
+ * Role → route. Partial by design: a role left unset OMITS `modelId` on the
  * emitted step, so the existing `AppConfig.modelId` fallback applies and the
  * compiled pipeline is byte-identical to today's.
  */
-export type DevModelPolicy = Partial<Record<DevModelRole, string>>;
+export type DevModelPolicy = Partial<Record<DevModelRole, DevModelRoute>>;
+
+/** The same policy as an untrusted/loose surface may write it. */
+export type DevModelPolicyInput = Partial<Record<DevModelRole, DevModelRouteInput>>;
 
 /** Named policies the CLI and the web offer. */
-export type DevModelPreset = 'hetero' | 'thrifty' | 'monoculture' | 'uniform';
+export type DevModelPreset = 'hetero' | 'thrifty' | 'monoculture' | 'roster' | 'uniform';
 
+/**
+ * `deepseek/…` ids are deliberately written WITHOUT a provider: both endpoints
+ * serve them (the catalog carries a `deepseek` and an `openrouter` entry for
+ * each), so an unqualified route is portable and inherits the run's provider.
+ * Only the ids a single endpoint serves carry the `openrouter:` prefix — and
+ * that prefix is what makes a preset self-describing, so the preflight can
+ * refuse a provider mismatch WITHOUT consulting a catalog that may not ship
+ * with the audited repository.
+ */
 const DS = 'deepseek/deepseek-v4-pro';
+const DS_FLASH = 'deepseek/deepseek-v4-flash';
 
 export const DEV_MODEL_PRESETS = {
-  /** ★ The default: strong blind leader, cheap swarm, critic from ANOTHER family. */
+  /**
+   * ★ Strong blind leader, cheap swarm, critic from ANOTHER family.
+   *
+   * An OPENROUTER preset, and it cannot be anything else: a cross-family critic
+   * needs an endpoint that fronts more than one family, and OpenRouter is the
+   * only one huu speaks. Run it with `--provider=openrouter`; on DeepSeek the
+   * preflight refuses it by name instead of letting `z-ai/glm-5.2` reach
+   * api.deepseek.com.
+   */
   hetero: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
-    critic: 'moonshotai/kimi-k2.6',
+    critic: 'openrouter:moonshotai/kimi-k2.6',
     reporter: DS,
     judge: DS,
     integration: DS,
   },
   /** Same as `hetero`, with the reporter demoted — it is mechanical prose over a diff. */
   thrifty: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
-    critic: 'moonshotai/kimi-k2.6',
-    reporter: 'deepseek/deepseek-v4-flash',
+    critic: 'openrouter:moonshotai/kimi-k2.6',
+    reporter: DS_FLASH,
     judge: DS,
     integration: DS,
   },
@@ -137,9 +207,13 @@ export const DEV_MODEL_PRESETS = {
    * explicitly the configuration the evidence flags as the weakest
    * assumption; it exists so the cross-family critic can be A/B'd against it,
    * not as a recommendation.
+   *
+   * The planner stays on the same leader as `hetero` ON PURPOSE: the arm under
+   * test is the CRITIC, so changing the leader too would confound the
+   * comparison. That also makes this an OpenRouter preset.
    */
   monoculture: {
-    planner: 'z-ai/glm-5.2',
+    planner: 'openrouter:z-ai/glm-5.2',
     recon: DS,
     worker: DS,
     critic: DS,
@@ -147,9 +221,48 @@ export const DEV_MODEL_PRESETS = {
     judge: DS,
     integration: DS,
   },
+  /**
+   * The heterogeneous ROSTER: one endpoint (OpenRouter), five vendors, each
+   * role on the model whose failure mode it can least afford.
+   *
+   *   planner     V4 Pro           — the blind leader decomposes; it reads only
+   *                                  a digest, so reasoning beats context here.
+   *   recon       V4 Pro           — the ARCHITECT. Front recon writes the task
+   *                                  specs, i.e. it decides the decomposition;
+   *                                  a vague atlas produces vague findings.
+   *   worker      V4 Flash         — the fan-out. Cheapest per token, and every
+   *                                  worker's output is read by a critic.
+   *   critic      GPT-5.6 Sol      — the PROSECUTOR, and cross-family from the
+   *                                  DeepSeek workers by construction. A model
+   *                                  auditing its own family is the single most
+   *                                  fragile assumption in this design.
+   *   reporter    GLM-5.3 Flash    — retrieval-and-summarize over a long diff:
+   *                                  1.31M of context for ~$0.08/Mtok.
+   *   judge       Claude Opus 5    — the strongest model in the roster, on the
+   *                                  role whose failure is SILENT (every check
+   *                                  has a forward `default: true`).
+   *   integration V4 Pro           — resolves conflicts in code the DeepSeek
+   *                                  workers wrote; same family is an asset for
+   *                                  a merge, unlike for an audit.
+   *
+   * The roster document also names an adversarial PAIR (advogado = Opus 5,
+   * promotor = GPT-5.6 Sol). huu has no debate step yet, so only the prosecutor
+   * half has a home (`critic`); Opus 5 lands on `judge`, the other place where
+   * being wrong is expensive. When the debate arrives it brings its own roles —
+   * see `DevModelRole` for where they attach.
+   */
+  roster: {
+    planner: DS,
+    recon: DS,
+    worker: DS_FLASH,
+    critic: 'openrouter:openai/gpt-5.6-sol',
+    reporter: 'openrouter:z-ai/glm-5.3-flash',
+    judge: 'openrouter:anthropic/claude-opus-5',
+    integration: DS,
+  },
   /** Every role falls back to `AppConfig.modelId` — today's behavior, byte-identical. */
   uniform: {},
-} as const satisfies Record<DevModelPreset, DevModelPolicy>;
+} as const satisfies Record<DevModelPreset, DevModelPolicyInput>;
 
 /** One parallel workstream within an epoch. */
 export interface DevFront {

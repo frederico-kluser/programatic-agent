@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDevModelsPayload,
+  defaultPreset,
   describeDevModelsPayload,
+  fallbackModelIdFrom,
   matchesPreset,
   presetPolicy,
+  presetRunnable,
   presetValues,
 } from './dev-models.js';
 
@@ -160,5 +163,74 @@ describe('describeDevModelsPayload', () => {
     expect(describeDevModelsPayload({ models: { worker: 'a/b' } })).toBe('1 role pinned by hand');
     expect(describeDevModelsPayload({ models: { worker: 'a/b', judge: 'c/d' } })).toBe('2 roles pinned by hand');
     expect(describeDevModelsPayload({})).toBe('every role on the same model');
+  });
+});
+
+/* ── Which presets the ACTIVE PROVIDER can run ─────────────────────────────
+   `/dev` opens with a preset ALREADY selected, so the opening preset has to be
+   one the selected provider can serve. It was `hetero` unconditionally, and on
+   a machine whose only key is DeepSeek that made "open /dev, press Start" a
+   400 from the server's model preflight — four of the five presets are refused
+   there. The verdict comes from `/api/bootstrap` (`devModelPresetProviders`),
+   produced by the same `checkDevModelPolicy` that refuses the POST. */
+
+const PRESET_PROVIDERS = {
+  hetero: ['openrouter'],
+  monoculture: ['openrouter'],
+  uniform: ['deepseek', 'openrouter'],
+};
+
+describe('presetRunnable', () => {
+  it('reads the server verdict', () => {
+    expect(presetRunnable(PRESET_PROVIDERS, 'hetero', 'openrouter')).toBe(true);
+    expect(presetRunnable(PRESET_PROVIDERS, 'hetero', 'deepseek')).toBe(false);
+    expect(presetRunnable(PRESET_PROVIDERS, 'uniform', 'deepseek')).toBe(true);
+  });
+
+  it('answers YES whenever it has nothing to go on', () => {
+    // An older server, an unknown preset, or no provider picked yet. The border
+    // still refuses an impossible body — degrading toward the server's
+    // authority, never around it.
+    expect(presetRunnable(null, 'hetero', 'deepseek')).toBe(true);
+    expect(presetRunnable(undefined, 'hetero', 'deepseek')).toBe(true);
+    expect(presetRunnable(PRESET_PROVIDERS, 'brand-new', 'deepseek')).toBe(true);
+    expect(presetRunnable(PRESET_PROVIDERS, 'hetero', undefined)).toBe(true);
+  });
+});
+
+describe('defaultPreset', () => {
+  const NAMES = Object.keys(PRESET_PROVIDERS);
+
+  // MUTATION KILLED: returning `hetero` whenever the list contains it (the
+  // provider-blind default). The DeepSeek column goes back to a preset the
+  // provider cannot serve, i.e. the default `/dev` path goes back to a 400.
+  it('opens on the recommended split ONLY where it can run', () => {
+    expect(defaultPreset(PRESET_PROVIDERS, NAMES, 'openrouter')).toBe('hetero');
+    expect(defaultPreset(PRESET_PROVIDERS, NAMES, 'deepseek')).toBe('uniform');
+  });
+
+  it('keeps the old provider-blind answer when the server advertises nothing', () => {
+    expect(defaultPreset(null, NAMES, 'deepseek')).toBe('hetero');
+  });
+
+  it('falls back to the raw list rather than offering nothing', () => {
+    const nowhere = { hetero: [], monoculture: [], uniform: [] };
+    expect(defaultPreset(nowhere, NAMES, 'deepseek')).toBe('hetero');
+    expect(defaultPreset(PRESET_PROVIDERS, [], 'deepseek')).toBe('hetero');
+    expect(defaultPreset(PRESET_PROVIDERS, ['solo'], 'deepseek')).toBe('solo');
+  });
+});
+
+describe('fallbackModelIdFrom', () => {
+  it('prefers the worker, then the planner, then anything pinned', () => {
+    expect(fallbackModelIdFrom(ROLES, presetValues(ROLES, PRESETS, 'hetero')))
+      .toBe('deepseek/deepseek-v4-pro');
+    expect(fallbackModelIdFrom(ROLES, { planner: ' a/b ' })).toBe('a/b');
+    expect(fallbackModelIdFrom(ROLES, { judge: 'c/d' })).toBe('c/d');
+  });
+
+  it("returns '' when nothing is pinned, so the caller supplies the default", () => {
+    expect(fallbackModelIdFrom(ROLES, presetValues(ROLES, PRESETS, 'uniform'))).toBe('');
+    expect(fallbackModelIdFrom(undefined, undefined)).toBe('');
   });
 });

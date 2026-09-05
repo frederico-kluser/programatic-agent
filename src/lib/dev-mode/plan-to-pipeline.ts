@@ -294,9 +294,17 @@ interface CompileCtx {
   model: (role: DevModelRole) => { modelId?: string };
 }
 
+/**
+ * A step carries a model, never a provider: `AppConfig.provider` is one
+ * provider per run, and the pipeline schema has no per-step provider field to
+ * stamp. So a route's `provider` is NOT dropped silently — it is enforced one
+ * layer up, by `checkDevModelPolicy` at the session border, which refuses a
+ * role whose id the run's provider cannot serve BEFORE any worktree exists.
+ * When a step grows a provider of its own, this is the function that fills it.
+ */
 function makeModelStamper(models: DevModelPolicy | undefined): CompileCtx['model'] {
   return (role) => {
-    const modelId = models?.[role]?.trim();
+    const modelId = models?.[role]?.model.trim();
     return modelId ? { modelId } : {};
   };
 }

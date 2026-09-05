@@ -492,6 +492,8 @@ export const webEn = {
   'web.dev.err_no_goal': 'Write the goal first',
   'web.dev.err_no_model': 'Pick a model for every role',
   'web.dev.err_no_dir': 'Pick the project folder',
+  'web.dev.err_preset_provider':
+    'The “{preset}” preset only runs on {providers} — switch the provider, or pick a preset this one serves.',
   'web.dev.session_started': 'Session started ({id})',
   'web.dev.row_goal': 'Goal',
   'web.dev.row_project': 'Project',
@@ -563,9 +565,14 @@ export const webEn = {
   'web.preset.monoculture': 'Monoculture',
   'web.preset.monoculture_hint':
     "A/B BASELINE, not a recommendation: every role — including the critic — on the worker's own model. This is precisely the configuration the evidence flags as the most fragile; it exists so the cross-family critic can be measured against it.",
+  'web.preset.roster': 'Roster',
+  'web.preset.roster_hint':
+    'One endpoint, five vendors: the strongest model on the judge (whose failure is silent), the prosecutor cross-family from the workers, and the cheap flash model on the fan-out.',
   'web.preset.uniform': 'Uniform',
   'web.preset.uniform_hint':
     'Every role on the same model — whatever the worker field holds. The pre-routing behavior.',
+  'web.preset.needs_provider':
+    'Not available on this provider: these ids are served by {providers}.',
 
   /* ── The method canvas (/graph) ────────────────────────────────────────────
      Chrome only. Every RULE the canvas states — why a connection was refused,

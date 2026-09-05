@@ -79,12 +79,21 @@ const BOOTSTRAP = {
   runs: [],
   providers: [
     { id: 'openrouter', label: 'OpenRouter', description: 'x', backend: 'pi', hasKey: true, keySpecs: [] },
+    { id: 'deepseek', label: 'DeepSeek', description: 'y', backend: 'pi', hasKey: true, keySpecs: [] },
   ],
   backends: [{ id: 'pi', apiKeySpecName: 'openrouter' }],
   devModelRoles: ['planner', 'worker', 'critic'],
   devModelPresets: {
     hetero: { planner: 'z-ai/glm-5.2', worker: 'deepseek/deepseek-v4-flash', critic: 'anthropic/claude-sonnet-4' },
+    roster: { planner: 'openrouter:anthropic/claude-opus-5', worker: 'deepseek/deepseek-v4-flash', critic: 'openrouter:openai/gpt-5.6-sol' },
     uniform: {},
+  },
+  // The server's own verdict (`checkDevModelPolicy` per provider), shipped so
+  // the form never reimplements the rule it has to obey.
+  devModelPresetProviders: {
+    hetero: ['openrouter'],
+    roster: ['openrouter'],
+    uniform: ['deepseek', 'openrouter'],
   },
   devMethodologyOptions: DEV_METHODOLOGIES.map(({ key, label, description }) => ({ key, label, description })),
   // The graph catalog projection: its presence is what un-hides the method panel.
@@ -852,5 +861,94 @@ describe('dev form — the seams around the picker', () => {
       state.S.boot.graphNodeKinds = saved;
       dev.initDevGraphPicker();
     }
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   5. THE ROUTING PANEL KNOWS WHICH PROVIDER IT IS ON.
+
+   `/dev` opens with a preset ALREADY selected — routing here is a required
+   decision, not an opt-in tweak — and most presets route the planner (and
+   usually the critic) to ids only openrouter.ai serves. On a machine whose only
+   key is DeepSeek, the untouched form therefore assembled a body its own server
+   refuses: `HTTP 400 — 2 role(s) refused: planner, critic`. Four of the five
+   shipped presets were refused there.
+
+   The server still refuses an impossible body (`dev-manager.test.ts`). What
+   changes is that the CLIENT no longer builds one.
+   ───────────────────────────────────────────────────────────────────────── */
+describe('the routing panel follows the active provider', () => {
+  // getElementById/querySelector type as Element; these are our own <button>s.
+  const preset = (name) =>
+    /** @type {HTMLButtonElement} */ ($('devPresetSeg').querySelector(`[data-preset="${name}"]`));
+  const selectedPreset = () =>
+    /** @type {HTMLButtonElement} */ ($('devPresetSeg').querySelector('button.on')).dataset.preset;
+  const pickProvider = (id) =>
+    click(
+      Array.from($('devProviderSeg').querySelectorAll('button')).find((b) =>
+        b.textContent.startsWith(id === 'deepseek' ? 'DeepSeek' : 'OpenRouter'),
+      ),
+    );
+
+  afterEach(() => {
+    pickProvider('openrouter');
+  });
+
+  it('renders the preset LABELS, not the catalog keys', () => {
+    // `DEV_PRESET_COPY` holds i18n KEYS; they used to be printed raw, so the
+    // buttons read `web.preset.hetero`. `roster` had no entry at all.
+    expect(preset('hetero').textContent).toBe('Hetero ★');
+    expect(preset('roster').textContent).toBe('Roster');
+    expect(preset('uniform').textContent).toBe('Uniform');
+  });
+
+  // MUTATION KILLED: dropping the provider argument from `defaultPreset` (or
+  // going back to "hetero whenever the table has it"). The panel stays on a
+  // preset DeepSeek cannot serve and the POST below carries `modelsPreset`.
+  it('re-opens on a preset the provider can serve when the provider changes', async () => {
+    expect(selectedPreset()).toBe('hetero');
+    pickProvider('deepseek');
+    expect(selectedPreset()).toBe('uniform');
+    // …and the body it now assembles carries NO preset at all, which is the
+    // pre-routing body the border has always accepted.
+    expect(dev.devModelsPayload()).toEqual({});
+    const post = await submitDevForm();
+    expect(post.body.provider).toBe('deepseek');
+    expect('modelsPreset' in post.body).toBe(false);
+    expect('models' in post.body).toBe(false);
+  });
+
+  it('DISABLES the presets this provider cannot run, and says where they do run', () => {
+    pickProvider('deepseek');
+    expect(preset('hetero').disabled).toBe(true);
+    expect(preset('roster').disabled).toBe(true);
+    expect(preset('uniform').disabled).toBe(false);
+    // The tooltip is the repair, not a stop code.
+    expect(preset('hetero').title).toContain('OpenRouter');
+    // Back on OpenRouter every preset is selectable again.
+    pickProvider('openrouter');
+    expect(preset('hetero').disabled).toBe(false);
+    expect(preset('roster').disabled).toBe(false);
+  });
+
+  it('refuses to select a preset the provider cannot run', () => {
+    pickProvider('deepseek');
+    click(preset('hetero'));
+    expect(selectedPreset()).toBe('uniform');
+    expect(dev.devModelsPayload()).toEqual({});
+  });
+
+  // The last line of defense, for a state the panel cannot reach on its own
+  // (a provider changed behind its back). The form ANSWERS instead of posting.
+  it('blocks the submit rather than posting a body the border refuses', () => {
+    click(preset('roster'));
+    expect(dev.devModelsPayload()).toEqual({ modelsPreset: 'roster' });
+    state.S.provider = 'deepseek';
+    const blocked = dev.devSubmitBlocker('migrar o parser', 'deepseek/deepseek-v4-flash');
+    expect(blocked).toBeTruthy();
+    expect(blocked.message).toContain('Roster');
+    expect(blocked.message).toContain('OpenRouter');
+    state.S.provider = 'openrouter';
+    expect(dev.devSubmitBlocker('migrar o parser', 'deepseek/deepseek-v4-flash')).toBeNull();
   });
 });

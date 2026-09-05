@@ -31,9 +31,15 @@ import {
 import type { DevGraph } from '../lib/dev-graph/graph-types.js';
 import type { OrphanBranch } from '../lib/dev-mode/orphan-branches.js';
 import { activeMethodologies } from '../lib/dev-mode/methodology-registry.js';
+import { devModelProviderIndex } from '../lib/dev-mode/model-catalog-index.js';
 import {
+  checkDevModelPolicy,
   defaultDevModelPolicy,
+  devModelRefusals,
+  formatDevModelIssues,
+  modelKnownFor,
   parseDevModelPolicy,
+  parseModelRoute,
   resolveDevModels,
 } from '../lib/dev-mode/dev-model-policy.js';
 import type {
@@ -414,6 +420,13 @@ export class WebDevManager {
     const goal = params.goal?.trim();
     if (!goal) throw new Error('goal is required');
     if (!params.modelId?.trim()) throw new Error('modelId is required');
+    // The RUN-LEVEL model carries no provider: `AppConfig.provider` already
+    // says which endpoint the session spends on, and `modelId` is the fallback
+    // for every step nothing routed. A `<provider>:` prefix can still arrive
+    // here — the browser derives this field from the `worker` role input, and a
+    // preset now shows prefixed ids in those inputs — so it is stripped rather
+    // than shipped to the endpoint as part of the model name.
+    const runModelId = parseModelRoute(params.modelId)?.model ?? params.modelId.trim();
 
     const bundle = selectBackend(params.backend);
     const devProvider = resolveRunProvider(params.backend, params.provider);
@@ -470,7 +483,7 @@ export class WebDevManager {
 
     const config: AppConfig = {
       apiKey: apiKey || 'stub',
-      modelId: params.modelId,
+      modelId: runModelId,
       backend: params.backend,
       provider: devProvider,
       endpoint,
@@ -492,7 +505,31 @@ export class WebDevManager {
       ...parseDevModelPolicy(params.models),
     };
     const routed = Object.keys(policy).length > 0;
-    const models = resolveDevModels(routed ? policy : undefined, params.modelId);
+
+    // THE MODEL PREFLIGHT, at the web border. `runDevMode` runs the same check
+    // and is the authority; refusing here is what turns "the session opened,
+    // the board rendered, and it stopped" into a 4xx the launch form can show
+    // next to the field that caused it. Warnings are logged, never fatal — an
+    // id absent from the catalog is not evidence the provider lacks it.
+    const modelIndex = devModelProviderIndex(runDirectory);
+    const modelIssues = checkDevModelPolicy({
+      policy: routed ? policy : undefined,
+      provider: devProvider,
+      index: modelIndex,
+    });
+    const modelRefusals = devModelRefusals(modelIssues);
+    if (modelRefusals.length > 0) {
+      throw new Error(
+        `${modelRefusals.length} role(s) routed to a model ${devProvider ?? 'this run'} does not serve:\n` +
+          formatDevModelIssues(modelRefusals),
+      );
+    }
+
+    const models = resolveDevModels(
+      routed ? policy : undefined,
+      runModelId,
+      modelKnownFor(modelIndex, devProvider),
+    );
 
     this.abortController = new AbortController();
     this.session = {
@@ -503,7 +540,7 @@ export class WebDevManager {
       runDirectory,
       approval,
       phase: 'probing',
-      modelId: params.modelId,
+      modelId: runModelId,
       models,
       methodologies: activeMethodologies(params.methodology).map((d) => d.key),
       backend: params.backend,
@@ -532,6 +569,12 @@ export class WebDevManager {
       logs: [],
       startedAt: Date.now(),
     };
+    // Logged HERE and not next to the check above: `this.log` writes into
+    // `this.session.logs` and no-ops while there is no session, so a warning
+    // emitted a few lines earlier would simply vanish.
+    for (const issue of modelIssues) {
+      if (issue.severity === 'warn') this.log('warn', `model routing: ${issue.message}`);
+    }
     this.emit();
 
     const timeoutMs = params.timeoutMinutes ? Math.round(params.timeoutMinutes * 60_000) : undefined;
@@ -605,7 +648,7 @@ export class WebDevManager {
             pipelineName: pipeline.name,
             runDirectory,
             backend: params.backend,
-            modelId: params.modelId,
+            modelId: runModelId,
             startedAt,
             state,
           });

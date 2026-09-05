@@ -149,6 +149,27 @@ epoch up to the ceiling without asking you anything: the CLI maps *no flag* to
 it runs. `--autonomous` exists solely to state that default out loud; it
 changes nothing, and passing it together with `--approve-each` is rejected.
 
+### The live board (`--cli`)
+
+`huu dev --cli` (also `--tui`, or `HUU_CLI=1`) renders the session as a live
+kanban instead of a scrolling log: the same `RunKanban` the pipeline dashboard
+uses, carrying the epoch's cards, their progress and the session narration in
+one frame.
+
+**It paints on stderr, never stdout.** `huu dev`'s single JSON object on
+stdout is a machine contract, so it stays byte-identical whether the board is
+on or off — no script breaks. With no TTY on stderr (a pipe, a log file, CI)
+huu says so once and keeps the plain log rather than drawing a frame nobody
+can read.
+
+Ink holds stdin in raw mode, so the `y/N` gates — `--approve-each`, the resume
+offer, the orphan-branch offer — are answered **inside the frame**, with the
+semantics they always had: `y`/`s` is yes, anything else (ENTER included) is
+no. `Ctrl+C` unmounts and exits 130. Full key map in
+[`KEYBOARD.md`](KEYBOARD.md#dev-dashboard-huu-dev---cli).
+
+A bare `huu dev` is unchanged: the headless log plus the JSON verdict.
+
 ### From the web UI
 
 A **switch** at the top, putting the two ways to start work side by side:
@@ -209,6 +230,7 @@ side can see it.
 | `--autonomous` | No-op that states **the default** (plan and run everything without asking). Rejected together with `--approve-each`. |
 | `--skip-knowledge` | Do not bootstrap agent skills even when the project has none. |
 | `--run-dir <path>` | Target repository (default: the current directory). |
+| `--cli` / `--tui` | Render the session as a live kanban on **stderr** (see [The live board](#the-live-board---cli)). `HUU_CLI=1` does the same. |
 | `--tdd` | Split every front's work into a tests step and an implementation step. See [Methodology options](#methodology-options). |
 | `--lint-gate` | Run the project's lint/typecheck as a deterministic merge gate. See [Methodology options](#methodology-options). |
 | `--standards` | Give every per-task critic a rubric from the project's atlas and declared conventions. See [Methodology options](#methodology-options). |
@@ -711,6 +733,22 @@ critic rubric and no merge gate of its own, so that is the one behavior you get
 from it without asking for it: with `--debate` on, a task whose critic reaches
 its round cap with blocking findings open is parked for a human instead of
 waiving. That is said in the flag's description, in the web checkbox and here.
+
+**Watching it happen (web).** With `--debate` on, `/dev` grows a **Debate**
+button that opens the two sides as a conversation. While the round runs, the
+panel is fed by the un-throttled `agent-stream` firehose — literally the
+advocate's and the prosecutor's output as they write it. That is the *only*
+way to watch it live: both briefs are written inside the debater's own
+worktree and reach the blackboard path only once the wave merges, so a UI
+watching the file would see it appear already finished. After the wave lands,
+`GET /api/dev/debate` serves the settled version: the merged `A.md`/`B.md`,
+parsed **server-side** (the browser client is bundler-free vanilla ESM and
+cannot import the TypeScript parser) into decisions, verdicts and objections,
+with decisions nobody judged and verdicts nobody declared called out. The
+parser is lenient by contract — a brief that does not match the skeleton
+degrades to its raw markdown instead of vanishing. Without `--debate` the
+button never appears and no request is made. There is **no debate panel in the
+TUI**: the `--cli` board shows the kanban, the chat is web-only.
 
 ### The escape: blocking holds for a human, never a silent waive
 

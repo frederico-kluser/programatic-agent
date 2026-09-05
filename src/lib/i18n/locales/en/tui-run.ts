@@ -140,4 +140,91 @@ export const tuiRunEn = {
   'tui.multi.all_finished': 'all runs finished',
   'tui.multi.aborting': 'aborting…',
   'tui.multi.shared_concurrency': 'concurrency is shared across runs',
+  // ── development mode (`huu dev --cli`): the live epoch board ───────────────
+  // AI-driven surface end to end (a planner writes the pipeline at run time),
+  // so the chrome is `theme.ai` on purpose — see AGENTS.md "Visual conventions".
+  'tui.dev.title': 'dev mode',
+  'tui.dev.goal': 'goal',
+  'tui.dev.epochs': 'epochs',
+  'tui.dev.epoch': 'epoch',
+  'tui.dev.of_max': 'of {max}',
+  'tui.dev.phase_planning': 'planning',
+  'tui.dev.phase_knowledge': 'knowledge',
+  'tui.dev.phase_bootstrap': 'bootstrap',
+  'tui.dev.phase_work': 'execution',
+  'tui.dev.badge_running': 'running',
+  'tui.dev.badge_landed': 'landed {commit}',
+  'tui.dev.badge_failed': 'failed',
+  'tui.dev.session_title': 'Session',
+  'tui.dev.session_waiting': 'starting the session…',
+  'tui.dev.epoch_divider': 'epoch {epoch} · {phase}',
+  'tui.dev.board_waiting': 'Waiting for the {phase} run of epoch {epoch}…',
+  'tui.dev.board_planning': 'The blind orchestrator is planning epoch {epoch} — there is no board yet.',
+  'tui.dev.run_over': 'run finished — landing the epoch',
+  'tui.dev.stopped': 'session ended: {reason}',
+  'tui.dev.gate_title': 'huu is asking',
+  'tui.dev.gate_hint': 'Y or S = yes · any other key = no',
+  'tui.dev.hint_quit': 'ends the session',
+  'tui.dev.hint_live': 'live board — every epoch of the session runs here',
+  'tui.dev.no_tty': 'huu dev: --cli needs an interactive terminal; keeping the plain log.',
+  // The three y/N gates `huu dev` asks. They live in the catalog because the
+  // board renders them INSIDE a translated frame: leaving them hardcoded put a
+  // Portuguese question inside an English "huu is asking / Y or S = yes" box,
+  // and the question is the one string a user must understand to answer it.
+  'tui.dev.gate_resume': 'Resume that session (continuing the epoch numbering)?',
+  'tui.dev.gate_resume_no_tty':
+    'huu dev: no interactive terminal — starting a NEW session (use --resume to resume without asking).',
+  'tui.dev.gate_orphans': 'Land those branches (merge --no-ff) before starting?',
+  'tui.dev.gate_orphans_no_tty':
+    'huu dev: no interactive terminal — leaving the orphan branches alone (use --land-orphans to land them).',
+  'tui.dev.gate_approve_epoch': 'Run epoch {epoch}?',
+  'tui.dev.gate_approve_no_tty':
+    'huu dev: --approve-each needs an interactive terminal; stopping without running the epoch.',
+  // ── `dev-cli.ts` narration: the 24 line templates named in the docstring of
+  // `err()`. Chrome only — data the user typed (goal text, branch names,
+  // session ids, raw stop-reason/status CODES) still travels as a param and is
+  // never itself translated. Optional clauses (a landed commit, a failure, a
+  // resumed flag, a trailing detail) are built as their OWN full phrase via a
+  // nested `t()` call and interpolated as one placeholder — never string
+  // concatenation around the outer `t()` — so word order stays free to move
+  // per locale. See `tui.multi.batch_title` / `batch_failed_suffix` for the
+  // precedent this follows.
+  'tui.dev.resume_header': 'Previous session found',
+  'tui.dev.resume_no_id': '(no id)',
+  'tui.dev.resume_session': 'session: {sessionId} · {done} epoch(s) completed · next would be {nextEpoch}',
+  'tui.dev.resume_last_epoch': 'last epoch: {status}{landed}{failed}',
+  'tui.dev.resume_goal': 'goal: {goal}',
+  'tui.dev.suffix_landed': ' — landed {commit}',
+  'tui.dev.suffix_landing_failed': ' — LANDING FAILED: {error}',
+  'tui.dev.orphans_landing':
+    'huu dev: --land-orphans — landing {count} orphan integration branch(es).',
+  'tui.dev.orphans_header': 'Orphan integration branches ({count})',
+  'tui.dev.orphan_line': '{branch} — {ahead} commit(s) the HEAD does not have{epoch}',
+  'tui.dev.orphan_epoch_suffix': ' · epoch {epoch}',
+  'tui.dev.event_knowledge_present': 'knowledge: present — {reason}',
+  'tui.dev.event_knowledge_absent': 'knowledge: absent — {reason}',
+  'tui.dev.event_bootstrap_start': 'knowledge bootstrap with jcode (deepseek) ({model})…',
+  'tui.dev.event_bootstrap_done_ok': 'bootstrap done',
+  'tui.dev.event_bootstrap_done_failed': 'bootstrap FAILED',
+  'tui.dev.event_planning': 'planning epoch {epoch}…',
+  'tui.dev.event_planned_graph': 'drawn method "{id}": {count} node(s) — {nodes}',
+  'tui.dev.event_planned_plan': 'epoch {epoch}: {count} front(s) — {fronts}',
+  'tui.dev.event_epoch_start': 'epoch {epoch}: running {count} step(s)',
+  'tui.dev.event_epoch_done': 'epoch {epoch}: {status}{landed}{failed}',
+  'tui.dev.event_stopped': 'session ended: {reason}{detail}',
+  'tui.dev.suffix_dash_detail': ' — {detail}',
+  'tui.dev.event_stopped_drawn':
+    'session ended: the drawn method "{id}" ({name}) ran end to end. This is NOT an epoch ceiling: a graph is the COMPLETE method, so the session is one epoch by definition.{detail}',
+  'tui.dev.suffix_detail_line': '\n    detail: {detail}',
+  'tui.dev.plan_header': 'Plan for epoch {epoch}',
+  'tui.dev.plan_epoch_goal_label': 'Epoch goal:',
+  'tui.dev.plan_ready_label': 'Ready when:',
+  'tui.dev.plan_front_line': '{index}. {title} [{id}]{deps}',
+  'tui.dev.plan_front_deps_parallel': ' (parallel)',
+  'tui.dev.plan_front_deps_after': ' (after: {deps})',
+  'tui.dev.plan_front_meta': 'up to {maxTasks} agent(s) · judge: {verify}',
+  'tui.dev.plan_warning': '⚠ plan adjusted: {warning}',
+  'tui.dev.session_summary': 'session: {sessionId}{resumed} · epochs: {epochs}{drawn}',
+  'tui.dev.suffix_resumed': ' (resumed)',
+  'tui.dev.suffix_drawn_method': ' · drawn method "{id}"',
 } as const;

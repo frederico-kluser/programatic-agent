@@ -829,6 +829,19 @@ objetivo). Cada metade é uma rota de verdade (`/` e `/dev`, favoritáveis), mas
 o clique troca a view sem recarregar, então o stream SSE e o quadro de runs
 sobrevivem.
 
+**Duas superfícies para acompanhar.** No terminal, `huu dev "<objetivo>" --cli`
+desenha um **kanban ao vivo** (o mesmo do dashboard de pipelines) em vez do log
+corrido — e pinta em **stderr**, então o objeto JSON que o `huu dev` escreve em
+stdout segue byte a byte idêntico e nenhum script quebra; sem TTY, cai no log
+de sempre. Os portões `y/N` são respondidos dentro do frame (`y`/`s` = sim,
+qualquer outra tecla = não), `Ctrl+C` sai 130. Na web, com `--debate` ligado, a
+`/dev` ganha um botão **Debate** que abre os dois lados como conversa: **ao
+vivo** pelo firehose de saída dos agentes — a única forma de ver acontecendo,
+já que cada brief é escrito no worktree isolado do seu agente e só chega ao
+quadro-negro depois do merge da onda — e **assentado** depois, lido dos
+`A.md`/`B.md` mergeados e parseado no servidor. Sem `--debate` o botão nem
+aparece.
+
 **Fase 0 — portão de knowledge.** Antes de desenvolver, o huu verifica se o
 projeto tem knowledge-skills (`.agents/skills/catalog.md`, skill roteadora, ou
 `.claude/skills/`). Se não tiver, roda o pipeline `huu Knowledge System` em

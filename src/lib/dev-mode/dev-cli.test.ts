@@ -26,6 +26,7 @@ import {
   offerResume,
   parseDevCliArgs,
   runDevCli,
+  type DevCliPresenter,
 } from './dev-cli.js';
 import { GRAPHS_DIR } from '../dev-graph/graph-store.js';
 import { findSample } from '../dev-graph/graph-samples.js';
@@ -33,6 +34,7 @@ import type { DevGraph } from '../dev-graph/graph-types.js';
 import { runDevMode, type DevModeResult } from './dev-driver.js';
 import { DEV_MODEL_ROLES, defaultDevModelPolicy, resolveDevModels } from './dev-model-policy.js';
 import type { OrphanBranch } from './orphan-branches.js';
+import { t } from '../i18n/index.js';
 import {
   DEV_DEFAULT_MAX_EPOCHS,
   DEV_MAX_FRONTS,
@@ -414,13 +416,19 @@ describe('formatPlan', () => {
 
   it('renders the epoch header, both fronts and their dependency shape', () => {
     const out = formatPlan(plan, 2, ['uma frente foi reparada']);
-    expect(out).toContain('── Plano da época 2');
-    expect(out).toContain('Objetivo da época: entregar o CLI');
-    expect(out).toContain('Pronto quando:     os testes passam');
-    expect(out).toContain('1. Superfície de linha de comando [cli] (paralelo)');
-    expect(out).toContain('2. Documentação [docs] (depois de: cli)');
-    expect(out).toContain('até 3 agente(s) · juiz: tsc limpo');
-    expect(out).toContain('⚠ plano ajustado: uma frente foi reparada');
+    // Through the catalog, not a literal: pinning the Portuguese chrome here
+    // would make the test the reason the string can never be translated.
+    expect(out).toContain(`── ${t('tui.dev.plan_header', { epoch: 2 })}`);
+    expect(out).toContain(`${t('tui.dev.plan_epoch_goal_label')} entregar o CLI`);
+    expect(out).toContain(`${t('tui.dev.plan_ready_label')} os testes passam`);
+    expect(out).toContain(
+      `1. Superfície de linha de comando [cli]${t('tui.dev.plan_front_deps_parallel')}`,
+    );
+    expect(out).toContain(
+      `2. Documentação [docs]${t('tui.dev.plan_front_deps_after', { deps: 'cli' })}`,
+    );
+    expect(out).toContain(t('tui.dev.plan_front_meta', { maxTasks: 3, verify: 'tsc limpo' }));
+    expect(out).toContain(t('tui.dev.plan_warning', { warning: 'uma frente foi reparada' }));
   });
 });
 
@@ -495,7 +503,9 @@ describe('interactive gates with no TTY', () => {
   it('answers NO to the resume offer, and says why', async () => {
     await expect(offerResume(state, 2)).resolves.toBe(false);
     const out = stderr.join('');
-    expect(out).toContain('sem terminal interativo');
+    // Through the catalog, not a literal: the note is what the board shows in
+    // place of a question nobody can answer, so it has to be readable.
+    expect(out).toContain(t('tui.dev.gate_resume_no_tty'));
     expect(out).toContain('--resume');
     // It still shows what it found — a refused offer must not hide the session.
     expect(out).toContain('abc123');
@@ -771,11 +781,14 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
     // the default sentence for it claims a limit was hit. On a graph that is
     // simply false, and it is how a successful run reads as a truncated one.
     const line = describeEvent(stopped, { drawnMethod: { id: 'auditoria', name: 'Auditoria' } })!;
-    expect(line).toContain('auditoria');
-    expect(line).toContain('Auditoria');
-    expect(line).toContain('rodou de ponta a ponta');
-    expect(line).toContain('NÃO é teto de épocas');
-    expect(line).toContain('o desenho rodou');
+    // Through the catalog, not a literal — see the note above.
+    expect(line).toBe(
+      t('tui.dev.event_stopped_drawn', {
+        id: 'auditoria',
+        name: 'Auditoria',
+        detail: t('tui.dev.suffix_detail_line', { detail: 'o desenho rodou' }),
+      }),
+    );
   });
 
   it('leaves every other stop reason alone on a graph session', () => {
@@ -783,7 +796,12 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
       { type: 'stopped', reason: 'landing-failed', detail: 'conflito' },
       { drawnMethod: { id: 'auditoria', name: 'Auditoria' } },
     );
-    expect(line).toBe('sessão encerrada: landing-failed — conflito');
+    expect(line).toBe(
+      t('tui.dev.event_stopped', {
+        reason: 'landing-failed',
+        detail: t('tui.dev.suffix_dash_detail', { detail: 'conflito' }),
+      }),
+    );
   });
 
   it('reports a drawn method by its NODES, and a plan by its fronts', () => {
@@ -804,7 +822,9 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
         },
       ],
     };
-    expect(describeEvent({ type: 'planned', epoch: 1, plan, warnings: [] })).toContain('1 frente(s)');
+    expect(describeEvent({ type: 'planned', epoch: 1, plan, warnings: [] })).toBe(
+      t('tui.dev.event_planned_plan', { epoch: 1, count: 1, fronts: 'cli' }),
+    );
 
     const drawn = describeEvent({
       type: 'planned',
@@ -821,9 +841,12 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
     })!;
     // A drawing has nodes, not fronts. Reporting fronts would credit a planner
     // that never ran.
-    expect(drawn).toContain('método desenhado "auditoria"');
-    expect(drawn).toContain('recon, auditar');
-    expect(drawn).not.toContain('frente(s)');
+    expect(drawn).toBe(
+      t('tui.dev.event_planned_graph', { id: 'auditoria', count: 2, nodes: 'recon, auditar' }),
+    );
+    // Locale-agnostic: whichever language is active, the word for "front(s)"
+    // must not leak into a drawing's line.
+    expect(drawn).not.toMatch(/front|frente/i);
   });
 });
 
@@ -994,5 +1017,239 @@ describe('runDevCli — the drawing is resolved AT THE BORDER', () => {
     // Still passed through — the driver logs its own warning and the drawing
     // decides. Refusing here would kill a session over a leftover flag.
     expect(devArgs()?.methodology).toEqual({ tdd: true });
+  });
+});
+
+// ───────────────────── the live board and the stdout contract ────────────────
+
+/**
+ * THE ONE INVARIANT `huu dev --cli` MUST NOT BREAK.
+ *
+ * `runDevCli` writes ONE machine-readable JSON object on stdout and nothing
+ * else; scripts parse it. Ink renders to `process.stdout` by DEFAULT, so a
+ * front-end bolted onto this command is one line away from corrupting that
+ * stream forever. The board therefore paints on stderr, and these tests pin
+ * both halves of the promise: with a presenter installed, stdout is byte for
+ * byte what it is without one, and every human-readable line moves INTO the
+ * presenter rather than being duplicated.
+ */
+describe('runDevCli — the presenter never touches stdout', () => {
+  const RESULT: DevModeResult = {
+    stoppedBecause: 'max-epochs',
+    epochs: [],
+    goalComplete: false,
+    knowledge: { present: false, skillCount: 0, skills: [], bootstrapMode: 'create', reason: 'sem skills' },
+    knowledgeBootstrapped: false,
+    sessionId: 'sess-presenter',
+    resumed: false,
+  };
+
+  let originalStdout: typeof process.stdout.write;
+  let originalStderr: typeof process.stderr.write;
+  let out: string[];
+  let errOut: string[];
+
+  beforeEach(() => {
+    vi.mocked(runDevMode).mockReset();
+    vi.mocked(runDevMode).mockResolvedValue(RESULT);
+    out = [];
+    errOut = [];
+    originalStdout = process.stdout.write.bind(process.stdout);
+    originalStderr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string) => {
+      out.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string) => {
+      errOut.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+  });
+
+  afterEach(() => {
+    process.stdout.write = originalStdout;
+    process.stderr.write = originalStderr;
+  });
+
+  /** Records every call instead of rendering — no Ink, no terminal, no stdout. */
+  function fakePresenter() {
+    const calls: string[] = [];
+    const logs: string[] = [];
+    const questions: string[] = [];
+    let answer = true;
+    const presenter: DevCliPresenter = {
+      session: () => void calls.push('session'),
+      log: (line) => {
+        calls.push('log');
+        logs.push(line);
+      },
+      event: () => void calls.push('event'),
+      runStarted: () => void calls.push('runStarted'),
+      runState: () => void calls.push('runState'),
+      runEnded: () => void calls.push('runEnded'),
+      confirm: (question) => {
+        questions.push(question);
+        return Promise.resolve(answer);
+      },
+      close: () => {
+        calls.push('close');
+        return Promise.resolve();
+      },
+    };
+    return {
+      presenter,
+      calls,
+      logs,
+      questions,
+      setAnswer: (value: boolean) => {
+        answer = value;
+      },
+    };
+  }
+
+  const ARGS = ['objetivo do teste', '--epochs=1'];
+
+  it('emits byte-identical stdout with and without the board', async () => {
+    const plain = await runDevCli({ args: ARGS, cwd: process.cwd(), backend: 'stub' });
+    const stdoutPlain = out.join('');
+    out = [];
+    errOut = [];
+
+    const fake = fakePresenter();
+    const boarded = await runDevCli({
+      args: ARGS,
+      cwd: process.cwd(),
+      backend: 'stub',
+      presenter: fake.presenter,
+    });
+    const stdoutBoarded = out.join('');
+
+    expect(boarded).toBe(plain);
+    expect(stdoutBoarded).toBe(stdoutPlain);
+    // Not just equal — actually the verdict, so a future refactor that stops
+    // writing it cannot pass this test with two empty strings.
+    expect(JSON.parse(stdoutBoarded).sessionId).toBe('sess-presenter');
+  });
+
+  it('moves the progress narrative into the presenter instead of stderr', async () => {
+    const fake = fakePresenter();
+    await runDevCli({
+      args: ARGS,
+      cwd: process.cwd(),
+      backend: 'stub',
+      presenter: fake.presenter,
+    });
+    // The opening summary is written BEFORE the board mounts and stays in the
+    // scrollback above it; the closing session line goes into the board.
+    expect(fake.calls).toContain('session');
+    const summary = t('tui.dev.session_summary', {
+      sessionId: 'sess-presenter',
+      resumed: '',
+      epochs: 0,
+      drawn: '',
+    });
+    expect(fake.logs.join('\n')).toContain(summary);
+    expect(errOut.join('')).not.toContain(summary);
+    // And the terminal is handed back before the process ends.
+    expect(fake.calls.at(-1)).toBe('close');
+  });
+
+  it('supplies an orchestratorFactory ONLY when a board needs the pipeline', async () => {
+    // `onState` carries no pipeline, so the board gets one through the factory
+    // seam. With no board there is no reason to replace the driver's own
+    // orchestrator construction — and the driver literal stays as it is today.
+    await runDevCli({ args: ARGS, cwd: process.cwd(), backend: 'stub' });
+    expect(vi.mocked(runDevMode).mock.calls[0]?.[0]).not.toHaveProperty('orchestratorFactory');
+
+    const fake = fakePresenter();
+    await runDevCli({
+      args: ARGS,
+      cwd: process.cwd(),
+      backend: 'stub',
+      presenter: fake.presenter,
+    });
+    expect(typeof vi.mocked(runDevMode).mock.calls[1]?.[0]?.orchestratorFactory).toBe('function');
+  });
+
+  it('asks the y/N gates through the presenter, never through readline', async () => {
+    // Ink owns stdin in raw mode while the board is up; a readline interface
+    // opened next to it eats keystrokes. The gate has to move inside.
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    try {
+      vi.mocked(runDevMode).mockImplementation(async (args) => {
+        await args.onApprove?.(
+          { epochGoal: 'g', doneWhen: 'd', fronts: [], goalComplete: false } as unknown as DevPlan,
+          1,
+          [],
+        );
+        return RESULT;
+      });
+
+      const fake = fakePresenter();
+      await runDevCli({
+        args: [...ARGS, '--approve-each'],
+        cwd: process.cwd(),
+        backend: 'stub',
+        presenter: fake.presenter,
+      });
+      // Asked THROUGH the catalog, so the question is readable in whatever
+      // locale the frame around it is drawn in. Asserted via `t()` rather than
+      // a literal: pinning the Portuguese here would make the test the reason
+      // the string can never be translated.
+      expect(fake.questions).toEqual([t('tui.dev.gate_approve_epoch', { epoch: 1 })]);
+    } finally {
+      if (descriptor) Object.defineProperty(process.stdin, 'isTTY', descriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
+  });
+
+  // ── the board is built LAST, never before the flags are read ──────────────
+  //
+  // Measured under a PTY before this existed: `huu dev --cli --no-docker` with
+  // no `--model` painted an empty 31-line board ("modo dev · objetivo · ()",
+  // spinner, "abrindo a sessão…") and only THEN the refusal — which scrolled
+  // inside a panel that was never even unmounted, because the early `return 1`
+  // never reaches `close()`. The fix is a factory `runDevCli` calls itself.
+
+  it('never builds the board when the flags are refused', async () => {
+    let built = 0;
+    // The exact invocation that regressed: the jcode backend with no --model.
+    const code = await runDevCli({
+      args: ['objetivo do teste'],
+      cwd: process.cwd(),
+      backend: 'jcode',
+      presenterFactory: () => {
+        built += 1;
+        return fakePresenter().presenter;
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(built).toBe(0);
+    // …and the reason landed on PLAIN stderr, where it survives.
+    expect(errOut.join('')).toContain('--model=<id> is required');
+    expect(vi.mocked(runDevMode)).not.toHaveBeenCalled();
+  });
+
+  it('builds the board exactly once, when the session actually starts', async () => {
+    let built = 0;
+    const fake = fakePresenter();
+    const code = await runDevCli({
+      args: ARGS,
+      cwd: process.cwd(),
+      backend: 'stub',
+      presenterFactory: () => {
+        built += 1;
+        return fake.presenter;
+      },
+    });
+
+    expect(code).toBe(0);
+    expect(built).toBe(1);
+    // Same seam as the eager `presenter` field — the board is driven, then
+    // handed the terminal back.
+    expect(fake.calls[0]).toBe('session');
+    expect(fake.calls.at(-1)).toBe('close');
   });
 });

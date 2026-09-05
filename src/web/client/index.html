@@ -596,7 +596,20 @@
           </div>
           <div class="dev-epochs" id="devEpochList"></div>
           <pre class="drawer__logs" id="devLogs"></pre>
+          <!-- THE DEBATE CHAT. Hidden by construction: the server stamps
+               `session.debate` only when the epoch's pipeline compiled the
+               debate block, which nothing but `--debate` ever does. -->
+          <div class="dbt" id="devDebate" hidden>
+            <div class="dbt__head">
+              <span data-i18n="web.debate.title">The debate on this epoch's design</span>
+              <span class="muted" id="devDebateMeta"></span>
+              <button type="button" class="btn btn--ghost btn--sm" id="devDebateRefresh" data-i18n="web.debate.refresh">Reload the briefs</button>
+            </div>
+            <p class="muted dbt__sub" data-i18n="web.debate.subtitle">Two agents argue the design.</p>
+            <div class="dbt__log" id="devDebateLog"></div>
+          </div>
           <div class="dev-foot">
+            <button type="button" class="btn btn--ghost btn--sm" id="devDebateToggle" hidden data-i18n="web.debate.open" data-i18n-title="web.debate.open_title">Debate</button>
             <button type="button" class="btn btn--ghost btn--sm" id="devViewBoard" data-i18n="web.launch.view_board">View board →</button>
             <button type="button" class="btn btn--danger btn--sm" id="devAbort" data-i18n="web.dev.abort">Abort session</button>
           </div>

@@ -153,6 +153,10 @@ function baseRoutes() {
     'POST /api/dev/abort': () => ({ ok: true }),
     'POST /api/dev/resume': () => ({ ok: true, accept: true }),
     'POST /api/dev/approve': () => ({ ok: true }),
+    // The SETTLED half of the debate chat. `present: false` is the DEFAULT
+    // answer the server gives (`--debate` is off unless asked for), so the
+    // chat below renders off the LIVE half alone unless a test overrides it.
+    '/api/dev/debate': () => ({ present: false }),
   };
 }
 
@@ -162,6 +166,13 @@ function baseRoutes() {
 let dev;
 /** @type {any} */
 let state;
+/** @type {any} */
+let board;
+/** @type {any} */
+let launch;
+/** The EventSource `connectSse()` last built — the seam the SSE tests drive. */
+/** @type {any} */
+let lastEventSource = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -170,6 +181,21 @@ async function flush(rounds = 8) {
   for (let i = 0; i < rounds; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+}
+
+/** Real wall-clock wait — the debate chat coalesces its repaints on a 120ms
+ *  trailing timer, which `flush()`'s 1ms ticks never reach. */
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The BODY of the real index.html, parsed into a detached fragment.
+ *  Used to assert on the markup AS SHIPPED, before any render touched it. */
+function parseIndexBody() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const html = readFileSync(join(here, '..', 'index.html'), 'utf8');
+  const body = html.slice(html.indexOf('<body'), html.lastIndexOf('</body>'));
+  const tpl = document.createElement('template');
+  tpl.innerHTML = body.slice(body.indexOf('>') + 1);
+  return tpl.content;
 }
 
 beforeAll(async () => {
@@ -184,12 +210,33 @@ beforeAll(async () => {
   // because this stub only implements what `connectSse` actually touches.
   globalThis.EventSource = /** @type {any} */ (
     class {
-      constructor() { this.readyState = 1; }
+      constructor() {
+        this.readyState = 1;
+        // Recorded so a test can push a frame through the REAL `es.onmessage`
+        // handler in board.js — which is where the firehose is forked into the
+        // console mirror and the debate chat.
+        lastEventSource = this;
+      }
       addEventListener() {}
       close() {}
       static get CLOSED() { return 2; }
     }
   );
+  // `renderBoard` asks the platform whether to animate (`prefers-reduced-
+  // motion`); jsdom has no media queries, and without this the FIRST run
+  // snapshot pushed through `ingestRun` throws before anything is asserted.
+  globalThis.matchMedia =
+    globalThis.matchMedia ||
+    /** @type {any} */ (
+      (query) => ({
+        media: query,
+        matches: true,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+      })
+    );
   // Switching to /graph mounts React Flow for real, and it measures the pane.
   globalThis.ResizeObserver =
     globalThis.ResizeObserver ||
@@ -204,6 +251,10 @@ beforeAll(async () => {
   installFetch();
   dev = await import('./dev.js');
   state = await import('./state.js');
+  // Same module instances dev.js already pulled in — the wiring under test in
+  // section 8 lives in board.js, and the view switching in launch.js.
+  board = await import('./board.js');
+  launch = await import('./launch.js');
   // `boot()` fires at import time; let it settle before anything is asserted.
   await flush(30);
   dev.initDevSurface();
@@ -950,5 +1001,289 @@ describe('the routing panel follows the active provider', () => {
     expect(blocked.message).toContain('OpenRouter');
     state.S.provider = 'openrouter';
     expect(dev.devSubmitBlocker('migrar o parser', 'deepseek/deepseek-v4-flash')).toBeNull();
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   8. THE DEBATE CHAT, AND THE NAVIGATION THAT MAKES IT REACHABLE.
+
+   WHY THESE ARE HERE AND NOT IN debate.test.js. That file proves the MODEL and
+   the RENDERER: pure functions, strings in, strings out. It cannot see the
+   wiring, and the wiring is where this surface breaks SILENTLY — every seam
+   below is null-guarded or conditional, so cutting one produces no error, no
+   console warning and no visible symptom other than a chat that is simply not
+   there. Each test names the break it dies on.
+
+     • rename any of the five element ids in index.html ....... T1, T4, T5
+     • drop `hidden` from the markup ........................... T2 (+T3)
+     • drop `onDevRunFrame(run)` from `ingestRun` .............. T7
+     • drop `ingestDevAgentStream(frame)` from the SSE fork .... T6
+     • invert the `devHold` condition in `renderActiveRun` ..... T8
+     • anchor the guard on the SESSION instead of the RUN ...... T9
+   ───────────────────────────────────────────────────────────────────────── */
+
+const DEBATE_NAMES = {
+  advocate: 'Sustentar as escolhas',
+  prosecutor: 'Contestar as escolhas',
+  gate: 'Debate resolvido?',
+};
+const DEV_RUN_ID = 'run-do-debate';
+
+/** A live dev session whose epoch compiled the debate block. */
+function debateSession(extra = {}) {
+  return {
+    ...PLANNER_SESSION,
+    phase: 'executing',
+    currentEpoch: 3,
+    runIds: [{ epoch: 3, runId: DEV_RUN_ID, phase: 'execution' }],
+    debate: {
+      epoch: 3,
+      runId: DEV_RUN_ID,
+      names: DEBATE_NAMES,
+      roles: { 1: 'advocate', 2: 'prosecutor' },
+      matchedBy: 'name',
+    },
+    ...extra,
+  };
+}
+
+/** One run snapshot as the SSE `{type:'run'}` frame carries it. */
+function runFrame(runId, stateExtra = {}, phase = 'running') {
+  return {
+    runId,
+    phase,
+    pipelineName: 'debate',
+    projectName: 'huu',
+    startedAt: 1,
+    state: {
+      status: phase === 'running' ? 'running' : phase,
+      currentStage: 1,
+      totalStages: 1,
+      completedTasks: 0,
+      totalTasks: 2,
+      totalCost: 0,
+      startedAt: 1,
+      agents: [],
+      stageIntegrations: [],
+      checkRuns: [],
+      // `renderLog` runs on a trailing 100ms timer AFTER the test returns, and
+      // it reads `state.logs` unguarded — an absent array surfaces as an
+      // unhandled rejection attributed to whatever test is running next.
+      logs: [],
+      ...stateExtra,
+    },
+  };
+}
+
+const DEBATERS_WRITING = [
+  { agentId: 1, stageName: DEBATE_NAMES.advocate, state: 'streaming' },
+  { agentId: 2, stageName: DEBATE_NAMES.prosecutor, state: 'streaming' },
+];
+
+/** Seed the run the chat reads its structure from, then open the panel. */
+function openDebate(session = debateSession(), agents = DEBATERS_WRITING) {
+  state.S.runs.set(DEV_RUN_ID, runFrame(DEV_RUN_ID, { agents }));
+  dev.renderDevSession(session);
+  if ($('devDebate').hidden) click($('devDebateToggle'));
+  return session;
+}
+
+function resetSurface() {
+  if (!$('devDebate').hidden) click($('devDebateToggle'));
+  state.S.devSession = null;
+  state.S.runs.clear();
+  state.S.activeRunId = null;
+  state.S.runPinnedId = null;
+  state.S.homePinned = false;
+  // `devBoardOpened` is module state in board.js with no setter: it is cleared
+  // by a render that sees no live session. Without this the latch leaks from
+  // one test into the next and the "first frame still opens the board" step
+  // silently starts from the guarded state.
+  board.renderActiveRun();
+  launch.showView('dev');
+}
+
+describe('the debate chat — the hosts it needs, and the default path', () => {
+  afterEach(() => { resetSurface(); });
+
+  // T1. Every one of these is read through `$(id)` behind an `if (!el) return`
+  // or an `if (el)` — rename one in index.html and the chat vanishes with no
+  // error at all. This is the cheapest possible tripwire for that.
+  it('T1 — finds all five debate hosts under the ids the client asks for', () => {
+    for (const id of ['devDebateToggle', 'devDebate', 'devDebateMeta', 'devDebateRefresh', 'devDebateLog']) {
+      expect($(id), `#${id} is missing from the real index.html`).toBeTruthy();
+    }
+  });
+
+  // T2. `renderDebateSurface` only runs on a `{type:'dev'}` frame, and the
+  // DEFAULT path never sends a session at all. So on the shipped page the ONLY
+  // thing keeping the panel and its button off screen is the `hidden`
+  // attribute in the markup — asserted here against the file, not against a
+  // rendered document, because a render would put it back.
+  it('T2 — ships the panel AND its button hidden in the markup itself', () => {
+    const frag = parseIndexBody();
+    expect(frag.querySelector('#devDebate').hasAttribute('hidden')).toBe(true);
+    expect(frag.querySelector('#devDebateToggle').hasAttribute('hidden')).toBe(true);
+  });
+
+  // T3. And the runtime half of the same promise: a session with no `debate`
+  // hides both and asks the server for nothing.
+  it('T3 — a session without --debate shows no chat and issues ZERO requests', async () => {
+    calls = [];
+    dev.renderDevSession(PLANNER_SESSION);
+    await wait(200);
+    expect($('devDebateToggle').hidden).toBe(true);
+    expect($('devDebate').hidden).toBe(true);
+    expect(calls.filter((c) => c.path === '/api/dev/debate')).toHaveLength(0);
+  });
+
+  // T4. The toggle, the panel, the log and the meta line, all four exercised
+  // through their ids on the way to one assertion.
+  it('T4 — opens the chat and paints both sides plus the round meta', async () => {
+    openDebate();
+    await wait(200);
+    const log = $('devDebateLog');
+    expect($('devDebate').hidden).toBe(false);
+    expect(log.querySelectorAll('.dbt__msg--advocate').length).toBe(1);
+    expect(log.querySelectorAll('.dbt__msg--prosecutor').length).toBe(1);
+    expect($('devDebateMeta').textContent).toContain('Epoch 3');
+  });
+
+  // T5. The Reload button exists because the settled half is a fetch and a
+  // merge can land while the panel is shut. Its listener is `if (btn)`.
+  it('T5 — the Reload button re-reads the merged briefs', async () => {
+    openDebate();
+    await wait(200);
+    calls = [];
+    click($('devDebateRefresh'));
+    await wait(50);
+    expect(calls.filter((c) => c.path === '/api/dev/debate')).toHaveLength(1);
+  });
+});
+
+describe('the debate chat — both feeds arrive through board.js', () => {
+  afterEach(() => { resetSurface(); });
+
+  // T6. The LIVE half. board.js forks the un-throttled agent-stream firehose
+  // into `logAgentStream` (console) AND `ingestDevAgentStream` (chat). Drop the
+  // second call and the console still scrolls, so nothing looks wrong — the
+  // chat just never shows a word while the two sides write.
+  it('T6 — the firehose reaches the chat through the real SSE handler', async () => {
+    openDebate();
+    await wait(200);
+    board.connectSse();
+    expect(lastEventSource, 'connectSse built no EventSource').toBeTruthy();
+    lastEventSource.onmessage({
+      data: JSON.stringify({
+        type: 'agent-stream',
+        runId: DEV_RUN_ID,
+        agentId: 1,
+        channel: 'assistant',
+        text: 'D1 — escolhi streaming porque o buffer estoura',
+      }),
+    });
+    await wait(250);
+    expect($('devDebateLog').textContent).toContain('escolhi streaming porque o buffer estoura');
+  });
+
+  // T7. The STRUCTURE half. The rounds come from the debaters' cards and the
+  // gate's ruling from `checkRuns` — both of which live on the RUN snapshot,
+  // not on the session frame. Without `onDevRunFrame(run)` in `ingestRun` the
+  // verdict sits off screen until the driver happens to log something.
+  it('T7 — the gate’s verdict lands because ingestRun hands the snapshot over', async () => {
+    openDebate();
+    await wait(200);
+    expect($('devDebateLog').textContent).not.toContain('convergiu');
+
+    board.ingestRun(
+      runFrame(DEV_RUN_ID, {
+        agents: [
+          { agentId: 1, stageName: DEBATE_NAMES.advocate, state: 'done' },
+          { agentId: 2, stageName: DEBATE_NAMES.prosecutor, state: 'done' },
+        ],
+        checkRuns: [
+          { stepName: DEBATE_NAMES.gate, runs: 1, outcomeLabel: 'convergiu', reason: 'tudo coberto' },
+        ],
+      }),
+    );
+    await wait(250);
+    expect($('devDebateLog').textContent).toContain('convergiu');
+    expect($('devDebateLog').textContent).toContain('tudo coberto');
+  });
+});
+
+/* /dev is not a form the user is done with — it is the live panel that hosts
+   the session gates and the debate chat, and they must be able to come BACK to
+   it while the swarm runs. The guard that makes that possible is one boolean in
+   `renderActiveRun`, and it is the kind of boolean that is "simplified" by
+   somebody who does not know why it is there. */
+describe('development mode — /dev stays reachable, and a normal run does not', () => {
+  afterEach(() => { resetSurface(); });
+
+  // T8. Invert `devHold` (either sense) and the first frame stops opening the
+  // board, which is how the bug this fixed was reported: /dev unreachable.
+  it('T8 — the first frame still opens the board, and later ones stop dragging you back', () => {
+    state.S.runs.clear();
+    state.S.activeRunId = null;
+    state.S.homePinned = false;
+    dev.renderDevSession(debateSession());
+
+    // Unchanged from before dev mode existed: a live run opens the board.
+    board.ingestRun(runFrame(DEV_RUN_ID));
+    expect($('viewRun').hidden).toBe(false);
+
+    // The human deliberately goes back to the panel…
+    launch.showView('dev');
+    // …and the next eight snapshots (≈1s of SSE) must leave them there.
+    for (let i = 0; i < 8; i += 1) board.ingestRun(runFrame(DEV_RUN_ID));
+    expect($('viewDev').hidden).toBe(false);
+    expect($('viewRun').hidden).toBe(true);
+  });
+
+  // T9. THE REGRESSION THIS SECTION EXISTS FOR. The guard was anchored on the
+  // SESSION, so an ordinary pipeline launched in another project mid-session
+  // inherited both halves of the dev treatment: it stopped auto-opening the
+  // board, and its exit button was relabelled "← Development mode" pointing at
+  // /dev. Belonging is a property of the RUN (`session.runIds`), and a run the
+  // session does not own must take exactly the branch it took on the base.
+  it('T9 — a NORMAL run launched during a live session behaves as it always did', () => {
+    state.S.runs.clear();
+    state.S.activeRunId = null;
+    state.S.homePinned = false;
+    dev.renderDevSession(debateSession());
+
+    // Arrange the exact state that used to break it: the board has been opened
+    // once by the session's own run, and the human is parked on /dev.
+    board.ingestRun(runFrame(DEV_RUN_ID));
+    launch.showView('dev');
+    board.ingestRun(runFrame(DEV_RUN_ID));
+    expect($('viewDev').hidden).toBe(false);
+
+    // The session's epoch settles between its two runs…
+    board.ingestRun(runFrame(DEV_RUN_ID, {}, 'done'));
+    expect($('viewDev').hidden).toBe(false);
+
+    // …and a pipeline in ANOTHER project starts. It belongs to no session.
+    board.ingestRun(runFrame('run-de-outro-projeto'));
+    expect(state.S.activeRunId).toBe('run-de-outro-projeto');
+    // 1. it opens the board, exactly as on the base branch;
+    expect($('viewRun').hidden).toBe(false);
+    // 2. and its exit keeps the ordinary rule (hidden while active) and the
+    //    ordinary label — never the dev panel's.
+    expect($('backToLaunch').hidden).toBe(true);
+    expect($('backToLaunch').textContent).not.toContain('Development mode');
+  });
+
+  // The other half of T9: the session's OWN run does get the exit, and gets it
+  // while the run is live — the one case the ordinary rule hides it for.
+  it('T10 — the session’s own run keeps its way back to /dev while it runs', () => {
+    state.S.runs.clear();
+    state.S.activeRunId = null;
+    state.S.homePinned = false;
+    dev.renderDevSession(debateSession());
+    board.ingestRun(runFrame(DEV_RUN_ID));
+    expect($('viewRun').hidden).toBe(false);
+    expect($('backToLaunch').hidden).toBe(false);
+    expect($('backToLaunch').textContent).toContain('Development mode');
   });
 });

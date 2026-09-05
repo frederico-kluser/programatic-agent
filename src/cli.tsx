@@ -146,7 +146,8 @@ import { runStatusCli } from './lib/status.js';
 import { runPruneCli } from './lib/prune.js';
 import { loadRunConfig, applyRunConfig } from './lib/run-config.js';
 import { runHeadless } from './lib/headless-run.js';
-import { runDevCli } from './lib/dev-mode/dev-cli.js';
+import { runDevCli, type DevCliPresenter } from './lib/dev-mode/dev-cli.js';
+import { createDevDashboardPresenter } from './ui/components/DevDashboard.js';
 import { runGraphCli } from './lib/graph-cli.js';
 
 import { installCrashGuard } from './lib/crash-guard.js';
@@ -687,6 +688,43 @@ async function main(): Promise<void> {
   // pipeline file: the planner writes one per epoch and huu compiles it into
   // the same `dependsOn` wave graph a hand-authored pipeline would produce.
   if (filtered[0] === 'dev') {
+    // THE LIVE BOARD, and why it reads `args` instead of `filtered`.
+    //
+    // `--cli`/`--tui`/`--web` are CLI-GLOBAL flags: they were stripped from
+    // `filtered` above so no subcommand parser ever sees them, which means
+    // `runDevCli` cannot discover the user's front-end choice on its own. The
+    // decision therefore happens HERE, off the unfiltered argv, through the
+    // very same `decideInterfaceMode` the front-end fork below uses — a dev
+    // session should not need a second vocabulary for "give me the TUI".
+    //
+    // Only an EXPLICIT 'cli' opts in. `decideInterfaceMode` defaults to `web`,
+    // but `huu dev`'s default is neither web nor TUI: it is the headless log
+    // plus one JSON object on stdout, and that is a contract scripts consume.
+    // So a plain `huu dev` keeps behaving exactly as it does today, and
+    // `huu dev --cli` (or `--tui`, or `HUU_CLI=1`) renders the kanban.
+    //
+    // The board paints on STDERR — never stdout — so even with it on, the JSON
+    // verdict is byte-identical. See src/ui/components/DevDashboard.tsx.
+    //
+    // A FACTORY, not an instance. `runDevCli` refuses a bad flag, a missing
+    // `--model`, an unknown graph and an unroutable model BEFORE any session
+    // opens, and those refusals are plain stderr text the user has to read.
+    // Mounting Ink here — the moment `--cli` is seen, before argv is even
+    // parsed — painted an empty 31-line board on top of every one of them, and
+    // never unmounted it (the early `return 1` never reaches `close()`). So the
+    // decision is made here and the MOUNT happens inside `runDevCli`, at the
+    // one line where the session is actually about to start.
+    let devPresenterFactory: (() => DevCliPresenter) | undefined;
+    if (decideInterfaceMode(args, process.env) === 'cli') {
+      if (process.stderr.isTTY) {
+        devPresenterFactory = () => createDevDashboardPresenter();
+      } else {
+        // No terminal to draw on (a pipe, a log file, CI). Refusing the run
+        // would be hostile; silently drawing a board nobody can read would be
+        // worse. Say it once and keep the plain log.
+        process.stderr.write(t('tui.dev.no_tty') + '\n');
+      }
+    }
     // The provider travels WITH the backend, never re-derived downstream: it is
     // what names the credential `runDevCli` resolves, the base URL the planner's
     // chat client dials and the `--provider-profile` every jcode agent spawns
@@ -700,6 +738,7 @@ async function main(): Promise<void> {
       ...(providerFromCli ? { provider: providerFromCli } : {}),
       concurrency: concurrencyArg,
       autoScale,
+      ...(devPresenterFactory ? { presenterFactory: devPresenterFactory } : {}),
     });
     process.exit(code);
   }

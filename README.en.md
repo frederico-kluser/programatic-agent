@@ -821,6 +821,19 @@ side — `Pipelines` (you already have the method) and `Development` (you have a
 goal). Each half is a real route (`/` and `/dev`, bookmarkable), but clicking
 swaps the view without a reload, so the SSE stream and the run board survive.
 
+**Two surfaces to watch it on.** In the terminal, `huu dev "<goal>" --cli`
+renders a **live kanban** (the pipeline dashboard's own board) instead of a
+scrolling log — and it paints on **stderr**, so the JSON object `huu dev`
+writes to stdout stays byte-identical and no script breaks; with no TTY it
+falls back to the plain log. The `y/N` gates are answered inside the frame
+(`y`/`s` is yes, any other key is no), `Ctrl+C` exits 130. On the web, with
+`--debate` on, `/dev` grows a **Debate** button that opens the two sides as a
+conversation: **live** off the agent-output firehose — the only way to watch it
+happen, since each brief is written inside its own agent's worktree and reaches
+the blackboard only after the wave merges — and **settled** afterwards, read
+from the merged `A.md`/`B.md` and parsed server-side. Without `--debate` the
+button never appears.
+
 **Phase 0 — the knowledge gate.** Before any development, huu checks whether
 the project has agent skills (`.agents/skills/catalog.md`, a router skill, or
 `.claude/skills/`). If it doesn't, it runs the `huu Knowledge System` pipeline

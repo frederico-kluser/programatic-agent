@@ -451,6 +451,18 @@ describe('web server token gate', () => {
     });
     expect(viaHeader.status).toBe(200);
   });
+
+  // The debate chat's read route serves LLM prose out of the project's
+  // blackboard, so it belongs BELOW the gate with every other data route —
+  // being additive is no reason to land above it by accident.
+  it('gates the debate transcript route', async () => {
+    expect((await fetch(base + '/api/dev/debate')).status).toBe(401);
+    const ok = await fetch(base + '/api/dev/debate?token=sekret');
+    expect(ok.status).toBe(200);
+    // No session has run in this server, so there is nothing to show — and the
+    // answer is data, not a 404.
+    expect(await ok.json()).toEqual({ present: false });
+  });
 });
 
 describe('web server — machine-global settings (/api/settings)', () => {

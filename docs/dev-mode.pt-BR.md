@@ -152,6 +152,26 @@ as épocas até o teto sem lhe perguntar nada: o CLI mapeia *nenhuma flag* para
 ele rodar. `--autonomous` existe só para declarar esse padrão em voz alta; não
 muda nada, e passá-la junto com `--approve-each` é recusado.
 
+### O quadro ao vivo (`--cli`)
+
+`huu dev --cli` (ou `--tui`, ou `HUU_CLI=1`) desenha a sessão como um kanban ao
+vivo no lugar do log corrido: o mesmo `RunKanban` do dashboard de pipelines,
+com os cards da época, o progresso deles e a narração da sessão num quadro só.
+
+**Ele pinta em stderr, nunca em stdout.** O único objeto JSON que o `huu dev`
+escreve em stdout é contrato de máquina, então ele fica byte a byte idêntico
+com o quadro ligado ou desligado — nenhum script quebra. Sem TTY no stderr
+(um pipe, um arquivo de log, CI), o huu avisa uma vez e mantém o log corrido,
+em vez de desenhar um quadro que ninguém consegue ler.
+
+O Ink segura o stdin em raw mode, então os portões `y/N` — `--approve-each`, a
+oferta de retomar, a oferta de branches órfãos — são respondidos **dentro do
+frame**, com a semântica de sempre: `y`/`s` é sim, qualquer outra tecla
+(inclusive ENTER) é não. `Ctrl+C` desmonta e sai 130. Mapa completo de teclas
+em [`KEYBOARD.md`](KEYBOARD.md#dev-dashboard-huu-dev---cli) (em inglês).
+
+Um `huu dev` puro não muda em nada: log headless mais o veredito em JSON.
+
 ### Pela interface web
 
 Um **switch** no topo, com as duas formas de começar trabalho lado a lado:
@@ -213,6 +233,7 @@ perceber.
 | `--autonomous` | No-op que declara **o padrão** (planeja e roda tudo sem perguntar). Recusada junto com `--approve-each`. |
 | `--skip-knowledge` | Não faz bootstrap de skills mesmo quando o projeto não tem. |
 | `--run-dir <path>` | Repositório alvo (padrão: diretório atual). |
+| `--cli` / `--tui` | Desenha a sessão como kanban ao vivo em **stderr** (veja [O quadro ao vivo](#o-quadro-ao-vivo---cli)). `HUU_CLI=1` faz o mesmo. |
 | `--tdd` | Divide o trabalho de cada frente em passo de testes + passo de implementação. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--lint-gate` | Roda o lint/typecheck do projeto como portão de merge determinístico. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--standards` | Dá a cada crítico por tarefa uma rubrica vinda do atlas e das convenções declaradas do projeto. Veja [Opções de metodologia](#opções-de-metodologia). |
@@ -739,6 +760,23 @@ comportamento que você ganha dele sem pedir: com `--debate` ligado, a tarefa
 cujo crítico chega ao teto de rodadas com achados bloqueantes abertos é
 estacionada para um humano em vez de sofrer waive. Isso está dito na descrição
 da flag, no checkbox da web e aqui.
+
+**Assistindo acontecer (web).** Com `--debate` ligado, a `/dev` ganha um botão
+**Debate** que abre os dois lados como conversa. Enquanto a rodada roda, o
+painel é alimentado pelo firehose `agent-stream`, que não é throttled — é
+literalmente a saída do advogado e do promotor conforme eles escrevem. E é a
+*única* forma de assistir ao vivo: os dois briefs são escritos dentro do
+worktree isolado de cada debatedor e só chegam ao caminho do quadro-negro
+depois que a onda faz merge, então uma UI que observasse o arquivo o veria
+aparecer já pronto. Depois que a onda aterrissa, o `GET /api/dev/debate`
+serve a versão assentada: os `A.md`/`B.md` mergeados, parseados **no
+servidor** (o cliente do navegador é ESM cru, sem bundler, e não importa o
+parser em TypeScript) em decisões, vereditos e objeções, com as decisões que
+ninguém julgou e os vereditos que ninguém declarou nomeados à parte. O parser
+é leniente por contrato — um brief que não bate com o esqueleto degrada para o
+markdown cru em vez de sumir. Sem `--debate`, o botão nunca aparece e nenhuma
+requisição é feita. **Não existe painel de debate no TUI**: o quadro do
+`--cli` mostra o kanban, o chat é só web.
 
 ### O escape: bloqueio segura para um humano, nunca waive silencioso
 

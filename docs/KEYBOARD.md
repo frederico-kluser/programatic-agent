@@ -248,6 +248,31 @@ priority, later ones backfill idle slots, the lowest-priority run's newest agent
 preempted first under memory pressure), so the per-run `+` / `-` / `A` / `M`
 concurrency keys are intentionally absent here.
 
+## Dev dashboard (`huu dev --cli`)
+
+The live board of a development session — opt in with `--cli`, `--tui` or
+`HUU_CLI=1`; a bare `huu dev` stays headless. It reuses the run kanban, but it
+is a **read-only** surface: no card navigation, no log filter, and no `Q` —
+`Ctrl+C` is the only exit. Concurrency is decided by the session, not by you.
+
+It paints on **stderr**, so the one JSON object `huu dev` writes to stdout is
+byte-identical with the board on or off. With no TTY on stderr huu says so once
+and falls back to the plain log; with no TTY on stdin the board still renders,
+it just cannot be typed at.
+
+- `Ctrl+C` abort — unmounts the board and exits `130`, the conventional code
+  for "terminated by SIGINT"
+- `y` / `s` **yes**, at a gate. **Any other key — ENTER included — is no.**
+  It is a single keypress, not a typed line: Ink holds stdin in raw mode, so
+  the gates are answered inside the frame instead of by a `readline` prompt
+  that would fight it for keystrokes. Same default as the headless path.
+
+Only three things ever raise a gate, and all three are opt-in or exceptional:
+`--approve-each` (show each epoch's plan before it runs), the offer to **resume**
+an interrupted session, and the offer to land **orphan branches** left by one.
+Without a TTY on stdin every gate answers **no** before it reaches the board —
+no approval, no resume, no orphan landing.
+
 ## Card details modal
 
 - `↑↓` scroll · `ESC` / `ENTER` close

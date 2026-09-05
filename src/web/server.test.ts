@@ -6,9 +6,34 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { createWebServer } from './server.js';
-import { resetCapabilitiesCache } from '../lib/openrouter.js';
+import type { KeyValidation } from './api-data.js';
 import type { WebRunManager } from './run-manager.js';
 import type { Pipeline } from '../lib/types.js';
+
+// ── The provider-validation seam ─────────────────────────────────────────
+//
+// `validateKeyValue` is api-data's business, and it is provider-shaped: it
+// probes whatever the credential belongs to. What THIS file owns is the
+// SERVER's validate-then-persist policy — a key the provider REJECTS answers
+// 400, carries the httpStatus, and never reaches the store — and that policy
+// is only observable when the verdict can be dictated. So the seam is stubbed
+// here (the same technique dev-manager.test.ts uses on the manager -> driver
+// seam), which also keeps these tests hermetic without guessing a provider's
+// probe URL. `seam.validation = null` (the default, restored after every
+// test) delegates to the REAL implementation, so nothing else in this file is
+// mocked.
+const seam = vi.hoisted(() => ({ validation: null as KeyValidation | null }));
+vi.mock('./api-data.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./api-data.js')>();
+  return {
+    ...mod,
+    validateKeyValue: async (
+      spec: Parameters<typeof mod.validateKeyValue>[0],
+      value: string,
+      opts?: Parameters<typeof mod.validateKeyValue>[2],
+    ): Promise<KeyValidation> => seam.validation ?? mod.validateKeyValue(spec, value, opts),
+  };
+});
 
 function setupRepo(dir: string): void {
   execSync('git init --initial-branch=main', { cwd: dir, encoding: 'utf8' });
@@ -101,11 +126,15 @@ describe('web server', () => {
     expect(json.runs).toEqual([]);
   });
 
-  it('lists the full public catalog for a backend and 400s on an unknown one', async () => {
-    // OpenRouter's /models is public, so the server downloads the full catalog
-    // with NO key. Intercept ONLY the openrouter.ai call so the test stays
-    // hermetic; every other (localhost) fetch passes through untouched.
+  it('serves the model catalog for a backend and 400s on an unknown one', async () => {
+    // The LIVE OpenRouter catalog died with the pi backend: DeepSeek exposes no
+    // public /models endpoint, so `listModelsForBackend` now serves the static
+    // recommended catalog and must NEVER touch the network — a re-introduced
+    // fetch here would hang the picker of an offline (or VPN'd) user. Watch
+    // every non-localhost call instead of stubbing one host, so a probe to ANY
+    // provider trips this.
     const realFetch = globalThis.fetch;
+    const external = vi.fn();
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const u =
         typeof input === 'string'
@@ -113,32 +142,26 @@ describe('web server', () => {
           : input instanceof URL
             ? input.href
             : (input as Request).url;
-      if (u.includes('openrouter.ai')) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { id: 'z/live-model', name: 'Live Model', context_length: 8, pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools', 'reasoning'] },
-              ],
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          ),
-        );
-      }
+      if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(u)) external(u);
       return realFetch(input, init);
     });
     try {
-      const ok = await fetch(base + '/api/models?backend=pi');
+      const ok = await fetch(base + '/api/models?backend=jcode');
       expect(ok.status).toBe(200);
       const body = await ok.json();
-      expect(body.source).toBe('openrouter-live');
-      expect(body.models.some((m: { id: string }) => m.id === 'z/live-model')).toBe(true);
+      expect(body.source).toBe('recommended');
+      expect(body.models.length).toBeGreaterThan(0);
+      // Every entry carries the capability annotations the picker badges.
+      expect(body.models[0]).toMatchObject({ id: expect.any(String), label: expect.any(String) });
+      expect(external).not.toHaveBeenCalled();
 
       const bad = await fetch(base + '/api/models?backend=nope');
       expect(bad.status).toBe(400);
+      // `pi` USED to be a backend kind. It is not one any more, so it must 400
+      // like any other unknown id instead of quietly serving a default catalog.
+      expect((await fetch(base + '/api/models?backend=pi')).status).toBe(400);
     } finally {
       spy.mockRestore();
-      resetCapabilitiesCache();
     }
   });
 
@@ -526,7 +549,7 @@ describe('web server — machine-global settings (/api/settings)', () => {
   });
 });
 
-describe('web server — OpenRouter key management (⚙ Options)', () => {
+describe('web server — DeepSeek key management (⚙ Options)', () => {
   let repo: string;
   let cfgHome: string;
   let server: Server;
@@ -537,8 +560,8 @@ describe('web server — OpenRouter key management (⚙ Options)', () => {
   const TRACKED = [
     'XDG_CONFIG_HOME',
     'HUU_CONFIG_DIR',
-    'OPENROUTER_API_KEY',
-    'OPENROUTER_API_KEY_FILE',
+    'DEEPSEEK_API_KEY',
+    'DEEPSEEK_API_KEY_FILE',
   ] as const;
   const savedEnv: Record<string, string | undefined> = {};
 
@@ -567,56 +590,56 @@ describe('web server — OpenRouter key management (⚙ Options)', () => {
 
   it('status → save → status → clear round-trip (masked, never the raw value)', async () => {
     // Nothing anywhere yet.
-    let st = (await (await fetch(base + '/api/keys/status?name=openrouter')).json()) as Record<
+    let st = (await (await fetch(base + '/api/keys/status?name=deepseek')).json()) as Record<
       string,
       unknown
     >;
     expect(st).toMatchObject({ name: 'deepseek', source: 'none', masked: null });
 
     // Ambient env var → the fallback tier.
-    process.env.OPENROUTER_API_KEY = 'sk-or-envkey-12345678';
-    st = (await (await fetch(base + '/api/keys/status?name=openrouter')).json()) as Record<
+    process.env.DEEPSEEK_API_KEY = 'sk-ds-envkey-12345678';
+    st = (await (await fetch(base + '/api/keys/status?name=deepseek')).json()) as Record<
       string,
       unknown
     >;
     expect(st.source).toBe('env');
-    expect(st.masked).toBe('sk-or-…5678');
+    expect(st.masked).toBe('sk-ds-…5678');
     expect(st.envPresent).toBe(true);
 
     // Save via POST /api/keys: persisted to the config store AND registered as
     // the live in-session override — the status flips to 'options'.
     const save = await fetch(base + '/api/keys', {
       method: 'POST',
-      body: JSON.stringify({ name: 'deepseek', value: 'sk-or-saved-abcdefgh' }),
+      body: JSON.stringify({ name: 'deepseek', value: 'sk-ds-saved-abcdefgh' }),
     });
     expect(save.status).toBe(200);
     expect((await save.json()) as Record<string, unknown>).toMatchObject({
       ok: true,
-      masked: 'sk-or-…efgh',
+      masked: 'sk-ds-…efgh',
     });
     const onDisk = JSON.parse(readFileSync(join(cfgHome, 'huu', 'config.json'), 'utf8')) as {
-      openrouter: string;
+      deepseek: string;
     };
-    expect(onDisk.openrouter).toBe('sk-or-saved-abcdefgh');
-    st = (await (await fetch(base + '/api/keys/status?name=openrouter')).json()) as Record<
+    expect(onDisk.deepseek).toBe('sk-ds-saved-abcdefgh');
+    st = (await (await fetch(base + '/api/keys/status?name=deepseek')).json()) as Record<
       string,
       unknown
     >;
     expect(st.source).toBe('options');
-    expect(st.masked).toBe('sk-or-…efgh');
-    expect(JSON.stringify(st)).not.toContain('sk-or-saved-abcdefgh'); // masked only
+    expect(st.masked).toBe('sk-ds-…efgh');
+    expect(JSON.stringify(st)).not.toContain('sk-ds-saved-abcdefgh'); // masked only
 
     // Clear: store entry removed + override dropped → env is the fallback again.
     const del = (await (
-      await fetch(base + '/api/keys?name=openrouter', { method: 'DELETE' })
+      await fetch(base + '/api/keys?name=deepseek', { method: 'DELETE' })
     ).json()) as Record<string, unknown>;
     expect(del).toMatchObject({ ok: true, cleared: true, fallback: 'env' });
-    st = (await (await fetch(base + '/api/keys/status?name=openrouter')).json()) as Record<
+    st = (await (await fetch(base + '/api/keys/status?name=deepseek')).json()) as Record<
       string,
       unknown
     >;
     expect(st.source).toBe('env');
-    expect(st.masked).toBe('sk-or-…5678');
+    expect(st.masked).toBe('sk-ds-…5678');
   });
 
   it('rejects unknown spec names on status/save/clear', async () => {
@@ -640,13 +663,14 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
   const TRACKED = [
     'XDG_CONFIG_HOME',
     'HUU_CONFIG_DIR',
-    'OPENROUTER_API_KEY',
-    'OPENROUTER_API_KEY_FILE',
+    'DEEPSEEK_API_KEY',
+    'DEEPSEEK_API_KEY_FILE',
   ] as const;
   const savedEnv: Record<string, string | undefined> = {};
-  /** HTTP status the mocked OpenRouter probe answers with (200 = valid key). */
-  let probeStatus = 200;
-  let fetchSpy: ReturnType<typeof vi.spyOn> | null = null;
+  /** What the provider says about a key — driven through the seam at the top. */
+  const provider = (validation: KeyValidation): void => {
+    seam.validation = validation;
+  };
 
   beforeEach(async () => {
     for (const k of TRACKED) {
@@ -658,18 +682,10 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
     repo = mkdtempSync(join(tmpdir(), 'huu-web-'));
     setupRepo(repo);
 
-    // Hermetic validate-then-persist: intercept ONLY openrouter.ai so the
-    // pool endpoints exercise their real validation branch with no network.
-    probeStatus = 200;
-    const realFetch = globalThis.fetch;
-    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      const u =
-        typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-      if (u.includes('openrouter.ai')) {
-        return Promise.resolve(new Response('{}', { status: probeStatus }));
-      }
-      return realFetch(input, init);
-    }) as ReturnType<typeof vi.spyOn>;
+    // Hermetic validate-then-persist: the pool endpoints run their REAL
+    // validation branch, with the provider's verdict dictated instead of
+    // fetched. A key the provider accepts is the default.
+    provider({ status: 'valid' });
 
     ({ server } = createWebServer({ cwd: repo, defaultAutoScale: true, initialPipeline: PIPELINE }));
     base = await listenEphemeral(server);
@@ -677,7 +693,7 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    fetchSpy?.mockRestore();
+    seam.validation = null;
     rmSync(repo, { recursive: true, force: true });
     rmSync(cfgHome, { recursive: true, force: true });
     for (const k of TRACKED) {
@@ -707,44 +723,60 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
     // config (or an older huu writing one) must read back as a usable pool.
     await fetch(base + '/api/keys', {
       method: 'POST',
-      body: JSON.stringify({ name: 'deepseek', value: 'sk-or-legacy-11112222' }),
+      body: JSON.stringify({ name: 'deepseek', value: 'sk-ds-legacy-11112222' }),
     });
     pool = await getPool();
     expect(pool.keys).toHaveLength(1);
-    expect(pool.keys[0]).toMatchObject({ index: 0, masked: 'sk-or-…2222', state: 'active' });
+    expect(pool.keys[0]).toMatchObject({ index: 0, masked: 'sk-ds-…2222', state: 'active' });
   });
 
   it('POST validates BEFORE persisting and NEVER returns a key value', async () => {
-    const first = await addKey('sk-or-poolkey-aaaabbbb');
+    const first = await addKey('sk-ds-poolkey-aaaabbbb');
     expect(first.status).toBe(200);
     expect(first.json.ok).toBe(true);
+    // The verdict the provider gave is echoed back — the client badges it.
     expect(first.json.validation).toEqual({ status: 'valid' });
     expect(first.json.keys).toHaveLength(1);
-    expect(first.json.keys[0].masked).toBe('sk-or-…bbbb');
+    expect(first.json.keys[0].masked).toBe('sk-ds-…bbbb');
     // The raw value must not appear ANYWHERE in the payload.
-    expect(JSON.stringify(first.json)).not.toContain('sk-or-poolkey-aaaabbbb');
+    expect(JSON.stringify(first.json)).not.toContain('sk-ds-poolkey-aaaabbbb');
 
-    const second = await addKey('sk-or-poolkey-ccccdddd');
+    const second = await addKey('sk-ds-poolkey-ccccdddd');
     expect(second.json.keys.map((k: { masked: string }) => k.masked)).toEqual([
-      'sk-or-…bbbb',
-      'sk-or-…dddd',
+      'sk-ds-…bbbb',
+      'sk-ds-…dddd',
     ]);
 
     // The compatibility mirror: keys[0] is written back to the flat field so an
     // older huu sharing the same HUU_CONFIG_DIR still finds a usable key.
     const onDisk = JSON.parse(readFileSync(join(cfgHome, 'huu', 'config.json'), 'utf8')) as {
-      openrouter: string;
-      _pools: { openrouter: { keys: string[] } };
+      deepseek: string;
+      _pools: { deepseek: { keys: string[] } };
     };
-    expect(onDisk.openrouter).toBe('sk-or-poolkey-aaaabbbb');
-    expect(onDisk._pools.openrouter.keys).toHaveLength(2);
+    expect(onDisk.deepseek).toBe('sk-ds-poolkey-aaaabbbb');
+    expect(onDisk._pools.deepseek.keys).toHaveLength(2);
+  });
+
+  // A provider with no cheap probe (DeepSeek today) answers `unverifiable`.
+  // Policy: accepted WITH the reason echoed back, never hard-blocked — an
+  // offline user must still be able to save the key they just pasted.
+  it('an unverifiable key is still accepted, with the reason echoed back', async () => {
+    provider({ status: 'unverifiable', reason: 'no validator for this key' });
+    const res = await addKey('sk-ds-unverified-77778888');
+    expect(res.status).toBe(200);
+    expect(res.json.validation).toEqual({
+      status: 'unverifiable',
+      reason: 'no validator for this key',
+    });
+    expect(res.json.keys).toHaveLength(1);
+    expect(JSON.stringify(res.json)).not.toContain('sk-ds-unverified-77778888');
   });
 
   it('a key the provider rejects is a 400 CARRYING the httpStatus, and is never stored', async () => {
-    probeStatus = 401;
+    provider({ status: 'invalid', httpStatus: 401 });
     const res = await fetch(base + '/api/keys/pool', {
       method: 'POST',
-      body: JSON.stringify({ name: 'deepseek', value: 'sk-or-rejected-99998888' }),
+      body: JSON.stringify({ name: 'deepseek', value: 'sk-ds-rejected-99998888' }),
     });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { httpStatus: number; validation: { status: string } };
@@ -752,27 +784,29 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
     // a generic failure; it is the reason this is not a bare 400.
     expect(json.httpStatus).toBe(401);
     expect(json.validation.status).toBe('invalid');
+    // Not even the refusal may carry the value back.
+    expect(JSON.stringify(json)).not.toContain('sk-ds-rejected-99998888');
 
     expect((await getPool()).keys).toEqual([]);
   });
 
   it('DELETE removes by index and reindexes what is left', async () => {
-    await addKey('sk-or-first-11112222');
-    await addKey('sk-or-second-33334444');
-    const del = await fetch(base + '/api/keys/pool?name=openrouter&index=0', { method: 'DELETE' });
+    await addKey('sk-ds-first-11112222');
+    await addKey('sk-ds-second-33334444');
+    const del = await fetch(base + '/api/keys/pool?name=deepseek&index=0', { method: 'DELETE' });
     expect(del.status).toBe(200);
     const json = (await del.json()) as { keys: { index: number; masked: string }[] };
     expect(json.keys).toHaveLength(1);
-    expect(json.keys[0]).toMatchObject({ index: 0, masked: 'sk-or-…4444' });
+    expect(json.keys[0]).toMatchObject({ index: 0, masked: 'sk-ds-…4444' });
 
     // A missing / non-numeric index is a 400, not a silent no-op.
-    expect((await fetch(base + '/api/keys/pool?name=openrouter', { method: 'DELETE' })).status).toBe(400);
+    expect((await fetch(base + '/api/keys/pool?name=deepseek', { method: 'DELETE' })).status).toBe(400);
   });
 
   it('validate re-probes a STORED key, burning it on 401 — and reset clears that', async () => {
-    await addKey('sk-or-probe-55556666');
+    await addKey('sk-ds-probe-55556666');
 
-    probeStatus = 403;
+    provider({ status: 'invalid', httpStatus: 403 });
     const bad = (await (
       await fetch(base + '/api/keys/pool/validate', {
         method: 'POST',
@@ -793,13 +827,13 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
     expect(reset.keys[0]!.state).toBe('active');
 
     // A successful re-probe also un-burns, so the user need not reset by hand.
-    probeStatus = 401;
+    provider({ status: 'invalid', httpStatus: 401 });
     await fetch(base + '/api/keys/pool/validate', {
       method: 'POST',
       body: JSON.stringify({ name: 'deepseek', index: 0 }),
     });
     expect((await getPool()).keys[0].state).toBe('burned');
-    probeStatus = 200;
+    provider({ status: 'valid' });
     const good = (await (
       await fetch(base + '/api/keys/pool/validate', {
         method: 'POST',
@@ -808,6 +842,8 @@ describe('web server — key POOL endpoints (⚙ Settings, multi-key rotation)',
     ).json()) as { validation: { status: string }; keys: { state: string }[] };
     expect(good.validation.status).toBe('valid');
     expect(good.keys[0]!.state).toBe('active');
+    // Nothing the endpoint returns ever carries the stored value.
+    expect(JSON.stringify(good)).not.toContain('sk-ds-probe-55556666');
   });
 
   it('rejects unknown spec names and out-of-range indexes on every pool route', async () => {

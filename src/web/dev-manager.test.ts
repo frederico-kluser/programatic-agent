@@ -375,32 +375,47 @@ describe('web server — development mode', () => {
     }
   });
 
-  // The strongest available proof that the policy REACHES `runDevMode`: the pi
-  // model-registry preflight lives inside the driver and nowhere else, so only
-  // a policy that actually got there can trip it.
-  it('the policy reaches runDevMode — an unknown worker id fails the driver preflight', async () => {
-    await post(base, '/api/dev', {
-      goal: 'preflight de modelo',
-      modelId: 'deepseek/deepseek-v4-pro',
-      backend: 'jcode',
-      provider: 'deepseek',
-      apiKey: 'sk-or-test-key-0000',
+  // The proof that the routing policy REACHES `runDevMode`: the manager -> driver
+  // seam is spied at the top of this file, so the `dev` literal the manager
+  // handed over is directly observable.
+  //
+  // The OLD vehicle was the pi model-registry preflight inside the driver: an
+  // unknown worker id stopped the session with `model-preflight-failed`. That
+  // registry left with the pi backend — `dev-driver.ts` now says "Model
+  // preflight skipped in v3.0 — the model registry is not available", and an
+  // unknown id is caught at the factory when the first agent is built. So the
+  // side effect is gone; the thing it was proving is asserted head-on instead.
+  it('the policy reaches runDevMode — verbatim, in the dev literal', async () => {
+    vi.mocked(runDevMode).mockClear();
+    const { status } = await post(base, '/api/dev', {
+      goal: 'roteamento chega ao driver',
+      modelId: 'stub-model',
+      backend: 'stub',
       approval: 'each-epoch',
       skipKnowledgeBootstrap: true,
-      models: { worker: 'nobody/invented-this-model' },
+      models: { worker: 'nobody/invented-this-model', planner: 'z-ai/glm-5.2', bogus: 'x' },
     });
-    let session: any;
-    for (let i = 0; i < 80; i++) {
-      session = (await (await fetch(base + '/api/dev')).json()).session;
-      if (!session.active) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    expect(session.active).toBe(false);
-    expect(session.stoppedBecause).toBe('model-preflight-failed');
-    expect(session.detail).toMatch(/nobody\/invented-this-model/);
-    // …and the `planner` carve-out holds: an id the pi registry has never heard
-    // of is FINE there, because the planner never runs as a pi agent.
-    expect(session.detail).not.toMatch(/planner:/);
+    expect(status).toBe(200);
+
+    const spy = vi.mocked(runDevMode);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const dev = spy.mock.calls[0]![0].dev;
+    // VERBATIM: what the browser routed is what the driver runs — the manager
+    // re-derives nothing and substitutes nothing. An id no catalog has heard of
+    // travels untouched, which is exactly what makes a typo debuggable.
+    expect(dev.models).toEqual({
+      worker: 'nobody/invented-this-model',
+      planner: 'z-ai/glm-5.2',
+    });
+    // …and the unknown ROLE never crosses the seam.
+    expect(dev.models).not.toHaveProperty('bogus');
+
+    // The snapshot the browser reads back is that same policy, with every role
+    // it did not name falling back to `modelId`.
+    const session = (await (await fetch(base + '/api/dev')).json()).session;
+    expect(session.models.worker).toBe('nobody/invented-this-model');
+    expect(session.models.planner).toBe('z-ai/glm-5.2');
+    expect(session.models.judge).toBe('stub-model');
   });
 
   // ── runIds carry the run's phase ────────────────────────────────────────

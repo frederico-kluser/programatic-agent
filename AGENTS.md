@@ -168,7 +168,9 @@ contains a credential — only the `api_key_env` name.
 - **CI runs the same gate.** `.github/workflows/gate.yml` executes
   `scripts/gate.sh` on every push and pull request — typecheck · test ·
   validate-skills · check-acceptance · smoke-defaults · validate-graph ·
-  check-pins · check-twins · check-metodo. Run `bash scripts/gate.sh` to
+  check-pins · check-twins · check-metodo · check-dockerfile (the last one
+  refuses BuildKit-only Dockerfile syntax — huu is docker-only, so the image
+  must build on a Docker with no buildx plugin). Run `bash scripts/gate.sh` to
   reproduce it exactly; `bash scripts/gate.sh --list-from-ci` prints what CI
   runs, so the two lists cannot drift silently. CI is a backstop, not a
   substitute: it reports only after you push.

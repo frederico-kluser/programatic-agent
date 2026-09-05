@@ -171,7 +171,7 @@ antes de qualquer outra e obriga a re-medição junto com as três de que deriva
 | Skills | **22** `SKILL.md` + **22** `LEARNINGS.md` + `catalog.md` |
 | `AGENTS.md` | **152 linhas, 7.031 chars ≈ 1,8k tokens** — carregados em **toda** sessão |
 | Pipelines default | 7 pipelines, 14 módulos, **4.321 linhas** |
-| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **9 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
+| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **10 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
 | Dogfooding ⚠ histórico | **17 merges de onda** do próprio huu (`merge(w4…w6-…): wave N front`), todos em **2026-07-28** (45 commits nesse dia) — anterior ao `clean start` |
 | Higiene de branch | **0** branches `huu/**` órfãos |
 | Marcadores | `TODO`/`FIXME`/`XXX` concentrados em `requeue.test.ts` (8), `dev-graph/node-catalog.ts` (6), `orchestrator/index.ts` (5), `card-focus.test.ts` (5), `types/orchestrator.ts` (4) |

@@ -69,7 +69,7 @@ Description (EN): "Routes every task in this repo to the right skills before any
 | `authoring-pipelines` | criar/editar `*.pipeline.json`; "que step uso p/ X?" | schema v2 (WorkStep/CheckStep, scope, exatamente-um default:true, caps 50/5/600k/300k/1retry); validar topologia; testar com `--stub`; link pipeline-json-guide.md |
 | `editing-default-pipelines` | mudar os 7 defaults, registry, knowledge-protocol | editar módulo em src/lib/default-pipelines → manter `registry.test.ts` verde (contrato: judge shape, REPORT-ONLY, caps) → lembrar: bootstrap nunca sobrescreve JSON materializado |
 | `building-tui-screens` | nova tela/componente Ink, teclado, tema | FSM (estado+evento) → app.tsx routing → componente em ui/components → theme tokens (ai=magenta SÓ IA) → sincronizar `cardHeight()` → testes |
-| `committing-and-validating` | qualquer commit/push pronto | `npm run typecheck && npm test` local + o mesmo `scripts/gate.sh` (9 passos) que a CI roda em todo push/PR; Conventional Commits (scopes observados); hooks opt-in; quando rodar smokes |
+| `committing-and-validating` | qualquer commit/push pronto | `npm run typecheck && npm test` local + o mesmo `scripts/gate.sh` (10 passos) que a CI roda em todo push/PR; Conventional Commits (scopes observados); hooks opt-in; quando rodar smokes |
 | `releasing-versions` | "cortar vX.Y.Z", publicar imagem | package.json+CHANGELOG → typecheck/test/build docker/smokes → tag+push → buildx multi-arch GHCR (opcional) → smoke da imagem publicada |
 
 ### Meta (2) — nomes fixados pelo evolution_spec

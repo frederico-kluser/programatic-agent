@@ -125,7 +125,11 @@ executá-lo com rigor, é exatamente o trabalho pro huu.**
 
 ## Início rápido
 
-**Pré-requisitos:** Node.js ≥ 20, `git` e Docker (obrigatório). Exporte a
+**Pré-requisitos:** Node.js ≥ 20, `git` e Docker (obrigatório) — **um Docker de
+fábrica basta; o plugin `buildx` NÃO é necessário**. O `Dockerfile` não usa
+nenhuma sintaxe exclusiva do BuildKit (sem cache mount, sem `COPY --link`, sem
+heredoc), então o builder clássico constrói a imagem inteira; quem reintroduzir
+uma delas é reprovado no gate por `scripts/check-dockerfile.ts`. Exporte a
 chave do **provedor** que você vai usar: `DEEPSEEK_API_KEY`
 ([platform.deepseek.com](https://platform.deepseek.com)) no padrão, ou
 `OPENROUTER_API_KEY` ([openrouter.ai/keys](https://openrouter.ai/keys)) se

@@ -1,18 +1,72 @@
-# syntax=docker/dockerfile:1.7
-#
 # huu — Humans Underwrite Undertakings
 # Multi-stage build: tsc compiles src/ in the builder, runtime ships only
 # dist/ + pruned node_modules + git + tini.
 #
 # See docker-roadmap.md §9.1 for design rationale.
+#
+# ───────── PORTABILITY CONTRACT — no BuildKit-only syntax in here ─────────
+#
+# This file MUST build on a factory Docker: plain `docker build`, no buildx
+# plugin installed, no DOCKER_BUILDKIT=1 exported. huu is docker-only — the
+# re-exec into the container IS the product, and only HUU_DEV_NATIVE=1
+# escapes it — so a Dockerfile that needs an optional CLI plugin does not
+# degrade one feature, it makes the whole tool refuse to start.
+#
+# That is not hypothetical. `RUN --mount=type=cache,target=/root/.npm` sat on
+# the `npm ci` step from the very first commit, and on any Docker without
+# buildx every `npm start` died at step 4 with:
+#     the --mount option requires BuildKit
+# DOCKER_BUILDKIT=1 does not rescue it either ("BuildKit is enabled but the
+# buildx component is missing or broken") — buildx is a separate package, and
+# README lists only Node, git and Docker as prerequisites.
+#
+# So: NO cache mounts, NO `RUN --mount=type=secret|ssh`, NO `RUN --network=`,
+# NO `COPY --link` / `COPY --chmod`, NO heredocs (`RUN <<EOF`). Enforced by
+# `scripts/check-dockerfile.ts`, wired into `scripts/gate.sh` — so the gate
+# says no before a user's build does.
+#
+# What the two cache mounts were actually worth, measured before deleting
+# them: the one wrapping `npm prune --omit=dev` covered a command that
+# downloads NOTHING (gain ≈ zero), and the one wrapping `npm ci` only pays
+# when package-lock.json CHANGES — with the lockfile untouched, Docker's
+# ordinary LAYER cache already skips the entire step. Small, localized cost;
+# for a docker-only product, portability is worth more.
+#
+# There is deliberately NO `# syntax=docker/dockerfile:1.x` line either. The
+# legacy builder silently ignores it (it is not an error), but it advertises
+# a frontend this file does not use — and that advertisement is precisely the
+# invitation that put `RUN --mount` here. Nothing below needs anything newer
+# than the built-in frontend, so the file says so by staying quiet.
+#
+# WHAT WAS ACTUALLY BUILT, AND WHAT WAS NOT
+# -----------------------------------------
+# Measured: this file, exactly as it stands, was built through the real entry
+# point (`./scripts/ensure-image.sh`) on a Docker 29.7.2 with NO buildx
+# plugin — 40 steps, `Successfully tagged huu:local`, and
+# `docker run --rm huu:local huu --help` exited 0.
+# NOT measured: the BuildKit path after the directive was dropped. It should
+# be a no-op — without a `# syntax=` line BuildKit uses its built-in
+# frontend, which parses everything here — but nobody re-ran a BuildKit build
+# to confirm it, so treat "BuildKit still builds this unchanged" as reasoning
+# rather than as a transcript. Note in particular that an equivalence check
+# that strips comments before diffing is BLIND to this change: `# syntax=` is
+# itself a comment, so the strip deletes the very line under test.
+# `docker build` picks whatever builder that host defaults to, which is why
+# neither this file nor scripts/ensure-image.sh forces one.
 
 # ─────────── Stage 1: builder ───────────
 FROM node:20-slim AS builder
 
 WORKDIR /build
 
-# Install full dev dependencies. BuildKit cache mount keeps the npm cache
-# warm between builds without inflating the layer.
+# Install full dev dependencies.
+#
+# NO `--mount=type=cache,target=/root/.npm` here — see the PORTABILITY
+# CONTRACT at the top of this file. It is not an oversight and it is not an
+# optimization waiting to happen: that flag is BuildKit-only, and huu must
+# build on a Docker with no buildx plugin. Docker's plain layer cache already
+# skips this whole step whenever package-lock.json is unchanged.
+#
 # .npmrc is required: the lockfile resolved with legacy-peer-deps=true
 # (model-selector-ink declares a peer of ink@^6 while the rest of the
 # tree pins ink@^4 — npm 7+ refuses to install otherwise).
@@ -22,8 +76,7 @@ WORKDIR /build
 # at build time, npm ci will skip it without failing — the Copilot backend
 # falls back to a clear runtime error and the rest of huu still works.
 COPY package.json package-lock.json .npmrc ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --include=dev
+RUN npm ci --include=dev
 
 # Compile TypeScript. tsconfig excludes node_modules/dist/scripts so tsc
 # only walks src/.
@@ -52,8 +105,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Drop devDependencies so the runtime stage can copy a lean node_modules.
-RUN --mount=type=cache,target=/root/.npm \
-    npm prune --omit=dev
+# (Also no cache mount: `npm prune` downloads nothing, so the BuildKit-only
+# flag that used to be here bought exactly zero. PORTABILITY CONTRACT, top.)
+RUN npm prune --omit=dev
 
 # Strip artifacts node won't load at runtime: source maps (~35MB across
 # the LLM provider SDKs we bundle) and per-package READMEs (~5MB). We

@@ -836,6 +836,28 @@ export function createWebServer(opts: WebServerOptions): {
         return sendJson(res, /already running/i.test(msg) ? 409 : 400, { error: msg });
       }
     }
+    if (method === 'GET' && path === '/api/dev/debate') {
+      // THE SETTLED HALF of the debate chat. Both briefs are written inside the
+      // debater's own worktree, so a UI watching the canonical path would see
+      // each file appear ALREADY FINISHED — the live half therefore rides the
+      // un-throttled `agent-stream` firehose the browser already receives, and
+      // this route answers only what a merge has landed. Parsing happens here
+      // because the client is bundler-free vanilla ESM and cannot import the
+      // TypeScript parser; a hand-written JS twin would be a second set of
+      // prose rules to keep in sync.
+      // No path ever crosses the wire: `epoch` indexes a map huu itself filled
+      // from the compiled pipeline.
+      const raw = url.searchParams.get('epoch');
+      const epoch = raw === null || raw.trim() === '' ? undefined : Number(raw);
+      if (epoch !== undefined && !Number.isFinite(epoch)) {
+        return sendJson(res, 400, { error: 'epoch must be a number' });
+      }
+      const read = devManager.debateTranscript(epoch);
+      // `present: false` is the DEFAULT answer — `--debate` is off unless the
+      // human turned it on — and it is a 200, not a 404: "this session has no
+      // debate" is an answer, not a missing resource.
+      return sendJson(res, 200, read ? { present: true, ...read } : { present: false });
+    }
     if (method === 'POST' && path === '/api/dev/approve') {
       const body = await readJsonBodyOr400(req, res);
       if (!body) return;

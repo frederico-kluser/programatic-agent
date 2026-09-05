@@ -11,7 +11,8 @@
 // user's working branch, and two concurrent sessions on one repo would race
 // that merge. Concurrency inside a session is the swarm's job.
 
-import { resolve as resolvePath } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath, sep } from 'node:path';
 import { Orchestrator } from '../orchestrator/index.js';
 import type { AgentOutputChunk } from '../orchestrator/types.js';
 import { selectBackend, type AgentBackendKind } from '../orchestrator/backends/registry.js';
@@ -30,6 +31,13 @@ import {
 } from '../lib/dev-mode/dev-driver.js';
 import type { DevGraph } from '../lib/dev-graph/graph-types.js';
 import type { OrphanBranch } from '../lib/dev-mode/orphan-branches.js';
+import {
+  buildDebateTranscript,
+  findDebateSteps,
+  type DebateRole,
+  type DebateTranscript,
+} from '../lib/dev-mode/debate-transcript.js';
+import { integrationWorktreePath } from '../git/branch-namer.js';
 import { activeMethodologies } from '../lib/dev-mode/methodology-registry.js';
 import { devModelProviderIndex } from '../lib/dev-mode/model-catalog-index.js';
 import {
@@ -108,6 +116,63 @@ export interface DevResumeOffer {
    * caller reads the offer it always read.
    */
   drawnMethod?: { graphId: string; graphName: string };
+}
+
+/**
+ * WHERE THE ADVERSARIAL DEBATE IS, in the epoch that is running — everything
+ * the browser needs to render the two sides WITHOUT learning a single step
+ * name of its own.
+ *
+ * Absent on every session that did not turn `--debate` on, which is the
+ * default: `findDebateSteps` answers `null` for a pipeline with no debate
+ * block, and this field is then never assigned. A client that sees no `debate`
+ * shows no chat — not an empty one, not a disabled one.
+ *
+ * DELIBERATELY LIGHT. `{type:'dev'}` is rebroadcast on every `emit()`, so the
+ * two markdown briefs must never ride it; what travels here is a handful of
+ * ids and three step names. The prose comes on demand from
+ * `GET /api/dev/debate`, and live from the un-throttled `agent-stream`
+ * firehose the browser already receives.
+ */
+export interface DevDebateInfo {
+  /** The epoch whose compiled pipeline carries the debate block. */
+  epoch: number;
+  /**
+   * The run the debate belongs to. An epoch is TWO runs and agent ids restart
+   * at 1 in each, so a browser buffering the live firehose by agent id alone
+   * would splice the knowledge run's agent 1 into the advocate's turn. Every
+   * live frame is filtered by this id first.
+   */
+  runId: string;
+  /**
+   * The three step names as `findDebateSteps` anchored them. Sent so the
+   * browser can match the GATE's `checkRuns` entry (which carries a step name,
+   * not an agent id) without hardcoding a literal that lives in
+   * `plan-to-pipeline.ts`.
+   */
+  names: { advocate: string; prosecutor: string; gate: string };
+  /**
+   * agentId → side, stamped as each debater's card appears on the board.
+   * Ids ascend and a rework arm allocates FRESH ones, so the n-th advocate id
+   * is the n-th ROUND — which is how the browser keeps round 1 and round 2
+   * apart even though `A.md` is rewritten whole each time.
+   */
+  roles: Record<string, DebateRole>;
+  /** How the localizer anchored — `name` (exact) or `structure` (fallback). */
+  matchedBy: 'name' | 'structure';
+}
+
+/** One epoch's debate as `GET /api/dev/debate` answers it. */
+export interface DevDebateRead {
+  epoch: number;
+  sessionId: string;
+  /** Repo-relative paths of the two briefs, or null when undeducible. */
+  paths: { a: string; b: string } | null;
+  /** Which of the two was actually readable at read time. */
+  exists: { a: boolean; b: boolean };
+  /** Where the text came from: the integration worktree, or the landed tree. */
+  source: 'integration' | 'worktree' | 'none';
+  transcript: DebateTranscript;
 }
 
 /** An integration branch HEAD never absorbed, as offered to the browser. */
@@ -244,6 +309,11 @@ export interface DevSessionSnapshot {
   /** The branches behind `awaitingOrphans`; retained after the answer. */
   orphans?: DevOrphanBranch[];
   logs: DevLogLine[];
+  /**
+   * The adversarial debate of the RUNNING epoch, when `--debate` compiled
+   * one. Absent is the default and means "there is no chat to show".
+   */
+  debate?: DevDebateInfo;
   stoppedBecause?: DevStopReason;
   detail?: string;
   startedAt: number;
@@ -336,6 +406,14 @@ export class WebDevManager {
    */
   private abortController: AbortController | null = null;
   private activeOrchestrator: Orchestrator | null = null;
+  /**
+   * epoch → where that epoch's two briefs live, and in which run.
+   *
+   * Kept SERVER-SIDE and keyed by a number the browser can only choose from
+   * a set huu wrote: `GET /api/dev/debate` never takes a path, so no request
+   * can point the reader at a file the pipeline did not declare.
+   */
+  private debatePaths = new Map<number, { runId: string; paths: { a: string; b: string } | null }>();
 
   constructor(
     private readonly cwd: string,
@@ -532,6 +610,7 @@ export class WebDevManager {
     );
 
     this.abortController = new AbortController();
+    this.debatePaths.clear();
     this.session = {
       active: true,
       sessionId,
@@ -633,6 +712,24 @@ export class WebDevManager {
         const setGreedy = (): void => orch.enableGreedyMode();
         if (params.mode === 'greedy') setGreedy();
         this.activeOrchestrator = orch;
+        // THE DEBATE, LOCALIZED ONCE PER RUN, from the compiled pipeline this
+        // seam already holds. `findDebateSteps` is pure and answers `null` for
+        // every pipeline that did not compile the block — the default — so a
+        // session without `--debate` never gains the field and the browser
+        // never renders a chat. Anchoring here (and not in the client) is what
+        // keeps the three step names a private literal of
+        // `plan-to-pipeline.ts` instead of a fourth copy in the browser.
+        const debateSteps = findDebateSteps(pipeline);
+        if (debateSteps && this.session) {
+          this.session.debate = {
+            epoch,
+            runId,
+            names: debateSteps.names,
+            roles: {},
+            matchedBy: debateSteps.matchedBy,
+          };
+          this.debatePaths.set(epoch, { runId, paths: debateSteps.briefPaths });
+        }
         if (this.session) {
           this.session.runIds.push({ epoch, runId, phase });
           this.session.phase =
@@ -660,6 +757,8 @@ export class WebDevManager {
               // Feed BOTH the dev-mode driver and the normal kanban sink.
               listener(state);
               pushRun(state, state.status === 'done' ? 'done' : state.status === 'error' ? 'error' : 'running');
+              // Only a GROWN map re-emits the session frame — see the method.
+              if (this.stampDebateRoles(state)) this.emit();
             });
             const unOut = this.onAgentOutput
               ? orch.subscribeAgentOutput((chunk) => this.onAgentOutput!(runId, chunk))
@@ -723,6 +822,92 @@ export class WebDevManager {
       });
 
     return { sessionId };
+  }
+
+  /**
+   * agentId → side, read off the ONE thing the board already carries: each
+   * card's `stageName` IS the pipeline step's name.
+   *
+   * Returns `true` only when the map GREW, and that is the sole trigger for a
+   * session re-emit. `{type:'dev'}` is rebroadcast whole on every `emit()`, so
+   * re-stamping on each orchestrator tick would multiply the session traffic
+   * by the run's — the map changes at most a handful of times per epoch.
+   */
+  private stampDebateRoles(state: OrchestratorState): boolean {
+    const debate = this.session?.debate;
+    if (!debate) return false;
+    const byName = new Map<string, DebateRole>([
+      [debate.names.advocate, 'advocate'],
+      [debate.names.prosecutor, 'prosecutor'],
+      [debate.names.gate, 'gate'],
+    ]);
+    let grew = false;
+    for (const agent of state.agents ?? []) {
+      const role = byName.get(agent.stageName);
+      if (!role) continue;
+      const key = String(agent.agentId);
+      if (debate.roles[key] === role) continue;
+      debate.roles[key] = role;
+      grew = true;
+    }
+    return grew;
+  }
+
+  /**
+   * The SETTLED half of one epoch's debate: the two briefs as they exist on
+   * disk, parsed by `debate-transcript.ts` — the only reader there is.
+   *
+   * WHY THE SERVER PARSES. The browser client is bundler-free vanilla ESM and
+   * cannot import a `.ts` module; shipping a hand-written JS twin of the parser
+   * would be a second implementation of prose rules that already took 52 tests
+   * to pin. So the markdown is read and parsed here and only JSON crosses.
+   *
+   * TWO ROOTS, IN THIS ORDER. A debater writes inside its OWN agent worktree,
+   * so nothing is at the canonical path until a merge. The wave merge lands the
+   * briefs in the run's INTEGRATION worktree; the epoch landing later lands
+   * them in the user's tree. Reading integration first is what makes the chat
+   * settle at the end of the debate wave instead of at the end of the epoch.
+   *
+   * Never throws: an unreadable side reads as an ABSENT side, which
+   * `buildDebateTranscript` renders as "this side wrote nothing" — a legitimate
+   * state (the gate may forward with no brief), not an error.
+   */
+  debateTranscript(epoch?: number): DevDebateRead | null {
+    const s = this.session;
+    const debate = s?.debate;
+    if (!s || !debate) return null;
+    const wanted = epoch === undefined ? debate.epoch : epoch;
+    const entry = this.debatePaths.get(wanted);
+    if (!entry) return null;
+    const { paths } = entry;
+    const empty = (source: DevDebateRead['source']): DevDebateRead => ({
+      epoch: wanted,
+      sessionId: s.sessionId,
+      paths,
+      exists: { a: false, b: false },
+      source,
+      transcript: buildDebateTranscript({}),
+    });
+    if (!paths) return empty('none');
+
+    const roots = [
+      integrationWorktreePath(s.runDirectory, entry.runId),
+      s.runDirectory,
+    ] as const;
+    for (const root of roots) {
+      const a = readInside(root, paths.a);
+      const b = readInside(root, paths.b);
+      if (a === null && b === null) continue;
+      return {
+        epoch: wanted,
+        sessionId: s.sessionId,
+        paths,
+        exists: { a: a !== null, b: b !== null },
+        source: root === roots[0] ? 'integration' : 'worktree',
+        transcript: buildDebateTranscript({ a, b }),
+      };
+    }
+    return empty('none');
   }
 
   /**
@@ -947,5 +1132,23 @@ export class WebDevManager {
         break;
     }
     this.emit();
+  }
+}
+
+/**
+ * Read a repo-relative path under `root`, or `null`.
+ *
+ * The relative half is written by huu's own compiler, never by a request — the
+ * containment check is belt and braces so a future caller cannot turn this into
+ * an arbitrary-file reader by handing it a `../`.
+ */
+function readInside(root: string, rel: string): string | null {
+  try {
+    const abs = resolvePath(root, rel);
+    if (abs !== root && !abs.startsWith(root.endsWith(sep) ? root : root + sep)) return null;
+    const text = readFileSync(abs, 'utf8');
+    return text.trim() === '' ? null : text;
+  } catch {
+    return null;
   }
 }

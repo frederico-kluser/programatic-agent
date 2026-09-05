@@ -35,6 +35,38 @@ describe('decideInterfaceMode', () => {
   });
 });
 
+// PRECEDENCE: flag > env > saved config > default. The saved config is the
+// standing preference `huu setup` writes; a flag or env var is a statement
+// about ONE invocation, and a standing preference never overrules something
+// the user just typed. These four tests are the whole rule.
+describe('decideInterfaceMode — the saved setup choice', () => {
+  const savedCli = { interface: 'cli' as const };
+  const savedWeb = { interface: 'web' as const };
+
+  it('honours the saved `cli` choice with no flag and no env', () => {
+    expect(decideInterfaceMode([], {}, savedCli)).toBe('cli');
+    expect(isWebMode([], {}, savedCli)).toBe(false);
+  });
+
+  it('an explicit --web BEATS a saved `cli`', () => {
+    expect(decideInterfaceMode(['--web'], {}, savedCli)).toBe('web');
+  });
+
+  it('an explicit --cli BEATS a saved `web`', () => {
+    expect(decideInterfaceMode(['--cli'], {}, savedWeb)).toBe('cli');
+    expect(decideInterfaceMode(['--tui'], {}, savedWeb)).toBe('cli');
+  });
+
+  it('HUU_CLI=1 BEATS a saved `web` (env outranks the standing preference)', () => {
+    expect(decideInterfaceMode([], { HUU_CLI: '1' }, savedWeb)).toBe('cli');
+  });
+
+  it('omitting the config changes nothing for existing call sites', () => {
+    expect(decideInterfaceMode([], {})).toBe('web');
+    expect(decideInterfaceMode([], {}, savedWeb)).toBe('web');
+  });
+});
+
 describe('resolveWebPort', () => {
   it('falls back to the default port', () => {
     expect(resolveWebPort([], {})).toBe(DEFAULT_WEB_PORT);

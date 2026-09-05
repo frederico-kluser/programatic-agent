@@ -4,10 +4,13 @@
 
 huu's headless mode (`huu auto`) turns any pipeline into a CI job: no TTY, no
 keyboard, NDJSON progress on stderr, one final JSON object on stdout, exit
-code `0`/`1`. huu is **docker-only** — the CLI re-execs itself into the huu
-image — so the runner needs **Node.js ≥ 20, git and Docker available**.
-Native CI execution (`--no-docker` / `HUU_NO_DOCKER=1`) was **removed**: the
-flags are ignored with a one-line notice and huu runs in the container anyway.
+code `0`/`1`. huu is **docker by default** — the CLI re-execs itself into the
+huu image — so the runner needs **Node.js ≥ 20, git and Docker available**.
+`--no-docker` / `HUU_NO_DOCKER=1` **work** on a runner without Docker too: huu
+runs the whole process natively instead, at the cost of the container's
+credential isolation and its kernel memory ceiling. The first-run setup gate
+never blocks a job with no TTY — it proceeds with the defaults and warns in
+one line; `HUU_SKIP_SETUP=1` silences that notice.
 
 The report-only audit pipelines (Security, Quality, Docs, Performance,
 Refactor) are the natural fit: they write their findings to `.huu/audits/`
@@ -37,14 +40,15 @@ runner (with Docker available)
             └─ exit:   0 when the run finished `done`, 1 otherwise
 ```
 
-The wrapper runs in CI exactly as it does on your laptop: it re-execs huu
-into the container, which carries a **kernel memory ceiling** (`--memory` =
-host total − OS reserve) — the one guarantee software can't undermine. The
-old native escape hatch for runners without Docker was removed; a job that
-runs huu now needs Docker (GitHub's hosted runners ship it; on GitLab use a
-docker-enabled job — see the recipe). Pin the image with `HUU_IMAGE` for
-reproducible jobs; the run's stdio passes straight through `docker run`, so
-the NDJSON/stdout/exit-code contract is unchanged.
+The wrapper runs in CI exactly as it does on your laptop: by default it
+re-execs huu into the container, which carries a **kernel memory ceiling**
+(`--memory` = host total − OS reserve). A job that wants that guarantee needs
+Docker (GitHub's hosted runners ship it; on GitLab use a docker-enabled
+job — see the recipe); a runner without Docker can still run huu with
+`--no-docker` / `HUU_NO_DOCKER=1`, trading the ceiling away instead of
+failing outright. Pin the image with `HUU_IMAGE` for reproducible jobs; the
+run's stdio passes straight through `docker run`, so the NDJSON/stdout/exit-code
+contract is unchanged either way.
 
 ## Prerequisites
 
@@ -225,12 +229,16 @@ Pin it only when you need determinism over throughput:
 
 ## FAQ
 
-**What happened to `--no-docker` / `HUU_NO_DOCKER` / `--yolo`?**
-**Removed.** huu is docker-only: the flags are detected, a one-line notice
-is printed, and huu re-execs into the container anyway. The container's
-kernel memory ceiling (`--memory`) is the one guarantee software can't
-undermine, so native pipeline execution — in CI or anywhere else — no longer
-exists. A runner without Docker can't run huu; use a docker-enabled job.
+**What happens with `--no-docker` / `HUU_NO_DOCKER` / `--yolo`?**
+**They work.** huu is docker BY DEFAULT, not docker-only: the flags are
+honored and huu runs the whole process natively instead of re-execing into
+the container — no container isolation, no kernel `--memory` ceiling, and huu
+prints a one-line warning on every such start. `--docker` is the mirror,
+forcing the container even over a saved `native` runtime. On Linux a native
+run still gets a kernel ceiling from the systemd self-wrap (see
+[`docs/operations.md#kernel-memory-ceilings`](operations.md#kernel-memory-ceilings)); off Linux it's software-only. So a runner
+without Docker CAN run huu — with `--no-docker` — it just trades the
+container's guarantees away instead of failing outright.
 
 **Do I need `huu init-docker`?** No. That scaffolds Docker assets for local
 use; CI uses none of them.

@@ -19,14 +19,77 @@ export const cliPtBR = {
   'cli.usage_run': 'Uso: huu run <pipeline.json>',
   'cli.warn_tag': 'aviso',
   'cli.fatal': 'fatal',
-  'cli.warn_native_removed':
-    'huu: o modo nativo (sem docker) foi REMOVIDO — o huu agora é docker-only.\n     --yolo/--no-docker/HUU_NO_DOCKER são ignorados; rodando dentro do container com o teto de memória do kernel.',
   'cli.warn_dev_native':
-    'huu: HUU_DEV_NATIVE=1 — rodando no HOST, fora do container (loop de quem desenvolve o huu).\n     O isolamento do Docker está DESLIGADO: os agentes alcançam as credenciais do seu shell (~/.ssh, ~/.aws, …) e não há teto de memória de container.\n     Use `npm run dev:docker` para ensaiar o que o usuário realmente recebe.',
+    'huu: HUU_DEV_NATIVE=1 — rodando no HOST, fora do container (loop de quem desenvolve o huu).\n     O isolamento do Docker está DESLIGADO: os agentes alcançam as credenciais do seu shell (~/.ssh, ~/.aws, …), e o teto de memória DO CONTAINER (docker --memory) foi embora junto.\n     O teto do kernel é outra coisa: no Linux o huu se embrulha num escopo do systemd que fornece um — a linha com MemoryMax acima diz isso quando deu certo.\n     Use `npm run dev:docker` para ensaiar o que o usuário realmente recebe.',
   'cli.warn_no_cgroup':
     'huu: escopo de usuário do systemd indisponível — rodando sem teto de memória no kernel (a guarda de software continua valendo).',
   'cli.warn_yolo':
-    'huu: --yolo: pulando o Docker. O agente tem acesso às credenciais do seu shell (~/.ssh, ~/.aws, etc.).',
+    'huu: rodando no HOST, fora do container (--yolo / --no-docker / HUU_NO_DOCKER, ou o runtime que você salvou no `huu setup`).\n     O isolamento do Docker está DESLIGADO: os agentes alcançam as credenciais do seu shell (~/.ssh, ~/.aws, …), e o teto de memória DO CONTAINER (docker --memory) foi embora junto.\n     O teto do kernel é outra coisa: no Linux o huu se embrulha num escopo do systemd que fornece um — a linha com MemoryMax acima diz isso quando deu certo.\n     Rode `huu setup` para voltar ao Docker, ou tire a flag nesta execução.',
+
+  // ── configuração de primeira execução (`huu setup` e o portão do npm start) ──
+  'cli.setup_title': '\nhuu — configuração inicial',
+  'cli.setup_intro':
+    'Respondida uma vez e lembrada depois. Enter aceita o padrão entre [colchetes]; `huu setup` reabre tudo isso mais tarde.',
+  'cli.setup_opt_interface_web': '  1) web  — painel no seu navegador (padrão do huu)',
+  'cli.setup_opt_interface_cli': '  2) cli  — interface de terminal (TUI Ink) nesta janela',
+  'cli.setup_q_interface': 'Qual interface? [{default}] ',
+  'cli.setup_opt_runtime_docker':
+    '  1) docker — roda dentro do container do huu: os agentes ficam isolados das credenciais do seu shell e o kernel limita a memória deles (recomendado)',
+  'cli.setup_opt_runtime_native': '  2) native — roda direto nesta máquina',
+  'cli.setup_q_runtime': 'Onde o huu deve rodar? [{default}] ',
+  'cli.setup_native_cost':
+    '\n  Rodar nativo custa duas coisas que o huu garante de outro jeito:\n    · isolamento — os agentes alcançam as credenciais do seu shell (~/.ssh, ~/.aws, …)\n    · o teto de memória do container — no Linux um escopo do systemd ainda limita o huu no kernel; em qualquer outro lugar sobra só a guarda de software do próprio huu\n',
+  'cli.setup_native_confirm': 'Rodar sem o container mesmo assim? [s/N] ',
+  'cli.setup_native_declined': '  mantendo o docker.',
+  'cli.setup_keys_header':
+    '\nChaves de API. Enter pula; uma chave que já está no seu ambiente ou na configuração não é pedida de novo.',
+  'cli.setup_key_present': '  {label}: já definida via {source} ({masked}) — Enter mantém.',
+  'cli.setup_key_required_hint': '  {label} — necessária para o huu operar.',
+  'cli.setup_key_optional_hint': '  {label} — opcional; Enter pula de vez.',
+  'cli.setup_key_hint': '  ({hint})',
+  'cli.setup_key_prompt': '  chave do {label}: ',
+  'cli.setup_key_kept': '  {label}: mantida.',
+  'cli.setup_key_saved': '  {label}: salva ({masked}).',
+  'cli.setup_key_save_failed':
+    '  {label}: aceita, mas NÃO SALVA — o huu não conseguiu escrever o arquivo de configuração, então esta chave se perde quando este processo terminar.\n     Exporte {envVar} no seu shell para usá-la agora, e confira de quem é o diretório de configuração do huu (uma execução com `sudo` deixa ele com dono root).',
+  'cli.setup_key_unverifiable':
+    '  {label}: não deu para verificar ({reason}) — isso não prova que a chave é ruim, então o huu vai mantê-la.',
+  'cli.setup_key_invalid': '  {label}: recusada pelo provedor (HTTP {status}). Tente outra chave.',
+  'cli.setup_key_wrong':
+    '  {label}: isso parece uma chave do {belongsTo}. Cole a do {label}.',
+  'cli.setup_key_skipped_required':
+    '  {label}: pulada — o huu pergunta de novo na próxima vez, ou defina em Opções.',
+  'cli.setup_key_skipped_optional': '  {label}: pulada. `huu setup` oferece de novo.',
+  'cli.setup_key_attempts': '  {label}: nenhuma chave aceita em 3 tentativas — seguindo em frente.',
+  'cli.setup_invalid_choice': '  "{value}" não é uma das opções.',
+  'cli.setup_aborted':
+    '\nhuu: configuração interrompida — nada foi alterado. Rode `huu setup` quando quiser terminar.',
+  'cli.setup_using_default': '  usando o padrão: {value}.',
+  'cli.setup_save_failed':
+    'huu: não foi possível gravar as escolhas em disco — você será perguntado de novo na próxima execução.',
+  'cli.setup_done': '\nhuu configurado: interface={ui}, runtime={runtime}.',
+  'cli.setup_reopen_hint': 'Mude qualquer coisa depois com `huu setup`.\n',
+  'cli.setup_no_tty':
+    'huu: sem terminal para perguntar (stdin não é um TTY) — iniciando com interface={ui}, runtime={runtime}.\n     Nada foi salvo; rode `huu setup` num terminal para escolher, ou defina HUU_SKIP_SETUP=1 para silenciar este aviso.',
+  'cli.setup_src_env': 'uma variável de ambiente',
+  'cli.setup_src_env_file': 'uma variável de ambiente _FILE',
+  'cli.setup_src_stored': 'a chave que você salvou',
+  'cli.setup_src_mount': 'um segredo montado',
+  'cli.setup_src_none': 'lugar nenhum',
+
+  // ── npm start: o orquestrador de host em volta do build da imagem ──────
+  'cli.start_skip_build_native':
+    'huu: runtime é nativo — pulando o build da imagem do container.',
+  'cli.start_docker_missing':
+    '\nhuu: o docker não está instalado, então o container onde o huu normalmente roda não está disponível.\n     Instale em https://docs.docker.com/engine/install/ — ou siga em frente rodando no host.',
+  'cli.start_image_failed':
+    '\nhuu: não foi possível construir a imagem huu:local (Docker ausente, parado, ou o build falhou).\n     O motivo completo está acima.',
+  'cli.start_offer_native':
+    'Iniciar o huu SEM o container mesmo assim? Os agentes alcançariam as credenciais do seu shell (~/.ssh, ~/.aws, …) e perderiam o teto de memória do container. [s/N] ',
+  'cli.start_native_accepted':
+    'huu: iniciando nativo só nesta execução. `huu setup` transforma isso na escolha salva.',
+  'cli.start_docker_required':
+    'huu: nada foi iniciado. Conserte o Docker (ou rode `huu setup` e escolha o runtime nativo) e tente de novo.',
   'cli.warn_config_corrupt_saved':
     'huu: {path} não pôde ser lido como JSON e foi SUBSTITUÍDO.\n     Suas chaves de API estavam nesse arquivo — os bytes originais foram guardados em {backup} (modo 0600).\n     Abra o arquivo num editor para copiar a chave de volta para o huu; apague-o depois.',
   'cli.warn_config_corrupt_lost':
@@ -67,6 +130,8 @@ Uso:
   huu init-docker [...]     Gera o compose.huu.yaml no repositório atual
   huu status [...]          Inspeciona a última execução via .huu/debug-*.log
   huu prune [...]           Lista/mata containers huu órfãos + cidfiles obsoletos
+  huu setup                 Reabre a configuração inicial: interface, runtime e
+                            chaves de API. Roda nativo; nada mais é iniciado.
   huu --dir=<caminho>       Roda neste diretório em vez do atual (padrão: cwd)
   huu --provider=<nome>     Provedor de LLM — o endpoint chamado e a chave gasta:
                             deepseek (padrão, apelido ds), openrouter (apelido or)
@@ -75,6 +140,7 @@ Uso:
   huu --stub                Atalho para --backend=stub (sem LLM de verdade)
   huu --yolo                Pula o Docker, roda nativo no host (o agente vê as credenciais do seu shell)
   huu --no-docker           Atalho para --yolo / HUU_NO_DOCKER=1 — grafia neutra para runners de CI
+  huu --docker              Força o container nesta execução, mesmo com runtime nativo salvo
   huu --cli                 Usa a UI de terminal em vez da UI web padrão
   huu --web                 Força a UI web (sobrepõe HUU_CLI=1)
   huu --port=<n>            Porta da UI web (padrão 4888; ou HUU_WEB_PORT)

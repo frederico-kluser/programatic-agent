@@ -51,7 +51,7 @@
   "scripts": {
     "dev": "HUU_DEV_NATIVE=1 tsx --watch src/cli.tsx",
     "dev:docker": "./scripts/ensure-image.sh && HUU_IMAGE=\"${HUU_IMAGE:-huu:local}\" tsx --watch src/cli.tsx",
-    "start": "./scripts/ensure-image.sh && HUU_IMAGE=\"${HUU_IMAGE:-huu:local}\" tsx src/cli.tsx",
+    "start": "tsx scripts/start.ts",
     "build": "tsc && chmod +x dist/cli.js && mkdir -p dist/web/client && cp -R src/web/client/. dist/web/client/ && mkdir -p dist/assets && cp docs/knowledge-skills-architect-prompt.md dist/assets/",
     "build:link": "npm run build && npm link && tsx scripts/link-pipelines.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",

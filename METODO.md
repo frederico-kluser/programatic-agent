@@ -23,7 +23,7 @@
 - ⚠️ **específico** — vale para *este* repo/máquina/data, não transfere.
 
 Data de escrita: **2026-09-05**. Todo número 📏 abaixo foi medido nesta data, no
-commit `f4d2246`, e é reverificado a cada push por `scripts/check-metodo.ts`
+commit `8561e63`, e é reverificado a cada push por `scripts/check-metodo.ts`
 dentro do gate. (O cabeçalho aponta para o commit em que a medição foi feita, não
 para o commit que a introduz — um arquivo não pode conter o próprio hash, e por
 isso o verificador trata a divergência como **aviso**, nunca como erro.)
@@ -163,24 +163,24 @@ antes de qualquer outra e obriga a re-medição junto com as três de que deriva
 |---|---|
 | Idade ⚠ histórico | **363 commits**, de 2026-05-20 a 2026-08-02 (~74 dias) — medido antes do `v1.0.0 — clean start`; `git log` já não o alcança |
 | Autores ⚠ histórico | 284 `fredericokluser` · 22 `Claude` · 19+2 nome completo · 15 `t` · 1 externo — idem |
-| Total versionado | **218.726 linhas** (`git ls-files \| xargs wc -l`) |
-| `src/` | **439 arquivos, 150.919 linhas** (inclui client JS/CSS/HTML) |
-| `src/` TS+TSX **não-teste** | **73.699 linhas** |
-| Testes | **149 arquivos, 53.260 linhas** → razão teste:código **0,72 : 1** |
-| `docs/` | 36 arquivos, **14.554 linhas** (9 pares en/pt-BR) |
+| Total versionado | **223.961 linhas** (`git ls-files \| xargs wc -l`) |
+| `src/` | **450 arquivos, 156.180 linhas** (inclui client JS/CSS/HTML) |
+| `src/` TS+TSX **não-teste** | **76.182 linhas** |
+| Testes | **155 arquivos, 56.038 linhas** → razão teste:código **0,74 : 1** |
+| `docs/` | 37 arquivos, **14.858 linhas** (9 pares en/pt-BR) |
 | Skills | **22** `SKILL.md` + **22** `LEARNINGS.md` + `catalog.md` |
-| `AGENTS.md` | **152 linhas, 7.031 chars ≈ 1,8k tokens** — carregados em **toda** sessão |
+| `AGENTS.md` | **190 linhas, 9.335 chars ≈ 2,4k tokens** — carregados em **toda** sessão |
 | Pipelines default | 7 pipelines, 14 módulos, **4.321 linhas** |
-| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **10 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
+| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **11 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
 | Dogfooding ⚠ histórico | **17 merges de onda** do próprio huu (`merge(w4…w6-…): wave N front`), todos em **2026-07-28** (45 commits nesse dia) — anterior ao `clean start` |
 | Higiene de branch | **0** branches `huu/**` órfãos |
 | Marcadores | `TODO`/`FIXME`/`XXX` concentrados em `requeue.test.ts` (8), `dev-graph/node-catalog.ts` (6), `orchestrator/index.ts` (5), `card-focus.test.ts` (5), `types/orchestrator.ts` (4) |
 
-**A razão teste:código de 0,72 : 1 é o número mais informativo da tabela**, e
+**A razão teste:código de 0,74 : 1 é o número mais informativo da tabela**, e
 precisa de contexto para não ser lida como elogio nem como acusação. O playbook de
 origem chegou a 1,3 : 1 porque o oráculo dele era um sistema que ninguém podia
 executar — quase tudo que se escrevia era instrumento de medida. Aqui o oráculo é
-o próprio código, executável, e 0,72 : 1 com 149 arquivos de teste colocados ao
+o próprio código, executável, e 0,74 : 1 com 155 arquivos de teste colocados ao
 lado do módulo é uma cobertura respeitável **em quantidade**. A pergunta que o §7
 faz não é "tem teste suficiente?" e sim **"se isto desaparecer, o que fica
 vermelho?"** — e é aí que aparecem os buracos.

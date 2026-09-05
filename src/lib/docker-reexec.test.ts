@@ -18,6 +18,8 @@ import {
   dockerMemoryLimitBytes,
 } from './docker-reexec.js';
 import { JCODE_CONTAINER_DIR } from './jcode-bundle.js';
+import { resolveSetupChoices, SETUP_GATE_ENV, setupGateEnv } from './setup-flow.js';
+import { defaultSetupConfig } from './setup-config.js';
 import { resolveHermeticEnabled } from '../orchestrator/backends/jcode/hermetic.js';
 
 describe('decideReexec', () => {
@@ -93,6 +95,27 @@ describe('decideReexec', () => {
     expect(r.reason).toMatch(/native run/);
   });
 
+  it('every spelling hasNativeBypass accepts is a native run, marked as chosen', () => {
+    // The predicate and the decision used to be two copies of the same
+    // condition; the decision now CALLS it, and this pins the pair so a new
+    // spelling can never be honoured by one and ignored by the other.
+    const cases: Array<[string[], NodeJS.ProcessEnv]> = [
+      [['--yolo'], env()],
+      [['--no-docker'], env()],
+      [[], env({ HUU_NO_DOCKER: '1' })],
+      [[], env({ HUU_NO_DOCKER: 'true' })],
+      // …including where the bypass has to beat something below it.
+      [['--docker', '--no-docker'], env()],
+      [['run', 'p.json'], env({ HUU_NO_DOCKER: '1' })],
+    ];
+    for (const [args, e] of cases) {
+      expect(hasNativeBypass(args, e), JSON.stringify([args, e])).toBe(true);
+      const d = decideReexec(args, e);
+      expect(d.shouldReexec, JSON.stringify([args, e])).toBe(false);
+      expect(d.nativeByChoice, JSON.stringify([args, e])).toBe(true);
+    }
+  });
+
   it('hasNativeBypass detects the bypass flags/env', () => {
     expect(hasNativeBypass(['--yolo'], env())).toBe(true);
     expect(hasNativeBypass(['--no-docker'], env())).toBe(true);
@@ -125,6 +148,65 @@ describe('decideReexec', () => {
     // The dev var is one door; --yolo/--no-docker/HUU_NO_DOCKER are their own
     // (asserted above) and carry no implicit relationship to it.
     expect(hasNativeBypass([], env({ HUU_DEV_NATIVE: '1' }))).toBe(false);
+  });
+
+  // PRECEDENCE: flag > env > saved config > default. `huu setup` writes the
+  // saved runtime; a flag or env var is a statement about ONE invocation and
+  // therefore outranks it. `--docker` is the mirror of `--no-docker` and exists
+  // exactly so a saved `native` can be overridden without editing the config.
+  describe('the saved setup runtime', () => {
+    const savedNative = { runtime: 'native' as const };
+    const savedDocker = { runtime: 'docker' as const };
+
+    it('runs native when the user saved the native runtime', () => {
+      const r = decideReexec(['run', 'x.json'], env(), savedNative);
+      expect(r.shouldReexec).toBe(false);
+      expect(r.reason).toMatch(/saved setup runtime/);
+      expect(r.nativeByChoice).toBe(true);
+    });
+
+    it('--docker BEATS a saved native runtime', () => {
+      const r = decideReexec(['--docker', 'run', 'x.json'], env(), savedNative);
+      expect(r.shouldReexec).toBe(true);
+      expect(r.reason).toMatch(/--docker/);
+    });
+
+    it('--no-docker BEATS a saved docker runtime', () => {
+      const r = decideReexec(['--no-docker'], env(), savedDocker);
+      expect(r.shouldReexec).toBe(false);
+      expect(r.nativeByChoice).toBe(true);
+    });
+
+    it('HUU_NO_DOCKER BEATS a saved docker runtime', () => {
+      expect(
+        decideReexec([], env({ HUU_NO_DOCKER: '1' }), savedDocker).shouldReexec,
+      ).toBe(false);
+    });
+
+    it('the container guard still wins over everything', () => {
+      const r = decideReexec([], env({ HUU_IN_CONTAINER: '1' }), savedNative);
+      expect(r.shouldReexec).toBe(false);
+      expect(r.reason).toMatch(/already inside/);
+      // Not a user "choice" — no no-isolation banner belongs on this path.
+      expect(r.nativeByChoice).toBeUndefined();
+    });
+
+    it('--help and the native subcommands are unaffected by a saved runtime', () => {
+      expect(decideReexec(['--help'], env(), savedNative).nativeByChoice).toBeUndefined();
+      expect(decideReexec(['status'], env(), savedNative).shouldReexec).toBe(false);
+      expect(decideReexec(['status'], env(), savedNative).nativeByChoice).toBeUndefined();
+    });
+
+    it('omitting the config keeps the old two-argument behaviour', () => {
+      expect(decideReexec(['run', 'x.json'], env()).shouldReexec).toBe(true);
+      expect(decideReexec(['run', 'x.json'], env(), savedDocker).shouldReexec).toBe(true);
+    });
+
+    it('`setup` runs natively — it is the flow that ASKS about docker', () => {
+      const r = decideReexec(['setup'], env());
+      expect(r.shouldReexec).toBe(false);
+      expect(r.reason).toMatch(/setup runs native/);
+    });
   });
 
   it('stripRemovedNativeFlags is an identity no-op (bypasses honored, nothing to strip)', () => {
@@ -1011,5 +1093,64 @@ describe('buildDockerArgv forwards the hermetic-jcode escape hatch', () => {
     } finally {
       if (saved !== undefined) process.env[HATCH] = saved;
     }
+  });
+});
+
+// The third process in the chain. The wrapper hands the child the choices its
+// gate resolved (see start-runner); the child re-execs into the container,
+// which decides the front-end all over again from the bind-mounted
+// `config.json`. When the save that produced those choices FAILED, that file
+// does not hold them — so without this passthrough the container would serve
+// the web UI to a user who asked for the TUI, on a port the host wrapper (which
+// obeyed the answer) decided not to publish.
+describe('buildDockerArgv forwards the resolved setup choices', () => {
+  const baseOpts = {
+    cwd: '/w',
+    image: 'huu:test',
+    cidfile: '/tmp/cid',
+    args: [] as string[],
+    hasTTY: false,
+    uid: 1000,
+    gid: 1000,
+  };
+
+  function withEnv(vars: Record<string, string>, fn: () => void): void {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('carries both axes of the gate channel into the container env', () => {
+    withEnv(setupGateEnv({ interface: 'cli', runtime: 'docker' }), () => {
+      const argv = buildDockerArgv(baseOpts);
+      for (const key of [SETUP_GATE_ENV.interface, SETUP_GATE_ENV.runtime]) {
+        const i = argv.findIndex((a, idx) => a === '-e' && argv[idx + 1] === key);
+        expect(i, `expected -e ${key}`).toBeGreaterThanOrEqual(0);
+      }
+      // Values never ride in argv — the valueless `-e KEY` form is the rule.
+      expect(argv).not.toContain(`${SETUP_GATE_ENV.interface}=cli`);
+    });
+  });
+
+  it('and the in-container decision then matches the host one', () => {
+    // `decideReexec` is a no-op inside the container, so the axis that still
+    // has to agree is the interface — proven here through the same resolver
+    // cli.tsx runs on both sides of the re-exec.
+    const handed = setupGateEnv({ interface: 'cli', runtime: 'docker' });
+    const inContainer = resolveSetupChoices(defaultSetupConfig(), {
+      ...handed,
+      HUU_IN_CONTAINER: '1',
+    });
+    expect(inContainer.interface).toBe('cli');
   });
 });

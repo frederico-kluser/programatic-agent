@@ -71,21 +71,28 @@ huu run pipelines/huu-test-suite.pipeline.json     # usa ghcr.io/frederico-kluse
 > mounts que cruzam a fronteira Windows/WSL são 10–20× mais lentos pro
 > I/O de muitos arquivos pequenos que o `git worktree add` faz.
 
-### Sem modo nativo (docker-only)
+### Docker por padrão, nativo como opt-in
 
 ```bash
 npm install -g huu-pipe        # Node 20+, um `git` funcional e Docker
 huu                            # re-executa sozinho no container
 ```
 
-O huu é **docker-only**: todo run executa no container, que carrega o
-teto de memória do kernel; não existe modo nativo. Os antigos bypasses
-(`--yolo`, `--no-docker`, `HUU_NO_DOCKER=1`) foram **removidos** — o
-huu imprime um aviso de uma linha, ignora e re-executa no Docker mesmo
-assim. Só `--help` e os utilitários de host (`init-docker`, `status`,
-`prune`) rodam fora do container. O CI precisa de um runner
-docker-enabled — veja [`docs/ci.pt-BR.md`](ci.pt-BR.md) pras receitas
-de GitHub Actions / GitLab.
+O huu roda no container **por padrão**, que carrega o teto de memória
+do kernel e isola as credenciais do seu shell do agente. `--yolo` /
+`--no-docker` / `HUU_NO_DOCKER=1` pulam o container de propósito — pra
+alvos que já rodam seu próprio Docker, onde aninhar containers é o
+problema — e custam exatamente essas duas garantias; o huu avisa em uma
+linha em toda execução assim. `--docker` é o espelho: força o container
+nessa execução mesmo com um runtime `native` salvo. No primeiro `npm
+start`, `huu setup` pergunta qual runtime (e qual interface) você quer
+e salva em `~/.config/huu/config.json` — reabra a pergunta a qualquer
+hora com `huu setup`. Precedência: **flag > env > config salva >
+default**. Só `--help` e os utilitários de host (`init-docker`,
+`status`, `prune`) rodam fora do container independente do runtime. O
+CI precisa de um runner docker-enabled pra usar o padrão — veja
+[`docs/ci.pt-BR.md`](ci.pt-BR.md) pras receitas de GitHub Actions /
+GitLab.
 
 Mais sobre modos de execução Docker (compose, isolated-volume, secrets,
 VPN/MTU): [`docs/operations.pt-BR.md#docker`](operations.pt-BR.md#docker).
@@ -433,10 +440,11 @@ env var é o fallback); uma key salva pela TUI tem precedência.
 - **Exit code** — `0` se `manifest.status === 'done'`, `1` caso
   contrário.
 
-Igual ao `huu run …`, `huu auto …` re-exec na imagem do Docker —
-auto-MTU de rede vale, shim de isolamento de portas vale, mount de
-secrets vale. (O huu é docker-only; o antigo bypass `--yolo` foi
-removido e é ignorado com um aviso.)
+Igual ao `huu run …`, `huu auto …` re-exec na imagem do Docker por
+padrão — auto-MTU de rede vale, shim de isolamento de portas vale,
+mount de secrets vale. (`--yolo` / `--no-docker` ainda pulam o
+container quando é isso que você quer, ao custo desse isolamento e do
+teto de memória.)
 
 ---
 

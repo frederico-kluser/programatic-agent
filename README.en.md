@@ -171,14 +171,21 @@ npm install -g huu-pipe        # Node 20+, `git`, and Docker
 huu                            # re-execs itself into the container
 ```
 
-huu is **docker-only**: every run executes in the container, which
-carries the kernel memory ceiling (`--memory`); there is no native
-mode. The old `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` bypasses
-were **removed** — if present, huu prints a one-line notice, ignores
-them and re-execs into Docker anyway. Only `--help` and the host
-utilities (`init-docker`, `status`, `prune`) run outside the container.
-Full install matrix (macOS / Windows / Linux, OrbStack notes, WSL2
-caveats): [`docs/onboarding.md#install`](docs/onboarding.md#install).
+huu is **docker by default**: every run executes in the container,
+which carries the kernel memory ceiling (`--memory`) and isolates your
+shell credentials. `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` **work**
+and skip the container on purpose — for targets that already run their
+own Docker, where nesting containers is the problem — but they cost
+the two things the container was giving you (credential isolation and
+the memory ceiling), and huu warns on every such start; `--docker` is
+the mirror, forcing the container even over a saved `native` runtime.
+On the first `npm start`, `huu setup` asks for the front-end and the
+runtime and saves the choice to `~/.config/huu/config.json` — reopen it
+any time with `huu setup`. Precedence: **flag > env > saved config >
+default**. Only `--help` and the host utilities (`init-docker`,
+`status`, `prune`) run outside the container. Full install matrix
+(macOS / Windows / Linux, OrbStack notes, WSL2 caveats):
+[`docs/onboarding.md#install`](docs/onboarding.md#install).
 
 The UI (web by default, or the TUI with `--cli`) opens on a dashboard:
 start from `huu Test Suite` (the default pipeline, already materialized)
@@ -194,10 +201,11 @@ as the TUI; only the face changes. The **`--cli`** flag brings the
 terminal TUI back.
 
 - **Default, no friction.** `huu` → web. `huu --cli` → terminal. The
-  front-end (web/CLI) is orthogonal to the runtime — which is **always
-  the container** (huu is docker-only).
-- **Always in Docker.** The server runs inside the container and the
-  port is published to the host (`-p`) automatically.
+  front-end (web/CLI) is orthogonal to the runtime — which is **the
+  container by default** (`huu setup` can also save `native`, and
+  `--docker` / `--no-docker` decide it for one run).
+- **In Docker by default.** The server runs inside the container and
+  the port is published to the host (`-p`) automatically.
 - **On your network.** Binds `0.0.0.0` by default — reach it from your
   phone or another machine at `http://<your-machine-ip>:4888`. Real-time
   over Server-Sent Events (auto-reconnecting), zero new dependencies
@@ -978,11 +986,15 @@ Build pipes on top: `huu auto … | jq .runId`. Full doc:
 
 ## Running in CI (GitHub Actions / GitLab)
 
-huu is **docker-only** in CI too: native execution was removed
-(`--no-docker` / `HUU_NO_DOCKER` are ignored with a notice and huu
-re-execs into the container anyway). The job needs a runner with
-**Docker available** (GitHub's hosted runners already have it) — run
-huu normally in headless mode and pin the image with `HUU_IMAGE` for
+huu is **docker by default** in CI too: with no flag, no env and no
+saved `native` runtime, every run executes in the container.
+`--no-docker` / `HUU_NO_DOCKER=1` work the same on a CI runner and run
+native — you just lose the container's memory ceiling doing it, not a
+huu limitation. The first-run gate never blocks a job with no TTY (it
+proceeds with the defaults and warns in one line); `HUU_SKIP_SETUP=1`
+silences that notice. The job needs a runner with **Docker available**
+(GitHub's hosted runners already have it) — run huu normally in
+headless mode and pin the image with `HUU_IMAGE` for
 reproducible builds:
 
 ```yaml

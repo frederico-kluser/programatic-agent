@@ -5,11 +5,15 @@
 // bare invocation without it must keep the same refusal. Per-role routing is
 // additive on top of that or it is a breaking change wearing a feature's hat.
 //
-// The third pin protects the factory default from its own preflight: the
-// `hetero` preset routes `planner` to `z-ai/glm-5.2`, which the pi registry
-// deliberately does NOT carry (the blind orchestrator is a structured-output
-// call, not a pi agent). A preflight that checked `planner` would refuse to
-// start huu in its default configuration.
+// A THIRD pin used to guard the factory default against its own preflight: the
+// `hetero` preset routes `planner` to `z-ai/glm-5.2`, an id the agent backend
+// deliberately never carried (the blind orchestrator is a structured-output
+// call, not an agent). v3.0 removed the pi backend and, with it,
+// `model-registry-check.ts` — the only catalog a preflight could consult — so
+// NOTHING validates a model id at parse time any more. The block below
+// CHARACTERIZES that: ids are taken at face value and an id nothing serves is
+// only discovered inside the first agent. Restoring the preflight must replace
+// those tests, not slip past them.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -203,18 +207,25 @@ describe('parseDevCliArgs — model routing', () => {
   });
 });
 
-describe('parseDevCliArgs — pi registry preflight', () => {
-  it('refuses an agent role whose id the pi registry does not know', () => {
-    const message = parseFail(['g', '--model=deepseek/deepseek-v4-pro', `--${DEV_MODEL_ROLE_FLAGS.worker}=z-ai/glm-5.2`]);
-    expect(message).toContain('worker');
-    expect(message).toContain('z-ai/glm-5.2');
-    // Actionable: it names the ids the registry does have nearby.
-    expect(message).toContain('z-ai/glm-5.1');
+describe('parseDevCliArgs — model ids are taken at face value (no preflight)', () => {
+  // CHARACTERIZATION of a LOST PROTECTION, not a blessing. This exact
+  // invocation was REFUSED until v3.0: the parser checked every pi-executed
+  // role against `model-registry-check.ts` and named the near-miss ids
+  // (`z-ai/glm-5.1`) in the refusal. That module was deleted with the pi
+  // backend — `dev-cli.ts` says so where the check used to run — so an id no
+  // provider serves is now discovered only when the first agent is built,
+  // after its worktree and branch already exist. Restoring a preflight must
+  // REPLACE this test.
+  it('accepts a role id no catalog vouches for — nothing validates it here', () => {
+    const opts = parseOk(['g', '--model=deepseek/deepseek-v4-pro', `--${DEV_MODEL_ROLE_FLAGS.worker}=z-ai/glm-5.2`]);
+    expect(opts.models?.worker).toBe('z-ai/glm-5.2');
   });
 
-  it('does NOT check the planner — the pin that keeps the default preset startable', () => {
-    // `z-ai/glm-5.2` is absent from the pi registry ON PURPOSE: the blind
-    // orchestrator runs through LangChain → OpenRouter, never through pi.
+  it('parses the planner id the factory default depends on', () => {
+    // `z-ai/glm-5.2` never belonged to an agent-backend catalog ON PURPOSE:
+    // the blind orchestrator is a structured-output call, not an agent. The
+    // shipped `hetero` preset routes the planner there, so the flag and the
+    // preset must both keep producing exactly that id.
     const opts = parseOk(['g', '--model=deepseek/deepseek-v4-pro', `--${DEV_MODEL_ROLE_FLAGS.planner}=z-ai/glm-5.2`]);
     expect(opts.models?.planner).toBe('z-ai/glm-5.2');
     // And the factory default carries exactly that id, so it must parse too.
@@ -222,16 +233,27 @@ describe('parseDevCliArgs — pi registry preflight', () => {
     expect(parseOk(['g', '--models=hetero']).models?.planner).toBe('z-ai/glm-5.2');
   });
 
-  it('every shipped preset survives its own preflight', () => {
-    for (const name of Object.keys(DEV_MODEL_PRESETS)) {
+  it('every shipped preset parses on the jcode backend', () => {
+    // The list is LITERAL on purpose. Driving it from `Object.keys(
+    // DEV_MODEL_PRESETS)` compared the catalogue with itself — `PRESET_NAMES`
+    // in `dev-cli.ts` IS those same keys — so a preset added, dropped or
+    // renamed could never fail here. Spelled out, the shipped set is a
+    // decision this test has to be updated to change.
+    const SHIPPED = ['hetero', 'thrifty', 'monoculture', 'uniform'] as const;
+    expect(Object.keys(DEV_MODEL_PRESETS).sort()).toEqual([...SHIPPED].sort());
+
+    for (const name of SHIPPED) {
       const parsed = parseDevCliArgs(['g', '--model=deepseek/deepseek-v4-pro', `--models=${name}`], 'jcode');
       expect(parsed.ok, `preset ${name}: ${parsed.ok ? '' : parsed.message}`).toBe(true);
     }
   });
 
-  it('does not preflight non-pi backends against the pi registry', () => {
-    const opts = parseOk(['g', `--${DEV_MODEL_ROLE_FLAGS.worker}=my-azure-deployment`, '--model=m'], 'jcode');
-    expect(opts.models?.worker).toBe('my-azure-deployment');
+  it('applies a per-role flag on ANY backend, unlike a preset', () => {
+    // A preset is dropped on a backend that cannot serve its ids (pinned
+    // above); a flag the human typed for one role is honored everywhere,
+    // because a custom deployment id in a worker slot is legitimate.
+    const opts = parseOk(['g', `--${DEV_MODEL_ROLE_FLAGS.worker}=vendor/custom-deployment`, '--model=m'], 'stub');
+    expect(opts.models?.worker).toBe('vendor/custom-deployment');
   });
 });
 

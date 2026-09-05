@@ -63,8 +63,8 @@ describe('resolveDevModels — no hidden defaulting', () => {
 });
 
 describe('defaultDevModelPolicy', () => {
-  it('is EMPTY for azure and stub — the preset ids are OpenRouter-only', () => {
-    for (const backend of ['jcode', 'stub'] as const) {
+  it('is EMPTY for stub — every preset id is served by jcode', () => {
+    for (const backend of ['stub'] as const) {
       expect(defaultDevModelPolicy(backend)).toEqual({});
       // Even when a preset is asked for explicitly.
       expect(defaultDevModelPolicy(backend, 'hetero')).toEqual({});
@@ -75,7 +75,7 @@ describe('defaultDevModelPolicy', () => {
     }
   });
 
-  it('defaults to `hetero` on pi: cross-family critic, glm planner', () => {
+  it('defaults to `hetero` on jcode: cross-family critic, glm planner', () => {
     const policy = defaultDevModelPolicy('jcode');
     expect(policy.critic).toBe('moonshotai/kimi-k2.6');
     expect(policy.planner).toBe('z-ai/glm-5.2');
@@ -97,7 +97,7 @@ describe('defaultDevModelPolicy', () => {
     expect(policy.critic).toBe('moonshotai/kimi-k2.6');
   });
 
-  it('`uniform` on pi is still empty — every role falls back', () => {
+  it('`uniform` on jcode is still empty — every role falls back', () => {
     expect(defaultDevModelPolicy('jcode', 'uniform')).toEqual({});
   });
 

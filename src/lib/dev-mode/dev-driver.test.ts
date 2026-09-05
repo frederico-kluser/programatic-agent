@@ -1067,22 +1067,26 @@ describe('runDevMode — the knowledge phase', () => {
   });
 });
 
-describe('runDevMode — the knowledge bootstrap', () => {
-  // Until now the bootstrap built its Orchestrator INLINE: no run id, no SSE
-  // frames, no abort handle, and the user's concurrency choices ignored.
-  it('routes the bootstrap through runKnowledgeBootstrap (pi agent)', async () => {
+describe('runDevMode — the knowledge bootstrap is GONE (v3.0)', () => {
+  // Phase 0 used to WRITE a skill tree into a repo that had none: a dedicated
+  // pi session (`runKnowledgeBootstrap`), announced with `bootstrap-start`,
+  // committed before epoch 1 and able to stop the run with `bootstrap-failed`.
+  // v3.0 removed the pi backend and the bootstrap with it — the driver now
+  // only WARNS. What still matters, and is pinned here, is the half that
+  // survived: a repo with no knowledge system must not stop the session, and
+  // the gap must be ANNOUNCED rather than silently tolerated.
+  it('warns and carries on instead of bootstrapping a repo with no skills', async () => {
     const calls: { epoch: number; phase: DevRunPhase }[] = [];
-    const mirrored: number[] = [];
     const events: DevEvent[] = [];
 
     const result = await runDevMode({
+      // No `skipKnowledgeBootstrap` — the defaults a real user gets.
       dev: { goal: 'g', approval: 'autonomous', maxEpochs: 1 },
       config: CONFIG,
       cwd: repo,
       sessionId: SESSION,
       agentFactory: NOOP_FACTORY,
       onEvent: (e) => events.push(e),
-      onState: (_s, epoch) => mirrored.push(epoch),
       planner: async () => planFixture(),
       orchestratorFactory: (_p, epoch, phase) => {
         calls.push({ epoch, phase });
@@ -1090,18 +1094,82 @@ describe('runDevMode — the knowledge bootstrap', () => {
       },
     });
 
-    // The bootstrap NO LONGER routes through the orchestrator factory — it
-    // uses `runKnowledgeBootstrap` (a direct pi session). Without the pi SDK
-    // available in tests, the bootstrap errors out, but dev mode still
-    // carries on with skipped knowledge.
-    //
-    // The important contract: the orchestrator factory was NOT called for
-    // phase 'bootstrap' (epoch 0).
-    const bootstrapCall = calls.find((c) => c.phase === 'bootstrap');
-    expect(bootstrapCall).toBeUndefined();
+    // No bootstrap phase through the orchestrator factory, and no bootstrap
+    // event of any kind — the `bootstrap-*` frames the surfaces still handle
+    // are unreachable from the driver.
+    expect(calls.find((c) => c.phase === 'bootstrap')).toBeUndefined();
+    expect(events.some((e) => e.type.startsWith('bootstrap-'))).toBe(false);
+    expect(result.knowledgeBootstrapped).toBe(false);
 
-    // The bootstrap-start event now carries the model, not a pipeline name.
-    expect(events).toContainEqual({ type: 'bootstrap-start', model: CONFIG.modelId });
+    // The absence is announced: silence would leave the operator believing the
+    // planner had a knowledge system behind it.
+    expect(
+      events.some(
+        (e) => e.type === 'log' && e.level === 'warn' && e.message.includes('knowledge bootstrap is not available'),
+      ),
+    ).toBe(true);
+
+    // …and the session still ran its epoch on the knowledge it could gather.
+    expect(result.knowledge.present).toBe(false);
+    expect(result.stoppedBecause).toBe('max-epochs');
+  });
+
+  // The NEGATIVE arm of the same guard. A warning is only information while it
+  // is CONDITIONAL: a driver that announces "no knowledge system found" to a
+  // repo that has one, or to a session that explicitly asked not to be
+  // bootstrapped, is teaching the operator to ignore the line. Both halves of
+  // `!knowledge.present && !dev.skipKnowledgeBootstrap` are pinned here, one
+  // per test, so neither can be dropped.
+  const bootstrapWarned = (events: DevEvent[]): boolean =>
+    events.some(
+      (e) => e.type === 'log' && e.level === 'warn' && e.message.includes('knowledge bootstrap is not available'),
+    );
+
+  it('stays QUIET on a repo that already has a knowledge system', async () => {
+    // Same shape the knowledge gate above uses: a routed skill tree, committed
+    // so the detector sees it exactly as an agent worktree would.
+    mkdirSync(join(repo, '.agents/skills/project-router'), { recursive: true });
+    writeFileSync(join(repo, '.agents/skills/project-router/SKILL.md'), '# router\n');
+    writeFileSync(join(repo, '.agents/skills/catalog.md'), '# catalog\n');
+    git(['add', '-A'], repo);
+    git(['commit', '-q', '-m', 'skills'], repo);
+
+    const events: DevEvent[] = [];
+    const result = await runDevMode({
+      // No `skipKnowledgeBootstrap`: the guard must be decided by the REPO.
+      dev: { goal: 'g', approval: 'autonomous', maxEpochs: 1 },
+      config: CONFIG,
+      cwd: repo,
+      sessionId: SESSION,
+      agentFactory: NOOP_FACTORY,
+      onEvent: (e) => events.push(e),
+      planner: async () => planFixture(),
+      orchestratorFactory: (_p, epoch) => fakeRun({ runId: `work-${epoch}` }),
+    });
+
+    expect(result.knowledge.present).toBe(true);
+    expect(bootstrapWarned(events)).toBe(false);
+    expect(result.stoppedBecause).toBe('max-epochs');
+  });
+
+  it('stays QUIET when the session asked to skip the bootstrap', async () => {
+    // Bare repo — `knowledge.present` is false, so ONLY the opt-out keeps the
+    // warning off. It is an answer to a question nobody asked otherwise.
+    const events: DevEvent[] = [];
+    const result = await runDevMode({
+      dev: { goal: 'g', approval: 'autonomous', maxEpochs: 1, skipKnowledgeBootstrap: true },
+      config: CONFIG,
+      cwd: repo,
+      sessionId: SESSION,
+      agentFactory: NOOP_FACTORY,
+      onEvent: (e) => events.push(e),
+      planner: async () => planFixture(),
+      orchestratorFactory: (_p, epoch) => fakeRun({ runId: `work-${epoch}` }),
+    });
+
+    expect(result.knowledge.present).toBe(false);
+    expect(bootstrapWarned(events)).toBe(false);
+    expect(result.stoppedBecause).toBe('max-epochs');
   });
 });
 
@@ -1488,13 +1556,19 @@ describe('runDevMode — orphan integration branches', () => {
   });
 });
 
-describe('runDevMode — model routing preflight', () => {
-  const PI_CONFIG: AppConfig = { apiKey: 'stub', modelId: 'stub-model', backend: 'jcode' };
+describe('runDevMode — model routing', () => {
+  const ROUTED_CONFIG: AppConfig = { apiKey: 'stub', modelId: 'stub-model', backend: 'jcode' };
 
-  // Left to itself this throws INSIDE the first agent, after its worktree and
-  // branch already exist.
-  it('refuses to start when an agent role names an id the pi registry lacks', async () => {
+  // CHARACTERIZATION of a LOST PROTECTION. Until v3.0 this exact call was
+  // refused at the border with `model-preflight-failed`: `planned` stayed 0
+  // and nothing had been written into the user's repo. The catalog behind that
+  // check (`model-registry-check.ts`) was deleted with the pi backend, so an id
+  // no provider serves now throws INSIDE the first agent, after its worktree
+  // and branch already exist — and only after a session has been opened and
+  // committed. Restoring the preflight must REPLACE this test.
+  it('starts a session with a worker id nothing vouches for — the preflight is gone', async () => {
     let planned = 0;
+    let compiled: { steps: { name: string; modelId?: string }[] } | undefined;
 
     const result = await runDevMode({
       dev: {
@@ -1502,30 +1576,50 @@ describe('runDevMode — model routing preflight', () => {
         approval: 'autonomous',
         maxEpochs: 1,
         skipKnowledgeBootstrap: true,
+        // An id NO catalog carries, in a role the agent backend executes.
         models: { worker: 'z-ai/glm-5.2' },
       },
-      config: PI_CONFIG,
+      config: ROUTED_CONFIG,
       cwd: repo,
+      sessionId: SESSION,
       agentFactory: NOOP_FACTORY,
       knowledgePlanner: async () => knowledgeFixture([]),
       planner: async () => {
         planned++;
         return planFixture();
       },
-      orchestratorFactory: () => fakeRun({ runId: 'never' }),
+      orchestratorFactory: (pipeline, epoch) => {
+        compiled = pipeline as unknown as typeof compiled;
+        return fakeRun({ runId: `work-${epoch}` });
+      },
     });
 
-    expect(result.stoppedBecause).toBe('model-preflight-failed');
-    expect(result.detail).toContain('worker');
-    expect(result.detail).toContain('z-ai/glm-5.2');
-    expect(planned).toBe(0);
-    // Refused before anything was written into the user's repo.
-    expect(existsSync(join(repo, devPaths.state))).toBe(false);
+    expect(result.stoppedBecause).toBe('max-epochs');
+    expect(planned).toBe(1);
+    // The session opened and the blackboard landed: exactly the cost of losing
+    // the border check.
+    expect(existsSync(join(repo, devPaths.state))).toBe(true);
+
+    // THE POINT, and what makes the id in this test load-bearing rather than
+    // decorative: the unvouched id was not merely tolerated at the border, it
+    // was STAMPED onto the work steps the swarm will run. Nothing between the
+    // flag and the agent looked at it.
+    const stamped = compiled!.steps.filter((s) => s.modelId !== undefined);
+    expect(stamped.length).toBeGreaterThan(0);
+    expect(stamped.every((s) => s.modelId === 'z-ai/glm-5.2')).toBe(true);
+
+    // And it is not only in memory: the epoch artefact committed into the
+    // repo carries it too, so the id an operator can read back is the same
+    // one no provider serves.
+    const persisted = JSON.parse(readFileSync(join(repo, paths.pipeline(1)), 'utf8')) as {
+      steps: { modelId?: string }[];
+    };
+    expect(persisted.steps.some((s) => s.modelId === 'z-ai/glm-5.2')).toBe(true);
   });
 
-  // The carve-out that makes the default preset usable at all: the blind
-  // orchestrator is a structured-output call, not a pi agent.
-  it('never checks the planner role', async () => {
+  // The blind orchestrator is a structured-output call, not an agent, so its
+  // id never had to appear in an agent-backend catalog at all.
+  it('runs a planner id no agent catalog carries', async () => {
     const result = await runDevMode({
       dev: {
         goal: 'g',
@@ -1534,7 +1628,7 @@ describe('runDevMode — model routing preflight', () => {
         skipKnowledgeBootstrap: true,
         models: { planner: 'z-ai/glm-5.2', worker: 'deepseek/deepseek-v4-pro' },
       },
-      config: PI_CONFIG,
+      config: ROUTED_CONFIG,
       cwd: repo,
       agentFactory: NOOP_FACTORY,
       knowledgePlanner: async () => knowledgeFixture([]),
@@ -1557,7 +1651,7 @@ describe('runDevMode — model routing preflight', () => {
         skipKnowledgeBootstrap: true,
         models: { worker: 'deepseek/deepseek-v4-pro' },
       },
-      config: PI_CONFIG,
+      config: ROUTED_CONFIG,
       cwd: repo,
       agentFactory: NOOP_FACTORY,
       knowledgePlanner: async () => knowledgeFixture([]),
@@ -3705,14 +3799,15 @@ describe('runDevMode — two epochs of ONE session never share a fan-out list', 
   });
 });
 
-describe('runDevMode — a graph session still pays Phase 0', () => {
-  // "Phases A and B do not happen" was true and was being read as "nothing runs
-  // before the drawing". Phase 0 — the knowledge bootstrap — sits UPSTREAM of
-  // the epoch loop and runs for a drawn session exactly as for a planned one:
-  // a real pi agent writing real files into the repo, committed, before a single
-  // box compiles. Every other graph test sets `skipKnowledgeBootstrap: true`,
-  // which is why nothing said so.
-  it('bootstraps BEFORE the drawing compiles, and a failure there stops the session', async () => {
+describe('runDevMode — a graph session and Phase 0', () => {
+  // Phase 0 — the knowledge PROBE — still sits upstream of the epoch loop and
+  // runs for a drawn session exactly as for a planned one. What it no longer
+  // does is BOOTSTRAP: until v3.0 a bare repo got a real skill tree written and
+  // committed before a single box compiled, and a failure there stopped the
+  // session with `bootstrap-failed`. That went with the pi backend, so a bare
+  // repo now compiles and runs its drawing anyway — UN-ROUTED, which is what
+  // the two tests after this one measure.
+  it('compiles and runs the drawing on a bare repo — nothing is bootstrapped first', async () => {
     const events: DevEvent[] = [];
     let runs = 0;
     const spy = plannerSpies();
@@ -3732,21 +3827,29 @@ describe('runDevMode — a graph session still pays Phase 0', () => {
       },
     });
 
-    // The probe, then the bootstrap, then the stop — the drawing is never
-    // reached, so there is no `planning` and no `planned`.
+    // The probe, then the drawing, all the way to the stop: no bootstrap event
+    // is emitted at any point, and no gate stands between the probe and the
+    // compiled epoch any more.
     expect(events.filter((e) => e.type !== 'log').map((e) => e.type)).toEqual([
       'knowledge',
-      'bootstrap-start',
+      'planning',
+      'planned',
+      'epoch-start',
+      'epoch-done',
       'stopped',
     ]);
-    expect(result.stoppedBecause).toBe('bootstrap-failed');
-    expect(runs).toBe(0);
+    expect(events.some((e) => e.type.startsWith('bootstrap-'))).toBe(false);
+    expect(result.stoppedBecause).toBe('max-epochs');
+    expect(runs).toBe(1);
+    // A drawing is the plan: neither planner seam may be called, bootstrap or
+    // no bootstrap.
     expect(spy.calls).toEqual({ plan: 0, knowledge: 0 });
   });
 
-  // …and WHY it is upstream: the node prompts only get the project-router
-  // prefix when the knowledge probe found a knowledge system. Skipping Phase 0
-  // is therefore not free — it silently un-routes every box in the drawing.
+  // …and WHAT the lost bootstrap costs: the node prompts only get the
+  // project-router prefix when the PROBE found a knowledge system. With nothing
+  // able to create one any more, a bare repo silently un-routes every box in
+  // the drawing — the two tests below are the before/after of exactly that.
   it('routes every compiled node through the project-router when the knowledge is there', async () => {
     mkdirSync(join(repo, '.agents/skills/project-router'), { recursive: true });
     writeFileSync(join(repo, '.agents/skills/project-router/SKILL.md'), '# router\n');
@@ -3758,7 +3861,7 @@ describe('runDevMode — a graph session still pays Phase 0', () => {
     expect(stepFor(pipeline, 'auditar').prompt).toContain(ROUTER_PREFIX.trim().slice(0, 40));
   });
 
-  it('does NOT route them when the bootstrap was skipped on a bare repo', async () => {
+  it('does NOT route them on a bare repo — no knowledge system, no prefix', async () => {
     const { pipeline } = await captureDrawnSession(tinyGraph(), 'sessao-sem-router');
     expect(stepFor(pipeline, 'auditar').prompt).not.toContain(ROUTER_PREFIX.trim().slice(0, 40));
   });

@@ -495,6 +495,7 @@ export const webEn = {
   'web.dev.orphan_land': 'Land them',
   'web.dev.orphan_ignore': 'Ignore and continue',
   'web.dev.abort': 'Abort session',
+  'web.dev.back_to_dev': '← Development mode',
   'web.dev.err_no_goal': 'Write the goal first',
   'web.dev.err_no_model': 'Pick a model for every role',
   'web.dev.err_no_dir': 'Pick the project folder',
@@ -561,6 +562,54 @@ export const webEn = {
     'Front verification and the epoch gate. Every check has a forward default outcome, so a judge that fails APPROVES SILENTLY — the one place to keep the strong model.',
   'web.role.integration': 'Integration',
   'web.role.integration_hint': 'The merge-conflict resolver.',
+  /* ---- The adversarial debate chat (`--debate` only) ---- */
+  'web.debate.open': 'Debate',
+  'web.debate.open_title': 'Watch the two sides argue this epoch’s design',
+  'web.debate.title': 'The debate on this epoch’s design',
+  'web.debate.subtitle':
+    'Two agents argue the design: one defends the record, the other attacks it. You watch them write, and read the briefs once they merge.',
+  'web.debate.refresh': 'Reload the briefs',
+  'web.debate.epoch_round': 'Epoch {epoch} · {rounds} round(s)',
+  'web.debate.round': 'Round {n}',
+  'web.debate.gate': 'Gate',
+  'web.debate.gate_pending': 'The gate has not ruled on this round yet.',
+  'web.debate.live': 'writing now',
+  'web.debate.waiting': 'has not started writing',
+  'web.debate.settled': 'merged brief',
+  // THREE DIFFERENT FACTS, three different sentences. They used to collide:
+  // `silent` was printed for a side that crashed AND for a round whose live
+  // narration had simply scrolled out of memory, and both read as a deliberate
+  // choice not to write. Only `silent` is a claim about the DEBATE (the server
+  // read the file and there was none); the other two are claims about the agent
+  // and about the UI.
+  'web.debate.silent': 'This side wrote nothing — the gate may still forward.',
+  'web.debate.failed': 'the agent failed',
+  'web.debate.failed_note':
+    'This side’s agent failed before it finished, so nothing of its brief was merged.',
+  'web.debate.unrecoverable':
+    'The narration of this round is no longer available — huu keeps it only while it streams. Whether this side wrote anything is not known here.',
+  'web.debate.unparsed':
+    'huu could not read this brief’s skeleton, so it is shown exactly as written.',
+  'web.debate.missing_sections': 'Missing: {list}',
+  'web.debate.decisions': 'Decisions',
+  'web.debate.risks': 'Accepted risks',
+  'web.debate.verdicts': 'Verdict per decision',
+  'web.debate.objections': 'Objections',
+  'web.debate.chosen': 'Chosen',
+  'web.debate.rejected': 'Rejected',
+  'web.debate.why': 'Why',
+  'web.debate.falsify': 'What would falsify it',
+  'web.debate.failure': 'Predicted failure',
+  'web.debate.evidence': 'Evidence',
+  'web.debate.cheaper': 'Cheaper alternative',
+  'web.debate.contested': 'Contested: {list}',
+  'web.debate.unjudged': 'Declared but never judged: {list}',
+  'web.debate.orphans': 'Judged but never declared: {list}',
+  'web.debate.empty': 'Nothing has been said yet.',
+  'web.debate.load_failed': 'Could not read the merged briefs: {message}',
+  'web.debate.matched_structure':
+    'The debate steps were renamed — huu found them by their shape instead.',
+
   'web.role.advocate': 'Advocate',
   'web.role.advocate_hint':
     "Writes the epoch's decision record when the adversarial debate is on. Used only with the Adversarial debate option — and it must NOT share a family with the prosecutor, or the debate is one model talking to itself.",

@@ -15,7 +15,7 @@ auto-scaling, cost control, port isolation, FAQ, roadmap.
   - [Docker secrets](#docker-secrets)
   - [Image variants](#image-variants)
   - [Cookbook in the image](#cookbook-in-the-image)
-  - [No native mode (docker-only)](#no-native-mode-docker-only)
+  - [Docker by default, native as an opt-in](#docker-by-default-native-as-an-opt-in)
 - [Configuration](#configuration)
   - [API key registry](#api-key-registry)
   - [Environment variables](#environment-variables)
@@ -197,18 +197,27 @@ docker run --rm ghcr.io/frederico-kluser/huu:latest \
   cookbook pull huu-test-suite > my-test-pipeline.json
 ```
 
-### No native mode (docker-only)
+### Docker by default, native as an opt-in
 
-huu is **docker-only**: every pipeline run executes inside the
-container, which carries the kernel memory ceiling (`--memory`) — the
-one guarantee software can't undermine. The old native bypasses
-(`--yolo`, `--no-docker`, `HUU_NO_DOCKER=1`) were **removed**: the CLI
-detects them, prints a one-line notice, strips the flags and re-execs
-into Docker anyway. What still runs on the host is not pipeline
-execution: `huu --help` and the host utilities (`huu init-docker`,
-`huu status`, `huu prune`). Inside the container, `HUU_IN_CONTAINER=1`
-(set by the image) remains the internal short-circuit that keeps the
-same binary from re-wrapping itself.
+Every pipeline run executes inside the container **by default**, which
+carries the kernel memory ceiling (`--memory`) and isolates the
+agent's reach from your shell credentials. The native bypasses
+(`--yolo`, `--no-docker`, `HUU_NO_DOCKER=1`) are honored, not stripped:
+the CLI detects them and runs the whole process on the host instead of
+re-execing into Docker — losing both guarantees in exchange, which is
+why it prints a one-line no-isolation warning on every such start.
+`--docker` is the mirror flag: it forces the container for one run even
+over a `native` runtime saved by `huu setup`. That saved choice is the
+other source of a native run — `huu setup` (run automatically on the
+first `npm start`, or on demand) asks which runtime you want and
+persists it to `~/.config/huu/config.json`; the full order is **flag >
+env > saved config > default**, so a flag or env var on THIS invocation
+always outranks whatever was saved. What still runs on the host
+regardless of runtime is not pipeline execution: `huu --help` and the
+host utilities (`huu init-docker`, `huu status`, `huu prune`). Inside
+the container, `HUU_IN_CONTAINER=1` (set by the image) remains the
+internal short-circuit that keeps the same binary from re-wrapping
+itself.
 
 The one exception is for people working ON huu: `HUU_DEV_NATIVE=1` (what
 `npm run dev` sets) runs the CLI on the host, no daemon involved, so the
@@ -233,8 +242,8 @@ simplest to most complete:
 | **Local build** | `docker build -t huu:local .` then `HUU_IMAGE=huu:local huu run …` | **Recommended** — reproducible, registry-free |
 | Re-authenticate | `echo "$PAT" \| docker login ghcr.io -u <user> --password-stdin` | Need private images (PAT with `read:packages` scope) |
 
-(Running natively is no longer an escape: huu is docker-only — the old
-`--yolo`/`--no-docker` bypasses are ignored with a notice.)
+(`--yolo`/`--no-docker` are a real escape from a registry pull, at the
+cost of container isolation and the memory ceiling — see above.)
 
 ---
 
@@ -318,8 +327,8 @@ run-lifecycle event is also logged to the terminal that launched huu.
 | `HUU_PAUSE_BACKOFF_MS` | no | A paused task backs off before it resumes: `min(10s × 2^(pauses−1), 120s)` × a deterministic up-only jitter in `[1, 1.5)` keyed `runId#agentId#pauses` — de-syncs the multi-run herd. `0` disables the backoff. There is deliberately NO cap on the number of pauses. |
 | `HUU_OOM_SCORE_ADJ` | no | Adjusts the huu process's `/proc/self/oom_score_adj` so the kernel's OOM-killer biases away from huu. Conservative default (`-100`, a mild nudge that does NOT immunize); best-effort — a NEGATIVE value only sticks with `CAP_SYS_RESOURCE`, which neither a plain user process nor the container (it runs `--user <uid>:<gid>`, non-root) has, so the nudge usually no-ops. The effective lever is `HUU_CHILD_OOM_SCORE_ADJ` below — RAISING a score needs no privilege. Linux-only. |
 | `HUU_CHILD_OOM_SCORE_ADJ` | no | OOM bias for huu's DESCENDANT processes: a watcher sweeps `/proc` every 2 s and raises agent tool children (vitest workers, npm installs, builds…) to `oom_score_adj` `+500` (the default), so a kernel OOM kills a test runner — surfacing as a plain task retry — instead of the orchestrator or your desktop session. Set `0` to disable the watcher. Linux-only. |
-| `HUU_NO_CGROUP` | no | Set `1` to skip the transient systemd user scope of the native systemd-scope wrap — now **dormant defense-in-depth** since huu is docker-only (the container `--memory` ceiling is the one in practice; see [Kernel memory ceilings](#kernel-memory-ceilings)). Without the flag the wrap already degrades to unwrapped, with a one-line stderr note, when systemd isn't usable. |
-| `HUU_SWAP_MAX_MB` | no | Swap ceiling for huu's process tree, in MiB (default `4096`; `0` = no swap at all). Applied as the `--memory-swap` delta on the Docker container (and as `MemorySwapMax` on the dormant native systemd scope). |
+| `HUU_NO_CGROUP` | no | Set `1` to skip the transient systemd user scope of the native systemd-scope wrap — the kernel ceiling for any run that ends up native (`--yolo`/`--no-docker`/`HUU_NO_DOCKER`, a saved `native` runtime, or `HUU_DEV_NATIVE`; see [Kernel memory ceilings](#kernel-memory-ceilings)). Without the flag the wrap already degrades to unwrapped, with a one-line stderr note, when systemd isn't usable. |
+| `HUU_SWAP_MAX_MB` | no | Swap ceiling for huu's process tree, in MiB (default `4096`; `0` = no swap at all). Applied as the `--memory-swap` delta on the Docker container (and as `MemorySwapMax` on the native systemd scope, when a run is native). |
 | `HUU_DOCKER_MEMORY_MB` | no | Overrides the container's memory ceiling, in MiB. Default: host total − OS reserve, passed by the wrapper as `docker run --memory`. |
 | `HUU_NO_MEM_LIMIT` | no | Set `1` to launch the container with NO memory ceiling (the legacy behavior — an unlimited container can consume 100% of host RAM). |
 | `HUU_MAX_LIVE_RUNS` | no | Ceiling on multi-run executions live at once (default `8`). The effective cap ADAPTS DOWN to what the budget actually fits: `budget ÷ (HUU_RUN_BASELINE_MB + per-agent footprint)`. |
@@ -330,8 +339,8 @@ run-lifecycle event is also logged to the terminal that launched huu.
 | `HUU_AGENT_MEM_EMA_ALPHA` | no | Smoothing factor of the observed per-agent footprint EMA (clamped `0.01`–`1`; default `0.2` ≈ 5 s time constant at the 1 Hz poll). Raise it to converge faster from the seed to the measured footprint (more reactive, noisier); lower it for stability. |
 | `HUU_IN_CONTAINER` | no | Set to `1` automatically by the official Docker image. Used by the wrapper to short-circuit the auto-Docker re-exec (so the same binary runs the TUI directly inside the container). |
 | `HUU_IMAGE` | no | Override the container image used by the auto-Docker wrapper. Default: `ghcr.io/frederico-kluser/huu:latest`. Useful for pinning a release or pointing at a private mirror. |
-| `HUU_NO_DOCKER` | no | **REMOVED — ignored with a notice.** huu is docker-only: the native pipeline-execution mode no longer exists. Like the removed `--no-docker`/`--yolo` flags, this variable is detected, a one-line notice is printed, and huu re-execs into the container anyway. CI also runs through Docker now — see [`docs/ci.md`](ci.md). |
-| `HUU_DEV_NATIVE` | no | **Contributor escape hatch — not a product feature.** `1`/`true` skips the Docker re-exec entirely so the CLI runs on the host with no daemon; `npm run dev` sets it. Container isolation and the container memory ceiling are both OFF (agents reach `~/.ssh`, `~/.aws`, …), so huu prints a banner on every start. Env-only by design — the user-facing `--no-docker`/`HUU_NO_DOCKER` spellings stay removed. Use `npm run dev:docker` to iterate the way users actually run. |
+| `HUU_NO_DOCKER` | no | **User-facing native bypass**, same statement as `--no-docker`/`--yolo` but env-scoped: `1`/`true` skips the Docker re-exec and runs the whole CLI on the host, printing a one-line no-isolation warning. Costs the container's credential isolation and its memory ceiling. `huu setup` can save `native` as a standing preference instead — see [`docs/operations.md#docker-by-default-native-as-an-opt-in`](#docker-by-default-native-as-an-opt-in) for the full precedence. CI runs through Docker by default too — see [`docs/ci.md`](ci.md). |
+| `HUU_DEV_NATIVE` | no | **Contributor escape hatch — not a product feature.** `1`/`true` skips the Docker re-exec entirely so the CLI runs on the host with no daemon; `npm run dev` sets it. Container isolation and the container memory ceiling are both OFF (agents reach `~/.ssh`, `~/.aws`, …), so huu prints a banner on every start. Env-only by design — the user-facing `--no-docker`/`--docker`/`HUU_NO_DOCKER` spellings are a separate, deliberate door (see above), not this one. Use `npm run dev:docker` to iterate the way users actually run. |
 | `HUU_DOCKER_NETWORK` | no | Pass-through value for `docker run --network=<value>`. By default huu auto-creates `huu-net-mtu<N>` when on a VPN (default-route MTU < 1500); set this to override (e.g., `host`, or the name of a pre-existing user-managed network). |
 | `HUU_DOCKER_PASS_ENV` | no | Whitespace-separated list of additional env var names to forward into the container. The wrapper always forwards `OPENROUTER_API_KEY`, `OPENROUTER_API_KEY_FILE`, `HUU_CHECK_PUSH`, `HUU_WORKTREE_BASE`, `HUU_HOST_HOME`, `TERM`, every RAM-safety knob (`HUU_RAM_PERCENT`, the `HUU_GUARD_*` family, `HUU_OS_RESERVE_MB`, `HUU_MAX_LIVE_RUNS`, `HUU_MAX_QUEUED_RUNS`, `HUU_RUN_BASELINE_MB`, `HUU_OOM_SCORE_ADJ`, `HUU_NO_PAUSE`), the jcode hermetic hatch (`HUU_JCODE_HERMETIC`) and the `SURF_*` research knobs — a host `HUU_RAM_PERCENT` was previously ignored inside the container. Use this to add custom names. |
 | `HUU_HOST_HOME` | no | Set automatically by the wrapper to the host's home directory. Inside the container, `getHuuHome()` reads it so writes to `~/.huu/` and the default `~/Downloads/` export target land on the host's bind-mounted filesystem. Unset outside Docker. |
@@ -559,22 +568,26 @@ Every threshold has an env knob:
 
 The ladder is software; the last line of defense is the kernel:
 
-- **Docker (the ceiling in practice):** huu is docker-only, so every
-  run gets this one. The wrapper passes `--memory` = host total − OS
-  reserve, `--memory-swap` = memory + `HUU_SWAP_MAX_MB`, and
-  `--pids-limit 8192` to the container. Override the ceiling with
-  `HUU_DOCKER_MEMORY_MB` (MiB) or restore the legacy unlimited
-  container with `HUU_NO_MEM_LIMIT=1`.
-- **Native systemd scope (dormant defense-in-depth):** the code path
-  that re-execs huu into a transient **systemd user scope**
-  (`systemd-run --user --scope`) with `MemoryHigh` = total − OS reserve
-  (the kernel throttles huu's whole tree before the host thrashes),
-  `MemoryMax` = total − reserve/2 (worst case huu is killed inside its
-  scope, never the host), `MemorySwapMax` = `HUU_SWAP_MAX_MB` (default
-  4096 MiB; `0` = no swap) and `TasksMax=8192` remains in the tree, but
-  with the native pipeline-execution mode removed it no longer fires in
-  normal operation. When systemd isn't usable it degrades to unwrapped
-  with a one-line stderr note; `HUU_NO_CGROUP=1` opts out.
+- **Docker (the ceiling for the default runtime):** every run gets this
+  one unless a bypass or a saved `native` runtime opted out. The
+  wrapper passes `--memory` = host total − OS reserve, `--memory-swap`
+  = memory + `HUU_SWAP_MAX_MB`, and `--pids-limit 8192` to the
+  container. Override the ceiling with `HUU_DOCKER_MEMORY_MB` (MiB) or
+  restore the legacy unlimited container with `HUU_NO_MEM_LIMIT=1`.
+- **Native systemd scope (the ceiling for a native run):** on Linux,
+  ANY run that ends up native — `--yolo`/`--no-docker`/`HUU_NO_DOCKER`,
+  a `native` runtime saved by `huu setup`, or the `HUU_DEV_NATIVE`
+  contributor loop — re-execs itself into a transient **systemd user
+  scope** (`systemd-run --user --scope`) with `MemoryHigh` = total − OS
+  reserve (the kernel throttles huu's whole tree before the host
+  thrashes), `MemoryMax` = total − reserve/2 (worst case huu is killed
+  inside its scope, never the host), `MemorySwapMax` =
+  `HUU_SWAP_MAX_MB` (default 4096 MiB; `0` = no swap) and
+  `TasksMax=8192`. It is what still stands between a native run and the
+  OOM freeze that Docker's `--memory` would otherwise have prevented.
+  When systemd isn't usable it degrades to unwrapped with a one-line
+  stderr note; `HUU_NO_CGROUP=1` opts out. Off-Linux, a native run has
+  no kernel ceiling at all — only the software AutoScaler guard.
 
 `huu status` prints a **ram containment** doctor section: the dial and
 where it came from (web-settings / env / default), the budget in bytes,
@@ -711,13 +724,13 @@ default; pin a fixed agent count with `--concurrency=N` or
 Thresholds: [Memory guard: the pressure ladder](#memory-guard-the-pressure-ladder).
 
 **Can I run huu in CI (GitHub Actions / GitLab)?**
-Yes — the job needs a runner with **Docker available** (GitHub's hosted
-runners ship it; on GitLab use a docker-enabled job). Drive the run
-with `huu auto` — the wrapper re-execs into the huu image as usual; pin
-it with `HUU_IMAGE`. Native CI execution (`--no-docker` /
-`HUU_NO_DOCKER=1`) was removed — the flags are ignored with a notice.
-Full recipes, including artifact upload of `.huu/audits/`:
-[`docs/ci.md`](ci.md).
+Yes — with the default runtime the job needs a runner with **Docker
+available** (GitHub's hosted runners ship it; on GitLab use a
+docker-enabled job). Drive the run with `huu auto` — the wrapper
+re-execs into the huu image as usual; pin it with `HUU_IMAGE`.
+`--no-docker` / `HUU_NO_DOCKER=1` work on a runner without Docker too,
+at the cost of the container's memory ceiling. Full recipes, including
+artifact upload of `.huu/audits/`: [`docs/ci.md`](ci.md).
 
 **What if two agents touch the same file?**
 A sign the pipeline was misdesigned: in a healthy pipeline, each task

@@ -503,6 +503,7 @@ export const webPtBR = {
   'web.dev.orphan_land': 'Aterrissar',
   'web.dev.orphan_ignore': 'Ignorar e continuar',
   'web.dev.abort': 'Abortar a sessão',
+  'web.dev.back_to_dev': '← Modo de desenvolvimento',
   'web.dev.err_no_goal': 'Escreva o objetivo primeiro',
   'web.dev.err_no_model': 'Escolha um modelo para cada papel',
   'web.dev.err_no_dir': 'Escolha a pasta do projeto',
@@ -569,6 +570,54 @@ export const webPtBR = {
     'Verificação da frente e o portão da época. Toda verificação tem um resultado padrão para a frente, então um juiz que falha APROVA EM SILÊNCIO — o único lugar onde manter o modelo forte.',
   'web.role.integration': 'Integração',
   'web.role.integration_hint': 'O resolvedor de conflitos de merge.',
+  /* ---- O chat do debate adversarial (só com `--debate`) ---- */
+  'web.debate.open': 'Debate',
+  'web.debate.open_title': 'Ver os dois lados discutirem o desenho desta época',
+  'web.debate.title': 'O debate sobre o desenho desta época',
+  'web.debate.subtitle':
+    'Dois agentes discutem o desenho: um sustenta o record, o outro ataca. Você vê os dois escrevendo, e lê os briefs assim que eles entram no merge.',
+  'web.debate.refresh': 'Recarregar os briefs',
+  'web.debate.epoch_round': 'Época {epoch} · {rounds} rodada(s)',
+  'web.debate.round': 'Rodada {n}',
+  'web.debate.gate': 'Portão',
+  'web.debate.gate_pending': 'O portão ainda não julgou esta rodada.',
+  'web.debate.live': 'escrevendo agora',
+  'web.debate.waiting': 'ainda não começou a escrever',
+  'web.debate.settled': 'brief no merge',
+  // TRÊS FATOS DIFERENTES, três frases diferentes. Eles colidiam: `silent` era
+  // impresso tanto para um lado que CRASHOU quanto para uma rodada cuja
+  // narração ao vivo simplesmente saiu da memória — e os dois liam como uma
+  // escolha deliberada de não escrever. Só `silent` é uma afirmação sobre o
+  // DEBATE (o servidor leu o arquivo e não havia nenhum); os outros dois são
+  // afirmações sobre o agente e sobre a UI.
+  'web.debate.silent': 'Este lado não escreveu nada — o portão ainda pode seguir em frente.',
+  'web.debate.failed': 'o agente falhou',
+  'web.debate.failed_note':
+    'O agente deste lado falhou antes de terminar, então nada do brief dele entrou no merge.',
+  'web.debate.unrecoverable':
+    'A narração desta rodada não ficou disponível — o huu só a guarda enquanto ela passa ao vivo. Se este lado escreveu algo, não dá para saber por aqui.',
+  'web.debate.unparsed':
+    'O huu não conseguiu ler o esqueleto deste brief, então ele aparece exatamente como foi escrito.',
+  'web.debate.missing_sections': 'Faltando: {list}',
+  'web.debate.decisions': 'Decisões',
+  'web.debate.risks': 'Riscos assumidos',
+  'web.debate.verdicts': 'Veredito por decisão',
+  'web.debate.objections': 'Objeções',
+  'web.debate.chosen': 'Escolhido',
+  'web.debate.rejected': 'Rejeitado',
+  'web.debate.why': 'Por quê',
+  'web.debate.falsify': 'O que falsificaria',
+  'web.debate.failure': 'Falha prevista',
+  'web.debate.evidence': 'Evidência',
+  'web.debate.cheaper': 'Alternativa mais barata',
+  'web.debate.contested': 'Contestadas: {list}',
+  'web.debate.unjudged': 'Declaradas e nunca julgadas: {list}',
+  'web.debate.orphans': 'Julgadas e nunca declaradas: {list}',
+  'web.debate.empty': 'Ninguém disse nada ainda.',
+  'web.debate.load_failed': 'Não deu para ler os briefs do merge: {message}',
+  'web.debate.matched_structure':
+    'Os passos do debate foram renomeados — o huu os achou pela estrutura.',
+
   'web.role.advocate': 'Advogado',
   'web.role.advocate_hint':
     'Escreve o registro de decisões da época quando o debate adversarial está ligado. Só é usado com a opção Debate adversarial — e NÃO pode ser da mesma família do promotor, senão o debate é um modelo falando sozinho.',

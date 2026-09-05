@@ -3,10 +3,16 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { t } from './i18n/index.js';
 import {
   API_KEY_REGISTRY,
   detectForeignKeySpec,
@@ -370,21 +376,233 @@ export function readConfigStore(): Record<string, unknown> {
 }
 
 /**
+ * Infix of the copies {@link writeConfigStore} leaves behind when it is about
+ * to replace a `config.json` it could not parse:
+ *
+ *     config.json.corrupt-2026-09-05T12-00-00-000Z-4711
+ *                        └ ISO timestamp, `:` and `.` swapped for `-` ┘└ pid ┘
+ *
+ * The timestamp comes first so a plain lexicographic sort of the directory is
+ * chronological, and the pid keeps two huu processes apart. Exported so tests,
+ * diagnostics and any future "we found a backup" UI locate the copies by this
+ * rule instead of re-deriving the name.
+ */
+export const CORRUPT_BACKUP_INFIX = '.corrupt-';
+
+/**
+ * How many corrupt-config copies are kept. The oldest beyond this are deleted
+ * on the next preservation, so a file that keeps coming back corrupt (a broken
+ * sync client, a crashing writer) cannot grow an unbounded pile of credential
+ * files in `~/.config/huu`. Newest wins because the newest copy is the one
+ * whose key the user most likely still uses; three of them keep the earlier
+ * generations around long enough to notice.
+ */
+export const MAX_CORRUPT_BACKUPS = 3;
+
+/** All existing corrupt-copies of `path`, oldest first (the names sort by time). */
+function corruptBackupsOf(path: string): string[] {
+  const dir = dirname(path);
+  const prefix = `${basename(path)}${CORRUPT_BACKUP_INFIX}`;
+  try {
+    return readdirSync(dir)
+      .filter((name) => name.startsWith(prefix))
+      .sort()
+      .map((name) => join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Copy an unparseable `config.json` aside before it is replaced, returning the
+ * path the user can recover from — or `undefined` when nothing could be saved.
+ *
+ * WHY THIS EXISTS. `readConfigStore()` degrades a broken file to `{}`, so the
+ * very next write of ANY module (`saveApiKey`, `api-key-pool`, `setup-config`)
+ * serializes that `{}` plus its own field and the user's API keys are gone.
+ * A truncated JSON file still contains the KEY AS TEXT and is recoverable by
+ * hand — but only while the file still exists. This is the difference between
+ * "huu asked me to paste my key again" and "huu deleted my key".
+ *
+ * The bytes are written back VERBATIM (a Buffer, never a re-encoded string), so
+ * a file that is only half UTF-8 still yields its ASCII key text; at mode 0600,
+ * because a corrupt credential file is still a credential file.
+ *
+ * NEVER THROWS. The backup is forensics, not the user's intent: if the disk is
+ * full or the directory is read-only, the caller still performs the real write.
+ * Refusing to save a setup choice or an API key because a *copy* failed would
+ * turn a recoverable annoyance into an unusable huu — and the boot path is
+ * exactly where that must not happen.
+ */
+function preserveCorruptConfig(path: string, bytes: Buffer): string | undefined {
+  const existing = corruptBackupsOf(path);
+
+  // Already preserved? A file that stays corrupt across many boots must not
+  // mint a new copy every time — and the newest copy is the one to compare
+  // against, since it is the one this run would otherwise duplicate.
+  const newest = existing[existing.length - 1];
+  if (newest !== undefined) {
+    try {
+      if (Buffer.compare(readFileSync(newest), bytes) === 0) return newest;
+    } catch {
+      /* unreadable backup — fall through and write a fresh one */
+    }
+  }
+
+  // Prune BEFORE adding so the directory holds at most MAX_CORRUPT_BACKUPS.
+  for (const stale of existing.slice(0, Math.max(0, existing.length - (MAX_CORRUPT_BACKUPS - 1)))) {
+    try {
+      rmSync(stale, { force: true });
+    } catch {
+      /* best effort — a copy we cannot delete is not a reason to skip the new one */
+    }
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backup = `${path}${CORRUPT_BACKUP_INFIX}${stamp}-${process.pid}`;
+  try {
+    // `wx` so two processes racing inside the same millisecond cannot overwrite
+    // each other's evidence; `mode` matches the original's 0600.
+    writeFileSync(backup, bytes, { mode: 0o600, flag: 'wx' });
+  } catch {
+    return undefined;
+  }
+  try {
+    chmodSync(backup, 0o600);
+  } catch {
+    /* Windows / fs without chmod — best effort, and the dir is already 0700 */
+  }
+  return backup;
+}
+
+/**
+ * Tell the user their config was unreadable and where the copy went.
+ *
+ * Silence is what makes this class of bug expensive: the boot path writes, the
+ * keys vanish, and nothing ever said why. stderr (never stdout) so it cannot
+ * corrupt machine-readable output, and wrapped in a try/catch because a
+ * translation problem must never be the reason a credential fails to save.
+ */
+function warnConfigWasCorrupt(path: string, backup: string | undefined): void {
+  try {
+    console.error(
+      backup
+        ? t('cli.warn_config_corrupt_saved', { path, backup })
+        : t('cli.warn_config_corrupt_lost', { path }),
+    );
+  } catch {
+    /* i18n is not allowed to break a write */
+  }
+}
+
+/**
  * Persist the whole global config store (mode 0600 in a 0700 directory).
  * Throws only on real fs failures — callers that must never fail (the key
  * pool) wrap this in their own try/catch.
+ *
+ * ## The write is ATOMIC (staged sibling + `rename`)
+ *
+ * A plain `writeFileSync` onto the target truncates it first, so a crash, a
+ * SIGKILL or a full disk between the truncate and the last byte leaves a
+ * HALF-WRITTEN file — and this file holds the API KEYS. Worse, the damage is
+ * silent: `readConfigStore()` answers `{}` for anything it cannot parse, so the
+ * next write would serialize that emptiness over what remained. `rename(2)` is
+ * atomic within a filesystem: a reader sees either the whole old file or the
+ * whole new one. Same staging shape as `dev-mode/dev-state.ts`,
+ * `dev-graph/graph-store.ts`, `jcode/hermetic.ts` and `run-logger.ts`: the tmp
+ * is a SIBLING (a rename across filesystems is EXDEV), its name carries
+ * pid+random so concurrent writers cannot share it, and it is swept on failure
+ * so no orphan `.huu.tmp` is left in the config dir.
+ *
+ * What this does NOT fix: the LOST UPDATE of two processes. Both can still
+ * read-modify-write concurrently and the last `rename` wins, dropping the
+ * other's field entirely. Only a lock around read+write would close that, which
+ * this layer deliberately does not have. Atomicity here means "never a
+ * truncated file", not "never a lost field".
+ *
+ * The 0600 is explicit and load-bearing: `rename` installs a NEW inode, created
+ * by `open(2)` with `mode & ~umask`, so the mode of the file it replaces is
+ * gone. The staging file is created 0600 and the `chmodSync` after the rename
+ * pins it there whatever the umask — which is also what tightens a `config.json`
+ * an older huu (or a stray editor) had left world-readable.
  */
 export function writeConfigStore(store: Record<string, unknown>): void {
-  const path = configFilePath();
-  const dir = dirname(path);
+  const configured = configFilePath();
+  const dir = dirname(configured);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(store, null, 2), { mode: 0o600 });
-  // writeFileSync's `mode` is only honored on creation; chmod again so
-  // existing files (created with a wider umask earlier) tighten down.
+
+  // Follow a symlink to the file it points at, and rename ONTO that. A plain
+  // `writeFileSync` follows links; `rename` does not — it would swap the user's
+  // `config.json -> ~/dotfiles/huu.json` link for a regular file and quietly
+  // detach the store from wherever they keep it. Anything unresolvable (no file
+  // yet, a dangling or looping link) stays on the configured path.
+  const path = ((): string => {
+    try {
+      return realpathSync(configured);
+    } catch {
+      return configured;
+    }
+  })();
+
+  // Look at what is about to be replaced — only when it is a regular FILE.
+  // A file that exists but cannot be READ (mode 000, …) rethrows here, exactly
+  // as the old direct `writeFileSync` did, and it matters MORE now: `rename`
+  // needs only the DIRECTORY to be writable, so without this it would happily
+  // destroy a file whose own permissions say "hands off". Anything that is not
+  // a file (a directory sitting where the config belongs) holds no credential
+  // to preserve — let the rename below fail on it, as the write always did.
+  let previous: Buffer | undefined;
+  let isFile = false;
+  try {
+    isFile = statSync(path).isFile();
+  } catch {
+    /* nothing there — the normal first write */
+  }
+  if (isFile) previous = readFileSync(path);
+
+  if (previous !== undefined && isUnreadableConfig(previous)) {
+    warnConfigWasCorrupt(path, preserveCorruptConfig(path, previous));
+  }
+
+  const tmp = `${path}.${process.pid}-${Math.random().toString(36).slice(2, 10)}.huu.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* nothing left to do — the real failure is rethrown below */
+    }
+    throw err;
+  }
+
+  // `mode` is only honored when the file is CREATED, and the rename installed a
+  // brand-new inode: pin 0600 whatever the umask allowed.
   try {
     chmodSync(path, 0o600);
   } catch {
     /* Windows / fs without chmod — best effort */
+  }
+}
+
+/**
+ * True when these bytes are content `readConfigStore()` would throw away —
+ * i.e. overwriting them loses information. Mirrors that function's acceptance
+ * test EXACTLY (valid JSON *and* a non-null, non-array object), so the two can
+ * never disagree about what "unreadable" means.
+ *
+ * An empty or whitespace-only file is NOT unreadable in this sense: there is
+ * nothing in it to recover, and backing it up would be litter.
+ */
+function isUnreadableConfig(bytes: Buffer): boolean {
+  const text = bytes.toString('utf8');
+  if (!text.trim()) return false;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed !== 'object' || parsed === null || Array.isArray(parsed);
+  } catch {
+    return true;
   }
 }
 

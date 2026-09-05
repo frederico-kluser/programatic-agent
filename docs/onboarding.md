@@ -71,20 +71,28 @@ huu run pipelines/huu-test-suite.pipeline.json     # auto-uses ghcr.io/frederico
 > Windows/WSL boundary are 10–20× slower for the many-small-files I/O that
 > `git worktree add` does.
 
-### No native mode (docker-only)
+### Docker by default, native as an opt-in
 
 ```bash
 npm install -g huu-pipe        # Node 20+, a working `git`, and Docker
 huu                            # re-execs itself into the container
 ```
 
-huu is **docker-only**: every run executes in the container, which
-carries the kernel memory ceiling; there is no native mode. The old
-bypasses (`--yolo`, `--no-docker`, `HUU_NO_DOCKER=1`) were **removed**
-— huu prints a one-line notice, ignores them and re-execs into Docker
-anyway. Only `--help` and the host utilities (`init-docker`, `status`,
-`prune`) run outside the container. CI needs a docker-enabled runner —
-see [`docs/ci.md`](ci.md) for the GitHub Actions / GitLab recipes.
+huu runs in the container **by default**, which carries the kernel
+memory ceiling and isolates your shell credentials from the agent.
+`--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` skip the container on
+purpose — for targets that already run their own Docker, where nesting
+containers is the problem — and cost exactly those two guarantees; huu
+prints a one-line warning on every such start. `--docker` is the
+mirror, forcing the container for one run even over a saved `native`
+runtime. On the first `npm start`, `huu setup` asks which runtime (and
+which front-end) you want and saves it to
+`~/.config/huu/config.json` — reopen the question any time with `huu
+setup`. Precedence: **flag > env > saved config > default**. Only
+`--help` and the host utilities (`init-docker`, `status`, `prune`) run
+outside the container regardless of runtime. CI needs a docker-enabled
+runner to use the default — see [`docs/ci.md`](ci.md) for the GitHub
+Actions / GitLab recipes.
 
 For more on Docker run modes (compose, isolated-volume mode, secrets,
 VPN/MTU), see [`docs/operations.md#docker`](operations.md#docker).
@@ -414,10 +422,11 @@ is the fallback); a key saved via the TUI takes precedence.
   the integration branch shipped what you expected.
 - **Exit code** — `0` if `manifest.status === 'done'`, `1` otherwise.
 
-Like `huu run …`, `huu auto …` re-execs into the Docker image —
-auto-MTU network applies, port-isolation shim applies, secrets mount
-applies. (huu is docker-only; the old `--yolo` bypass was removed and
-is ignored with a notice.)
+Like `huu run …`, `huu auto …` re-execs into the Docker image by
+default — auto-MTU network applies, port-isolation shim applies,
+secrets mount applies. (`--yolo` / `--no-docker` still skip the
+container when you mean it, at the cost of that isolation and the
+memory ceiling.)
 
 ---
 

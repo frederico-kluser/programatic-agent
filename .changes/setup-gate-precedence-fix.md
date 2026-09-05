@@ -1,0 +1,3 @@
+### Fixed
+
+- **`huu setup` agora vence um `HUU_SKIP_SETUP` exportado no perfil do shell** (`src/lib/setup-flow.ts`, `decideSetupGate`). A checagem do escape hatch (`HUU_SKIP_SETUP=1`) rodava ANTES da checagem do subcomando `huu setup`, então uma variável esquecida num `.bashrc`/`.zshrc` fazia `huu setup` — o comando digitado explicitamente pra reabrir o fluxo — não fazer literalmente nada. Invertida a ordem: `huu setup` agora fica acima do escape hatch e de toda exceção abaixo dele, pela mesma razão que uma flag vence uma env var em todo o resto do código — quem digitou o comando quis dizer aquilo, e uma env silenciosamente vencendo seria a pior resposta possível.

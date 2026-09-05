@@ -9,7 +9,7 @@ import { esc, cap, humanize, fmtNum, fmtCost, fmtDur, toast, shortDir, projectNa
 import { $, S, api, withTok, TOKEN, pipeIcon, sessionKey, backendSpecName } from './state.js';
 import { showView, switchMode } from './launch.js';
 import { onRunFrame, updateQueueChrome, renderLaunchRunning } from './queue.js';
-import { renderDevSession } from './dev.js';
+import { renderDevSession, ingestDevAgentStream, onDevRunFrame } from './dev.js';
 import { hasMessage, t } from '../i18n.js';
 
 /* Card phase CODES come from client/card-state.js, which is a locale-blind
@@ -144,7 +144,10 @@ export function connectSse() {
     try { frame = JSON.parse(ev.data); } catch { return; }
     if (!frame) return;
     if (frame.type === 'run') ingestRun(frame.run);
-    else if (frame.type === 'agent-stream') logAgentStream(frame);
+    // The RAW firehose feeds two readers: the console mirror, and the debate
+    // chat — which is the ONLY place the two sides can be seen while they
+    // write, since their briefs reach the blackboard path already finished.
+    else if (frame.type === 'agent-stream') { logAgentStream(frame); ingestDevAgentStream(frame); }
     else if (frame.type === 'budget') renderBudget(frame.budget);
     else if (frame.type === 'dev') renderDevSession(frame.session);
   };
@@ -235,6 +238,48 @@ export function ingestRun(run) {
   if (!S.sim && run.runId) onRunFrame(run);
   renderRunSelector();
   renderActiveRun();
+  // A run snapshot carries the debate's cards and the gate's verdict, so the
+  // chat has to see it too — the session frame alone would leave the gate's
+  // ruling off screen until the next lifecycle transition.
+  onDevRunFrame(run);
+}
+
+/* ---------------- Development mode owns its own surface ----------------
+   A dev session's epochs are ordinary runs, so they render on the SAME board.
+   But /dev is not a launch form the user is finished with: it is a LIVE panel
+   (session state, the approval/resume/orphan gates, and now the debate chat)
+   they must be able to come BACK to while the swarm runs. Two things made that
+   impossible, and both fixes below are dev-only — a normal run keeps exactly
+   the behavior it had:
+
+     1. the per-frame auto-switch re-asserted the board on EVERY frame, so a
+        return to /dev survived until the next SSE tick — i.e. milliseconds,
+        and precisely while the debate was being written;
+     2. `backToLaunch` (the only exit once showView hides the mode switch) was
+        hidden for the whole time a run was active, so the board was a dead end.
+
+   The FIRST live run of a session still opens the board, exactly as before: the
+   latch only starts guarding once the board has been opened once.
+
+   THE GUARD IS ANCHORED ON THE RUN, NOT ON THE SESSION. It was on the session
+   first, and that quietly changed a run that has nothing to do with dev mode:
+   launch an ORDINARY pipeline (another project, another tab) while a dev
+   session happens to be alive and it stopped auto-opening the board and grew a
+   "← Development mode" exit pointing at /dev. Belonging is a property of the
+   RUN — `session.runIds` is the list huu itself stamped, epoch by epoch — so a
+   concurrent normal run now takes exactly the branch it took before any of
+   this existed. */
+let devBoardOpened = false;
+
+function devSessionActive() {
+  return !!(S.devSession && S.devSession.active);
+}
+
+/** True only for a run the LIVE dev session owns (`{epoch, runId, phase}[]`). */
+function isDevRun(run) {
+  const s = S.devSession;
+  if (!s || !s.active || !run || !run.runId) return false;
+  return (s.runIds || []).some((r) => r && r.runId === run.runId);
 }
 
 /**
@@ -255,7 +300,18 @@ export function renderActiveRun() {
   // you on the board (the guard simply stops re-asserting the board view).
   // `homePinned` opts out entirely: the user deliberately went home mid-queue to
   // add more projects, so don't drag them back on every frame.
-  if (active && $('viewRun').hidden && !S.homePinned) showView('run');
+  // Dev-only guard: once this session has opened the board once, sitting on
+  // /dev is a deliberate choice and the board must stop re-asserting itself.
+  // The latch is cleared with the SESSION (so the next session opens the board
+  // again) but consulted per RUN, so a normal run running alongside keeps the
+  // original behavior to the letter.
+  const devRun = isDevRun(run);
+  if (!devSessionActive()) devBoardOpened = false;
+  const devHold = devRun && devBoardOpened && $('viewDev').hidden === false;
+  if (active && $('viewRun').hidden && !S.homePinned && !devHold) {
+    showView('run');
+    if (devRun) devBoardOpened = true;
+  }
   const onRunView = !$('viewRun').hidden;
 
   // Topbar run chrome belongs to the board context, not the home screen — so
@@ -316,6 +372,19 @@ export function renderActiveRun() {
   // drives the concurrent queue (archive + stop-queue strip).
   if (S.sim) updateSimChrome(run);
   else updateQueueChrome();
+
+  // LAST, because updateQueueChrome() rewrites this button's label: while the
+  // viewed run IS one of the session's epoch runs, the exit is not "new run",
+  // it is the panel the user came from — and it stays reachable WHILE the run
+  // is active, which is the one case the rule above deliberately hides it for.
+  // The click handler already routes a live dev session back to /dev
+  // (launch.js), so only the chrome was missing. A normal run viewed during the
+  // same session falls through and keeps the ordinary label and hiding rule.
+  if (devRun && hasRun) {
+    const btl = $('backToLaunch');
+    btl.hidden = false;
+    btl.textContent = t('web.dev.back_to_dev');
+  }
 }
 
 /* ---------------- Project selector (custom simulated dropdown) ----------------

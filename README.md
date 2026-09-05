@@ -173,14 +173,20 @@ npm install -g huu-pipe        # Node 20+, `git` e Docker
 huu                            # re-executa sozinho no container
 ```
 
-O huu é **docker-only**: todo run executa no container, que carrega o
-teto de memória do kernel (`--memory`); não existe modo nativo. As
-antigas `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` foram
-**removidas** — se aparecerem, o huu avisa em uma linha, ignora e
-re-executa no Docker mesmo assim. Só `--help` e os utilitários de host
-(`init-docker`, `status`, `prune`) rodam fora do container. Matriz
-completa de instalação (macOS / Windows / Linux, notas do OrbStack,
-caveats do WSL2):
+O huu é **docker por padrão**: todo run executa no container, que
+carrega o teto de memória do kernel (`--memory`) e isola as credenciais
+do seu shell. `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` **funcionam**
+e pulam o container de propósito — pra alvos que já rodam seu próprio
+Docker, onde aninhar containers é o problema — mas custam as duas
+coisas que o container garantia (isolamento de credenciais e teto de
+memória), e o huu avisa em toda execução assim; `--docker` é o espelho,
+força o container mesmo com um runtime `native` salvo. No primeiro
+`npm start`, `huu setup` pergunta a interface e o runtime e salva a
+escolha em `~/.config/huu/config.json` — reabra a qualquer hora com
+`huu setup`. Precedência: **flag > env > config salva > default**. Só
+`--help` e os utilitários de host (`init-docker`, `status`, `prune`)
+rodam fora do container. Matriz completa de instalação (macOS / Windows
+/ Linux, notas do OrbStack, caveats do WSL2):
 [`docs/onboarding.pt-BR.md#instalação`](docs/onboarding.pt-BR.md#instalação).
 
 A UI (web por padrão, ou a TUI com `--cli`) abre num dashboard: comece
@@ -197,10 +203,11 @@ mesmo Orchestrator da TUI; só muda a cara. A flag **`--cli`** volta pra
 TUI no terminal.
 
 - **Padrão e sem fricção.** `huu` → web. `huu --cli` → terminal. O
-  front-end (web/CLI) é ortogonal ao runtime — que é **sempre o
-  container** (o huu é docker-only).
-- **Sempre no Docker.** O servidor sobe dentro do container e a porta é
-  publicada pro host (`-p`) automaticamente.
+  front-end (web/CLI) é ortogonal ao runtime — que é **o container por
+  padrão** (`huu setup` também deixa escolher `native`, e `--docker` /
+  `--no-docker` decidem pontualmente).
+- **No Docker por padrão.** O servidor sobe dentro do container e a
+  porta é publicada pro host (`-p`) automaticamente.
 - **Na sua rede.** Por padrão escuta em `0.0.0.0` — abra do celular ou de
   outra máquina via `http://<ip-da-sua-máquina>:4888`. Tempo real por
   Server-Sent Events (reconecta sozinho), zero dependência nova (só
@@ -829,6 +836,19 @@ objetivo). Cada metade é uma rota de verdade (`/` e `/dev`, favoritáveis), mas
 o clique troca a view sem recarregar, então o stream SSE e o quadro de runs
 sobrevivem.
 
+**Duas superfícies para acompanhar.** No terminal, `huu dev "<objetivo>" --cli`
+desenha um **kanban ao vivo** (o mesmo do dashboard de pipelines) em vez do log
+corrido — e pinta em **stderr**, então o objeto JSON que o `huu dev` escreve em
+stdout segue byte a byte idêntico e nenhum script quebra; sem TTY, cai no log
+de sempre. Os portões `y/N` são respondidos dentro do frame (`y`/`s` = sim,
+qualquer outra tecla = não), `Ctrl+C` sai 130. Na web, com `--debate` ligado, a
+`/dev` ganha um botão **Debate** que abre os dois lados como conversa: **ao
+vivo** pelo firehose de saída dos agentes — a única forma de ver acontecendo,
+já que cada brief é escrito no worktree isolado do seu agente e só chega ao
+quadro-negro depois do merge da onda — e **assentado** depois, lido dos
+`A.md`/`B.md` mergeados e parseado no servidor. Sem `--debate` o botão nem
+aparece.
+
 **Fase 0 — portão de knowledge.** Antes de desenvolver, o huu verifica se o
 projeto tem knowledge-skills (`.agents/skills/catalog.md`, skill roteadora, ou
 `.claude/skills/`). Se não tiver, roda o pipeline `huu Knowledge System` em
@@ -973,12 +993,15 @@ Construa pipes em cima: `huu auto … | jq .runId`. Doc completa:
 
 ## Rodando no CI (GitHub Actions / GitLab)
 
-O huu é **docker-only** também no CI: a execução nativa foi removida
-(`--no-docker` / `HUU_NO_DOCKER` são ignoradas com um aviso e o huu
-re-executa no container mesmo assim). O job precisa de um runner com
-**Docker disponível** (os runners hospedados do GitHub já têm) — rode o
-huu normalmente em modo headless e fixe a imagem com `HUU_IMAGE` pra
-builds reprodutíveis:
+O huu é **docker por padrão** também no CI: sem flag, sem env e sem
+runtime `native` salvo, todo run executa no container. `--no-docker` /
+`HUU_NO_DOCKER=1` funcionam igual num runner de CI e rodam nativo — mas
+aí é você quem perde o teto de memória do container, não uma limitação
+do huu. O gate de primeiro uso nunca trava um job sem TTY (ele segue
+com os defaults e avisa em uma linha); `HUU_SKIP_SETUP=1` silencia esse
+aviso. O job precisa de um runner com **Docker disponível** (os
+runners hospedados do GitHub já têm) — rode o huu normalmente em modo
+headless e fixe a imagem com `HUU_IMAGE` pra builds reprodutíveis:
 
 ```yaml
 env:

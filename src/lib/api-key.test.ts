@@ -1,11 +1,27 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   API_KEY_REGISTRY,
+  CORRUPT_BACKUP_INFIX,
+  MAX_CORRUPT_BACKUPS,
   clearStoredApiKey,
   configFilePath,
+  readConfigStore,
+  writeConfigStore,
   findMissingKeysForBackend,
   findMissingKeysForProvider,
   findMissingRequiredKeys,
@@ -669,6 +685,325 @@ describe('api-key registry', () => {
       expect(maskKey('')).toBe('(none)');
       expect(maskKey('   ')).toBe('(none)');
       expect(maskKey('short')).toBe('••••');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The credential-destruction guard.
+  //
+  // `readConfigStore()` answers `{}` for a file it cannot parse, so the NEXT
+  // write of any module — `saveApiKey`, the key pool, the setup record — used
+  // to serialize that emptiness over the user's keys. A truncated config still
+  // holds the key AS TEXT and is recoverable by hand, but only while the bytes
+  // are still on disk. These tests pin the copy, its permissions, its bound,
+  // and the fact that a failed copy never blocks the real write.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('a config.json that cannot be parsed is preserved before it is replaced', () => {
+    /** Truncated mid-object: invalid JSON, and the key is still plainly there. */
+    const BROKEN = '{\n  "deepseek": "sk-ds-OLD-STILL-READABLE",\n  "_pools": { "deep';
+
+    const writeRawConfig = (contents: string, mode = 0o600): void => {
+      const path = configFilePath();
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, contents, { mode });
+    };
+
+    const backups = (): string[] => {
+      const dir = dirname(configFilePath());
+      try {
+        return readdirSync(dir)
+          .filter((n) => n.includes(CORRUPT_BACKUP_INFIX))
+          .sort()
+          .map((n) => join(dir, n));
+      } catch {
+        return [];
+      }
+    };
+
+    /** The name `preserveCorruptConfig` builds — deterministic, hence predictable. */
+    const backupPathFor = (when: Date): string =>
+      `${configFilePath()}${CORRUPT_BACKUP_INFIX}${when.toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
+
+    let warnings: string[];
+    beforeEach(() => {
+      warnings = [];
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      });
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    it('keeps the old key recoverable by hand after the write that replaced it', () => {
+      writeRawConfig(BROKEN);
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      // The new write landed, and the store is clean again.
+      expect(loadStoredApiKey(findSpec('deepseek')!)).toBe('sk-ds-NEW');
+      expect(readConfigStore()).toEqual({ deepseek: 'sk-ds-NEW' });
+
+      // …and the bytes that held the OLD key are still on disk, verbatim.
+      const kept = backups();
+      expect(kept).toHaveLength(1);
+      expect(readFileSync(kept[0]!, 'utf8')).toBe(BROKEN);
+      expect(readFileSync(kept[0]!, 'utf8')).toContain('sk-ds-OLD-STILL-READABLE');
+    });
+
+    it('tells the user on stderr, naming both the file and the copy', () => {
+      writeRawConfig(BROKEN);
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      const said = warnings.join('\n');
+      expect(said).toContain(configFilePath());
+      expect(said).toContain(backups()[0]!);
+    });
+
+    it('gives the copy mode 0600 even when the broken file was world-readable', () => {
+      writeRawConfig(BROKEN, 0o644);
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      expect((statSync(backups()[0]!).mode & 0o777).toString(8)).toBe('600');
+      // And the replacement is tightened too — a 0644 config does not survive.
+      expect((statSync(configFilePath()).mode & 0o777).toString(8)).toBe('600');
+    });
+
+    it('preserves valid JSON that is not an object — readConfigStore discards it just the same', () => {
+      writeRawConfig('[1, 2, 3]');
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      expect(readFileSync(backups()[0]!, 'utf8')).toBe('[1, 2, 3]');
+    });
+
+    it('preserves the bytes verbatim, not a re-encoded string', () => {
+      // Half UTF-8, half binary: the ASCII key text must survive byte for byte,
+      // so a copy that round-tripped through a JS string would fail here.
+      const bytes = Buffer.concat([
+        Buffer.from('{ "deepseek": "sk-ds-BINARY-NEIGHBOUR", '),
+        Buffer.from([0xff, 0xfe, 0x00, 0x80]),
+      ]);
+      mkdirSync(dirname(configFilePath()), { recursive: true, mode: 0o700 });
+      writeFileSync(configFilePath(), bytes, { mode: 0o600 });
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      expect(readFileSync(backups()[0]!).equals(bytes)).toBe(true);
+    });
+
+    it('copies nothing when the config is healthy (no litter on the happy path)', () => {
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-one');
+      saveApiKey(findSpec('openrouter')!, 'sk-or-two');
+      clearStoredApiKey(findSpec('openrouter')!);
+
+      expect(backups()).toEqual([]);
+      expect(readdirSync(dirname(configFilePath()))).toEqual(['config.json']);
+    });
+
+    it('copies nothing for an empty file — there is nothing in it to recover', () => {
+      writeRawConfig('   \n');
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+
+      expect(backups()).toEqual([]);
+      expect(loadStoredApiKey(findSpec('deepseek')!)).toBe('sk-ds-NEW');
+    });
+
+    it(`never keeps more than ${MAX_CORRUPT_BACKUPS} copies, however often the file comes back broken`, () => {
+      // The pile this bounds is a pile of CREDENTIAL files, and a boot-path
+      // write is what creates it — so "corrupt again on every run" must not
+      // grow without limit. Time is faked so the six copies get six distinct
+      // (and chronologically sorted) names inside one millisecond of real time.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const start = Date.parse('2026-09-05T12:00:00.000Z');
+      for (let i = 0; i < 6; i++) {
+        vi.setSystemTime(new Date(start + i * 1000));
+        writeRawConfig(`{ "deepseek": "sk-ds-GEN-${i}", broken`);
+        saveApiKey(findSpec('deepseek')!, `sk-ds-NEW-${i}`);
+      }
+
+      const kept = backups();
+      expect(kept).toHaveLength(MAX_CORRUPT_BACKUPS);
+      // The ones kept are the NEWEST — the generation whose key the user most
+      // likely still uses.
+      expect(readFileSync(kept[kept.length - 1]!, 'utf8')).toContain('sk-ds-GEN-5');
+      expect(readFileSync(kept[0]!, 'utf8')).toContain('sk-ds-GEN-3');
+    });
+
+    it('does not mint a second copy of a file it already preserved byte for byte', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-09-05T12:00:00.000Z'));
+      writeRawConfig(BROKEN);
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-ONE');
+
+      vi.setSystemTime(new Date('2026-09-05T13:00:00.000Z'));
+      writeRawConfig(BROKEN); // the same breakage, again
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-TWO');
+
+      expect(backups()).toHaveLength(1);
+    });
+
+    it('still writes the config when the copy itself fails, and says the old bytes are gone', () => {
+      // THE DECISION, pinned: losing the broken file is bad, refusing to save a
+      // credential (or to finish the boot-time setup) is worse. A directory
+      // squatting on the copy's path is the portable stand-in for "the copy
+      // cannot be created".
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const when = new Date('2026-09-05T12:00:00.000Z');
+      vi.setSystemTime(when);
+      writeRawConfig(BROKEN);
+      mkdirSync(backupPathFor(when), { recursive: true });
+
+      expect(() => saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW')).not.toThrow();
+
+      expect(loadStoredApiKey(findSpec('deepseek')!)).toBe('sk-ds-NEW');
+      const said = warnings.join('\n');
+      expect(said).toContain(configFilePath());
+      expect(said).toMatch(/could not save a copy/i);
+    });
+
+    it('refuses to replace a config it cannot even read, instead of renaming over it', () => {
+      // `rename` needs only the DIRECTORY to be writable, so without the guard
+      // an unreadable (mode 000) credential file would be destroyed by a write
+      // that could never have read it. Root ignores the mode bits, so the
+      // assertion only means anything as a normal user.
+      writeRawConfig(BROKEN, 0o000);
+      if (process.getuid?.() === 0) return;
+
+      expect(() => saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW')).toThrow();
+      expect(statSync(configFilePath()).size).toBe(BROKEN.length);
+    });
+  });
+
+  describe('writeConfigStore is atomic (the credential file is never left truncated)', () => {
+    it('swaps in a new inode instead of truncating the file already there', () => {
+      // Observable consequence of `rename`, no timing and no crash simulation:
+      // a truncating write reuses the inode, a rename replaces it.
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-first');
+      const first = statSync(configFilePath()).ino;
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-second');
+
+      expect(statSync(configFilePath()).ino).not.toBe(first);
+      expect(loadStoredApiKey(findSpec('deepseek')!)).toBe('sk-ds-second');
+    });
+
+    it('never shows a concurrent reader a half-written config', () => {
+      // The reader that opened the file BEFORE the write — a backup tool, the
+      // user's `cat`, a second huu — keeps reading the COMPLETE previous
+      // version through its descriptor.
+      writeConfigStore({ deepseek: 'sk-ds-before', filler: 'x'.repeat(4096) });
+      const before = readFileSync(configFilePath(), 'utf8');
+      const reader = openSync(configFilePath(), 'r');
+      try {
+        writeConfigStore({ deepseek: 'sk-ds-after' });
+        const buf = Buffer.alloc(before.length * 4);
+        const read = readSync(reader, buf, 0, buf.length, 0);
+        expect(buf.subarray(0, read).toString('utf8')).toBe(before);
+      } finally {
+        closeSync(reader);
+      }
+      expect(loadStoredApiKey(findSpec('deepseek')!)).toBe('sk-ds-after');
+    });
+
+    it('keeps mode 0600 through the rename, even under umask 000', () => {
+      // The cost of the new inode: `rename` installs a file created with
+      // `mode & ~umask`, so the bits of the file it replaced are gone. Under
+      // umask 000 a forgotten chmod shows up as 0666 on a file full of keys.
+      const previousUmask = process.umask(0o000);
+      try {
+        saveApiKey(findSpec('deepseek')!, 'sk-ds-first');
+        expect((statSync(configFilePath()).mode & 0o777).toString(8)).toBe('600');
+        expect((statSync(dirname(configFilePath())).mode & 0o777).toString(8)).toBe('700');
+
+        saveApiKey(findSpec('deepseek')!, 'sk-ds-second'); // the REPLACE path
+        expect((statSync(configFilePath()).mode & 0o777).toString(8)).toBe('600');
+      } finally {
+        process.umask(previousUmask);
+      }
+    });
+
+    it('reaches 0600 even under a umask that strips the write bit off the staging file', () => {
+      // The other half of the mode claim, and the only case where the chmod
+      // AFTER the rename is what does the work: `open(2)` applies `mode & ~umask`
+      // to the staging file too, so under umask 0277 the file the rename
+      // installs is 0400 — readable, but the user could no longer edit it and
+      // some tools would call the store read-only.
+      // The directory is created first: `mkdirSync(…, { mode: 0o700 })` is
+      // subject to the same umask, and a 0500 config dir would fail the write
+      // for an unrelated reason.
+      mkdirSync(dirname(configFilePath()), { recursive: true, mode: 0o700 });
+      const previousUmask = process.umask(0o277);
+      try {
+        saveApiKey(findSpec('deepseek')!, 'sk-ds-first');
+        expect((statSync(configFilePath()).mode & 0o777).toString(8)).toBe('600');
+      } finally {
+        process.umask(previousUmask);
+      }
+    });
+
+    it('gives the corrupt-config copy 0600 under umask 000 too', () => {
+      const previousUmask = process.umask(0o000);
+      try {
+        mkdirSync(dirname(configFilePath()), { recursive: true, mode: 0o700 });
+        writeFileSync(configFilePath(), '{ "deepseek": "sk-ds-OLD", broken', { mode: 0o600 });
+        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+          saveApiKey(findSpec('deepseek')!, 'sk-ds-NEW');
+        } finally {
+          quiet.mockRestore();
+        }
+        const copy = readdirSync(dirname(configFilePath())).find((n) =>
+          n.includes(CORRUPT_BACKUP_INFIX),
+        )!;
+        expect((statSync(join(dirname(configFilePath()), copy)).mode & 0o777).toString(8)).toBe(
+          '600',
+        );
+      } finally {
+        process.umask(previousUmask);
+      }
+    });
+
+    it('leaves no staging file behind on the happy path', () => {
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-first');
+      saveApiKey(findSpec('openrouter')!, 'sk-or-second');
+      clearStoredApiKey(findSpec('deepseek')!);
+
+      expect(readdirSync(dirname(configFilePath()))).toEqual(['config.json']);
+    });
+
+    it('sweeps the staging file when the write fails, and still reports the failure', () => {
+      // A DIRECTORY where config.json belongs: `rename` cannot replace it.
+      // Without the cleanup branch this leaves a `*.huu.tmp` nobody lists and
+      // nobody deletes — in a directory that is supposed to hold one file.
+      mkdirSync(configFilePath(), { recursive: true });
+
+      expect(() => writeConfigStore({ deepseek: 'sk-ds-NEW' })).toThrow();
+
+      expect(
+        readdirSync(dirname(configFilePath())).filter((n) => n.includes('.huu.tmp')),
+      ).toEqual([]);
+    });
+
+    it('writes THROUGH a symlink instead of replacing it', () => {
+      // `writeFileSync` follows a symlink; `rename` does not. A user who keeps
+      // config.json in a dotfiles repo must not find their link silently
+      // swapped for a regular file the next time huu saves a key.
+      const real = join(tmpDir, 'dotfiles', 'huu.json');
+      mkdirSync(dirname(real), { recursive: true });
+      writeFileSync(real, '{}', { mode: 0o600 });
+      mkdirSync(dirname(configFilePath()), { recursive: true, mode: 0o700 });
+      symlinkSync(real, configFilePath());
+
+      saveApiKey(findSpec('deepseek')!, 'sk-ds-through');
+
+      expect(JSON.parse(readFileSync(real, 'utf8'))).toEqual({ deepseek: 'sk-ds-through' });
+      expect(readdirSync(dirname(configFilePath()))).toEqual(['config.json']);
+      expect(readdirSync(dirname(real)).sort()).toEqual(['huu.json']);
     });
   });
 });

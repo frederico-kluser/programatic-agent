@@ -11,10 +11,14 @@ import { resolve as resolvePath } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 import {
   decideReexec,
-  hasNativeBypass,
   isDevNativeMode,
   reexecInDocker,
 } from './lib/docker-reexec.js';
+// Dependency-light on purpose (readline + the key registry, no React): the
+// first-run setup runs on the wrapper path, before the Docker gate.
+import { runSetupGate } from './lib/setup-prompt.js';
+import { resolveSetupChoices, SETUP_SUBCOMMAND } from './lib/setup-flow.js';
+import { loadSetupConfig } from './lib/setup-config.js';
 import { ensureSurfKeysInContainer } from './lib/surf-research.js';
 import { decideCgroupWrap, reexecInCgroupScope } from './lib/cgroup-self-wrap.js';
 import { API_KEY_REGISTRY, configFilePath } from './lib/api-key.js';
@@ -52,15 +56,55 @@ initI18n(process.env);
   }
 }
 
-const reexec = decideReexec(process.argv.slice(2), process.env);
-if (reexec.shouldReexec) {
-  // Defensive: with the bypasses honored in decideReexec (--yolo/--no-docker/
-  // HUU_NO_DOCKER), no bypass can coexist with a re-exec — any of them
-  // short-circuits before this branch. Belt-and-suspenders in case a future
-  // bypass spelling ever diverges from decideReexec's own checks.
-  if (hasNativeBypass(process.argv.slice(2), process.env)) {
-    process.stderr.write(t('cli.warn_native_removed') + '\n');
+// FIRST-RUN SETUP — before the Docker gate, and that ordering is the feature.
+//
+// The flow is what decides whether this invocation should even go near a
+// container, so it cannot run downstream of the decision it feeds. It also has
+// to reach the user's real terminal, which only exists out here on the host:
+// once `reexecInDocker` takes over, stdin belongs to the container.
+//
+// Everything it needs to be safe on this path is in `setup-prompt.ts`: it is
+// readline-only (no React/Ink, so the wrapper stays cheap and stdin has a
+// single consumer), it never opens stdin when there is nothing to ask or
+// nobody to answer, and `decideSetupGate` keeps `--help`, `huu status` and the
+// in-container pass out of it entirely.
+//
+// `huu setup` is dispatched HERE rather than in `main()` for two reasons: it
+// must not be filtered by the CLI-global flag stripping further down, and it
+// must work outside a git repo — `ensureGitRepoOrExit` would otherwise refuse
+// to let someone configure huu before they had a repo to point it at.
+{
+  const setupArgs = process.argv.slice(2);
+  const isSetupCommand = setupArgs.find((a) => !a.startsWith('-')) === SETUP_SUBCOMMAND;
+  const gate = await runSetupGate({ args: setupArgs, env: process.env });
+  if (gate.outcome.aborted) {
+    // Ctrl+C / EOF during the questions. 130 is the shell's own "terminated by
+    // SIGINT" — the flow always has an exit, and it is the conventional one.
+    process.exit(130);
   }
+  if (isSetupCommand) {
+    // `huu setup` configures and stops. Starting a run afterwards would make
+    // the command impossible to use as "just let me change my mind".
+    process.exit(0);
+  }
+}
+
+// The saved choices, read ONCE and threaded into both decisions below. Loading
+// it here (rather than inside each decider) keeps `decideReexec` and
+// `decideInterfaceMode` pure over their inputs, which is what lets the test
+// suite drive every precedence branch without a config file.
+//
+// `resolveSetupChoices` lets the `npm start` wrapper (and, through the docker
+// passthrough, the container) hand down what its gate just resolved. The disk
+// is the source of truth only while the disk could be WRITTEN: when
+// `markSetupComplete` fails, the gate's answers exist nowhere else, and a child
+// that ignored them would re-exec into Docker after the wrapper had already
+// skipped the image build for a native run. Same tier as the file it replaces —
+// flags and env bypasses still outrank both.
+const savedSetup = resolveSetupChoices(loadSetupConfig(), process.env);
+
+const reexec = decideReexec(process.argv.slice(2), process.env, savedSetup);
+if (reexec.shouldReexec) {
   // Host-side git preflight: fail fast BEFORE pulling/launching docker.
   // Also discovers any git paths (worktree common-dir, parent toplevel)
   // that the wrapper must additionally bind-mount so `git` resolves
@@ -73,7 +117,7 @@ if (reexec.shouldReexec) {
   // Web is the default front-end. When the run will land in the container,
   // publish the web port so the host browser reaches the in-container
   // server, and pin HUU_WEB_PORT so both sides agree on the number.
-  const webMode = decideInterfaceMode(process.argv.slice(2), process.env) === 'web';
+  const webMode = decideInterfaceMode(process.argv.slice(2), process.env, savedSetup) === 'web';
   const webPort = resolveWebPort(process.argv.slice(2), process.env);
   if (webMode) {
     process.env.HUU_WEB_PORT = String(webPort);
@@ -146,7 +190,8 @@ import { runStatusCli } from './lib/status.js';
 import { runPruneCli } from './lib/prune.js';
 import { loadRunConfig, applyRunConfig } from './lib/run-config.js';
 import { runHeadless } from './lib/headless-run.js';
-import { runDevCli } from './lib/dev-mode/dev-cli.js';
+import { runDevCli, type DevCliPresenter } from './lib/dev-mode/dev-cli.js';
+import { createDevDashboardPresenter } from './ui/components/DevDashboard.js';
 import { runGraphCli } from './lib/graph-cli.js';
 
 import { installCrashGuard } from './lib/crash-guard.js';
@@ -413,12 +458,11 @@ async function main(): Promise<void> {
   }
 
   const useStub = args.includes('--stub');
-  // Any native bypass — flag or env — triggers the same no-isolation warning.
-  const useYolo =
-    args.includes('--yolo') ||
-    args.includes('--no-docker') ||
-    process.env.HUU_NO_DOCKER === '1' ||
-    process.env.HUU_NO_DOCKER === 'true';
+  // Any native run the USER chose — a bypass flag, HUU_NO_DOCKER, or the
+  // `native` runtime saved by `huu setup` — triggers the same no-isolation
+  // warning. Read off the gate's own decision rather than re-parsing argv, so
+  // a new spelling can never reach the host with the warning left behind.
+  const useYolo = reexec.nativeByChoice === true;
   const concurrencyArg = args
     .filter((a) => a.startsWith('--concurrency='))
     .map((a) => Number(a.slice('--concurrency='.length)))
@@ -500,6 +544,7 @@ async function main(): Promise<void> {
       a !== '--stub' &&
       a !== '--yolo' &&
       a !== '--no-docker' &&
+      a !== '--docker' &&
       a !== '--auto-scale' &&
       a !== '--no-auto-scale' &&
       a !== '--cli' &&
@@ -687,6 +732,43 @@ async function main(): Promise<void> {
   // pipeline file: the planner writes one per epoch and huu compiles it into
   // the same `dependsOn` wave graph a hand-authored pipeline would produce.
   if (filtered[0] === 'dev') {
+    // THE LIVE BOARD, and why it reads `args` instead of `filtered`.
+    //
+    // `--cli`/`--tui`/`--web` are CLI-GLOBAL flags: they were stripped from
+    // `filtered` above so no subcommand parser ever sees them, which means
+    // `runDevCli` cannot discover the user's front-end choice on its own. The
+    // decision therefore happens HERE, off the unfiltered argv, through the
+    // very same `decideInterfaceMode` the front-end fork below uses — a dev
+    // session should not need a second vocabulary for "give me the TUI".
+    //
+    // Only an EXPLICIT 'cli' opts in. `decideInterfaceMode` defaults to `web`,
+    // but `huu dev`'s default is neither web nor TUI: it is the headless log
+    // plus one JSON object on stdout, and that is a contract scripts consume.
+    // So a plain `huu dev` keeps behaving exactly as it does today, and
+    // `huu dev --cli` (or `--tui`, or `HUU_CLI=1`) renders the kanban.
+    //
+    // The board paints on STDERR — never stdout — so even with it on, the JSON
+    // verdict is byte-identical. See src/ui/components/DevDashboard.tsx.
+    //
+    // A FACTORY, not an instance. `runDevCli` refuses a bad flag, a missing
+    // `--model`, an unknown graph and an unroutable model BEFORE any session
+    // opens, and those refusals are plain stderr text the user has to read.
+    // Mounting Ink here — the moment `--cli` is seen, before argv is even
+    // parsed — painted an empty 31-line board on top of every one of them, and
+    // never unmounted it (the early `return 1` never reaches `close()`). So the
+    // decision is made here and the MOUNT happens inside `runDevCli`, at the
+    // one line where the session is actually about to start.
+    let devPresenterFactory: (() => DevCliPresenter) | undefined;
+    if (decideInterfaceMode(args, process.env, savedSetup) === 'cli') {
+      if (process.stderr.isTTY) {
+        devPresenterFactory = () => createDevDashboardPresenter();
+      } else {
+        // No terminal to draw on (a pipe, a log file, CI). Refusing the run
+        // would be hostile; silently drawing a board nobody can read would be
+        // worse. Say it once and keep the plain log.
+        process.stderr.write(t('tui.dev.no_tty') + '\n');
+      }
+    }
     // The provider travels WITH the backend, never re-derived downstream: it is
     // what names the credential `runDevCli` resolves, the base URL the planner's
     // chat client dials and the `--provider-profile` every jcode agent spawns
@@ -700,6 +782,7 @@ async function main(): Promise<void> {
       ...(providerFromCli ? { provider: providerFromCli } : {}),
       concurrency: concurrencyArg,
       autoScale,
+      ...(devPresenterFactory ? { presenterFactory: devPresenterFactory } : {}),
     });
     process.exit(code);
   }
@@ -736,7 +819,7 @@ async function main(): Promise<void> {
   // HUU_CLI=1) keep the Ink TUI. Both drive the same Orchestrator — the
   // only difference is the face the user sees. Decided AFTER the git +
   // subcommand gates so `huu auto/status/init-docker/--help` are unaffected.
-  const interfaceMode = decideInterfaceMode(args, process.env);
+  const interfaceMode = decideInterfaceMode(args, process.env, savedSetup);
 
   // Capture stray console.* + Node `warning` events into the process log
   // bridge. For the TUI (patchConsole:false below) this stops stray writes

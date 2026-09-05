@@ -1,5 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunLogger, RUN_LOG_DIR } from './run-logger.js';
@@ -254,5 +265,156 @@ describe('RunLogger', () => {
     const logPath = logger.flush(manifest, integration, [makeAgent(1)]);
     expect(logPath).not.toBeNull();
     expect(existsSync(manifestPath), 'manifest should still exist after full flush').toBe(true);
+  });
+});
+
+describe('RunLogger.flushManifest is atomic', () => {
+  // THE GUARD for the tmp+rename write behind `flushManifest`. A plain
+  // `writeFileSync` onto `manifest-<runId>.json` truncates it first, and
+  // `flushManifest` runs at EVERY stage boundary of every run — not once at
+  // the end — so an external tool or a human tailing `.huu/` fast enough to
+  // open the file inside the truncate→write window would see a JSON document
+  // cut off mid-object. Every assertion below observes the OBSERVABLE
+  // CONSEQUENCE of rename rather than the implementation: rename swaps in a
+  // new inode, a truncating write reuses the old one.
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'pa-runlog-atomic-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function manifestPathFor(runId: string): string {
+    return join(tmp, RUN_LOG_DIR, `manifest-${runId}.json`);
+  }
+
+  /** A manifest fat enough that a truncating rewrite is visibly not instantaneous. */
+  function bigManifest(runId: string, startedAt: number, marker: string): RunManifest {
+    const m = makeManifest(runId, startedAt);
+    m.agentEntries = Array.from({ length: 300 }, (_, i) => ({
+      agentId: i,
+      branchName: `huu/${runId}/agent-${i}`,
+      worktreePath: `/tmp/wt-${i}`,
+      files: [`src/file-${i}.ts`],
+      status: 'done',
+      commitSha: `${marker}-${i}`.padEnd(40, '0').slice(0, 40),
+      pushStatus: 'skipped',
+      cleanupDone: true,
+      noChanges: false,
+      stageIndex: 0,
+      stageName: `${marker} — stage ${i}`,
+    }));
+    return m;
+  }
+
+  it('swaps in a new inode instead of truncating the manifest file already there', () => {
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic1', pipelineName: 'p', startedAt });
+    logger.flushManifest(makeManifest('atomic1', startedAt));
+    const path = manifestPathFor('atomic1');
+    const firstInode = statSync(path).ino;
+
+    logger.flushManifest({ ...makeManifest('atomic1', startedAt), status: 'error' });
+
+    expect(statSync(path).ino).not.toBe(firstInode);
+    expect(JSON.parse(readFileSync(path, 'utf8')).status).toBe('error');
+  });
+
+  it('leaves no staging file behind after a successful flush', () => {
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic2', pipelineName: 'p', startedAt });
+    logger.flushManifest(makeManifest('atomic2', startedAt));
+
+    expect(readdirSync(join(tmp, RUN_LOG_DIR))).toEqual(['manifest-atomic2.json']);
+  });
+
+  it('does not accumulate staging files across repeated stage-boundary flushes', () => {
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic3', pipelineName: 'p', startedAt });
+    for (let i = 0; i < 10; i++) {
+      logger.flushManifest({ ...makeManifest('atomic3', startedAt), totalStages: i });
+    }
+
+    expect(readdirSync(join(tmp, RUN_LOG_DIR))).toEqual(['manifest-atomic3.json']);
+    expect(JSON.parse(readFileSync(manifestPathFor('atomic3'), 'utf8')).totalStages).toBe(9);
+  });
+
+  it('removes the staging file when the underlying write fails, without throwing', () => {
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic4', pipelineName: 'p', startedAt });
+    const path = manifestPathFor('atomic4');
+    // A DIRECTORY sitting where the manifest belongs: rename cannot replace
+    // it. Without the cleanup branch this leaves a `*.huu.tmp` nobody lists
+    // and nobody deletes, in the user's own repo. flushManifest is best-effort
+    // by contract, so the call itself must not throw either.
+    mkdirSync(path, { recursive: true });
+
+    expect(() => logger.flushManifest(makeManifest('atomic4', startedAt))).not.toThrow();
+
+    const dirFiles = readdirSync(join(tmp, RUN_LOG_DIR));
+    expect(dirFiles.filter((f) => f.includes('.huu.tmp'))).toEqual([]);
+  });
+
+  it('a reader with the file already open never observes a half-written manifest', () => {
+    // A reader that opened the file BEFORE the flush — an external tool
+    // tailing `.huu/`, a second huu instance probing state — keeps reading
+    // the COMPLETE previous version through its descriptor: rename unlinks
+    // the old inode, it does not rewrite it in place. Under a truncating
+    // write the same descriptor would follow the flush into whatever bytes
+    // land there next.
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic5', pipelineName: 'p', startedAt });
+    logger.flushManifest(makeManifest('atomic5', startedAt));
+    const path = manifestPathFor('atomic5');
+    const previous = readFileSync(path, 'utf8');
+    JSON.parse(previous); // sanity: the "previous" snapshot itself must be valid
+
+    const reader = openSync(path, 'r');
+    try {
+      logger.flushManifest(bigManifest('atomic5', startedAt, 'depois'));
+      const buffer = Buffer.alloc(previous.length * 8);
+      const read = readSync(reader, buffer, 0, buffer.length, 0);
+      expect(buffer.subarray(0, read).toString('utf8')).toBe(previous);
+    } finally {
+      closeSync(reader);
+    }
+
+    // …and the new manifest landed intact and parseable too.
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    expect(after.agentEntries).toHaveLength(300);
+  });
+
+  it('any snapshot an external reader takes is either no file yet or a complete, parseable JSON document', () => {
+    // Simulates a fast external reader polling the manifest across MANY
+    // successive stage-boundary flushes (the real-world scenario the bug
+    // report describes) by re-reading the file after every single flush and
+    // asserting it is never a truncated fragment.
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic6', pipelineName: 'p', startedAt });
+    const path = manifestPathFor('atomic6');
+
+    for (let i = 0; i < 25; i++) {
+      logger.flushManifest(bigManifest('atomic6', startedAt, `iter-${i}`));
+      if (!existsSync(path)) continue; // absent is an acceptable observation too
+      const raw = readFileSync(path, 'utf8');
+      expect(() => JSON.parse(raw)).not.toThrow();
+    }
+  });
+
+  it('keeps the exact JSON.stringify(_, null, 2) formatting — no trailing newline added', () => {
+    // THE FORMAT IS NOT PART OF THE CHANGE. Atomicity is about HOW the bytes
+    // reach the disk; this pins the bytes themselves so a future rewrite of
+    // the helper cannot quietly reformat a file external tools already parse.
+    const startedAt = Date.now();
+    const logger = new RunLogger({ repoRoot: tmp, runId: 'atomic7', pipelineName: 'p', startedAt });
+    const manifest = makeManifest('atomic7', startedAt);
+    logger.flushManifest(manifest);
+
+    const raw = readFileSync(manifestPathFor('atomic7'), 'utf8');
+    expect(raw.endsWith('\n')).toBe(false);
+    expect(raw).toContain('"runId": "atomic7"');
   });
 });

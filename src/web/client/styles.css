@@ -1347,6 +1347,56 @@ input[type='range'] { flex: 1; accent-color: var(--accent); }
 .dev-epoch--error, .dev-epoch--err { border-left-color: var(--red); }
 
 .dev-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+/* ---------------- The debate chat (/dev, `--debate` only) ----------------
+   A transcript, not a form: one column of rounds, the two sides offset to
+   opposite edges and the gate centred between them so a glance reads WHO is
+   talking before it reads what was said. Tokens only — the "magenta = AI" rule
+   is Ink's; the web accent pair carries the same meaning here. */
+.dbt {
+  margin-top: 14px; padding: 12px 14px;
+  border: 1px solid var(--separator); border-radius: var(--radius-sm); background: var(--elev-2);
+}
+.dbt__head { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 13.5px; }
+.dbt__head > .muted { flex: 1; font-weight: 400; font-size: 12px; }
+.dbt__sub { margin: 6px 0 10px; font-size: 12px; }
+.dbt__log { display: grid; gap: 14px; max-height: 60vh; overflow-y: auto; }
+.dbt__round { display: grid; gap: 8px; }
+.dbt__round-h {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3);
+  border-bottom: 1px solid var(--separator); padding-bottom: 4px;
+}
+.dbt__msg {
+  max-width: 86%; padding: 9px 11px; border-radius: var(--radius-xs);
+  background: var(--elev); border: 1px solid var(--separator); font-size: 12.5px;
+}
+.dbt__msg--advocate { border-left: 3px solid var(--accent); }
+.dbt__msg--prosecutor { margin-left: auto; border-right: 3px solid var(--accent-2); }
+.dbt__msg--gate { max-width: 100%; background: var(--glass); border-style: dashed; }
+.dbt__msg.is-live { box-shadow: 0 0 0 1px var(--accent-soft); }
+/* A crashed debater must not look like a settled one at a glance either. */
+.dbt__msg.is-failed { border-color: var(--red); }
+.dbt__who { display: flex; gap: 8px; align-items: baseline; font-weight: 650; margin-bottom: 6px; }
+.dbt__tag { font-size: 11px; font-weight: 400; color: var(--text-3); }
+.dbt__msg.is-live .dbt__tag { color: var(--accent); }
+.dbt__msg.is-failed .dbt__tag { color: var(--red); }
+.dbt__body { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.dbt__raw {
+  margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap;
+  font-size: 11.5px; line-height: 1.45; color: var(--text-2);
+}
+.dbt__note { margin: 0; font-size: 12px; color: var(--text-3); }
+.dbt__sec { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin-top: 4px; }
+.dbt__item { padding: 6px 8px; border-radius: var(--radius-xs); background: var(--elev-2); display: grid; gap: 3px; }
+.dbt__item-h { font-weight: 600; }
+.dbt__f { display: grid; grid-template-columns: 92px 1fr; gap: 8px; font-size: 12px; align-items: baseline; }
+.dbt__list { margin: 0; padding-left: 18px; font-size: 12px; }
+.dbt__v { padding: 4px 0; border-bottom: 1px solid var(--separator); }
+.dbt__v--for b { color: var(--green); }
+.dbt__v--against b { color: var(--red); }
+.dbt__gate-why { margin-top: 4px; color: var(--text-2); }
+.dbt__cover { font-size: 12px; color: var(--orange); padding-top: 4px; }
+#devDebateToggle.is-on { border-color: var(--accent); color: var(--accent); }
 #devLogs { max-height: 220px; }
 
 /* ============================================================

@@ -14,7 +14,6 @@ import {
   type AgentBackendKind,
 } from '../orchestrator/backends/registry.js';
 import {
-  detectForeignKeySpec,
   findSpec,
   maskKey,
   resolveApiKey,
@@ -22,6 +21,10 @@ import {
   findMissingKeysForProvider,
   type ApiKeySpec,
 } from '../lib/api-key.js';
+import {
+  validateKeyForSpec,
+  type KeyVerdict,
+} from '../lib/key-validation.js';
 import {
   cooldownActive,
   loadKeyPool,
@@ -157,44 +160,45 @@ export function listBackendsInfo(): BackendInfo[] {
  * Result of validating a pasted key BEFORE it is used. The browser-only
  * key flow blocks on this: a key that comes back `invalid` (the provider
  * actively rejected it with 401/403 — the exact failure that motivated
- * this) is never accepted; `unverifiable` (offline/VPN, or a backend with
+ * this) is never accepted; `unverifiable` (offline/VPN, 429, or a spec with
  * no cheap probe) is accepted with a warning so users aren't hard-blocked.
+ *
+ * The union itself lives in `lib/key-validation.ts` — the web layer consumes
+ * it, it does not own it. This alias keeps the wire-facing name the browser
+ * clients are written against.
+ *
+ * WHO ACTUALLY CONSUMES IT, since a wrong answer here invites the next reader
+ * to "keep the other caller working" that does not exist: `validateKeyValue`
+ * below is called from `server.ts` and NOWHERE ELSE, by exactly three
+ * endpoints — `POST /api/keys/validate`, `POST /api/keys/pool` (validate
+ * before a key joins the pool) and `POST /api/keys/pool/validate` (re-check a
+ * pooled key, which burns or un-burns it).
+ *
+ * The TUI is NOT among them. `ApiKeyPrompt` still does only the two free
+ * checks (`detectForeignKeySpec` + the soft prefix warning) and never probes,
+ * so no first-run flow reaches this module. The union nonetheless lives in
+ * `lib/key-validation.ts` rather than here because the WEB layer must not own
+ * a credential contract the TUI would have to import upward to reuse.
  */
-export type KeyValidation =
-  | { status: 'valid' }
-  | { status: 'invalid'; httpStatus: number }
-  /**
-   * The value is ANOTHER provider's credential (its prefix belongs to a
-   * different, more specific registry spec). Refused before anything is
-   * persisted: saving it here would file an `sk-or-…` OpenRouter key under the
-   * name `deepseek` and ship it to api.deepseek.com. `belongsTo` is the spec
-   * name it really is; `label` is that spec's human label.
-   */
-  | { status: 'wrong-key'; belongsTo: string; label: string }
-  | { status: 'unverifiable'; reason: string };
+export type KeyValidation = KeyVerdict;
 
 /**
  * Validate a key value against its provider without persisting anything.
- * DeepSeek has no cheap reachability probe, so it comes back `unverifiable`.
+ *
+ * A thin HTTP-layer wrapper over {@link validateKeyForSpec}: the semantics,
+ * the probes and the 401-vs-network distinction all belong to the lib module.
+ *
+ * `opts.endpoint` is accepted and ignored. It is an Azure-era leftover — that
+ * backend's key could only be checked together with its endpoint URL — and the
+ * browser still sends the field; keeping the parameter means the clients and
+ * `server.ts` need no change.
  */
 export async function validateKeyValue(
   spec: ApiKeySpec,
   value: string,
-  opts?: { endpoint?: string },
+  opts?: { endpoint?: string; timeoutMs?: number },
 ): Promise<KeyValidation> {
-  const v = value.trim();
-  if (!v) return { status: 'unverifiable', reason: 'empty value' };
-
-  // Cross-spec check FIRST — it is the only one that can catch the DeepSeek /
-  // OpenRouter mix-up (`sk-or-…` also satisfies `sk-`), and it must run before
-  // any caller persists the value.
-  const foreign = detectForeignKeySpec(spec, v);
-  if (foreign) {
-    return { status: 'wrong-key', belongsTo: foreign.name, label: foreign.label };
-  }
-
-  // DeepSeek and other specs: no cheap probe available.
-  return { status: 'unverifiable', reason: 'no validator for this key' };
+  return validateKeyForSpec(spec, value, { timeoutMs: opts?.timeoutMs });
 }
 
 /**

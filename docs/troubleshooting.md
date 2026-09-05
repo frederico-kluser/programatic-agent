@@ -134,10 +134,10 @@ edited the same lines in one stage.
 
 | Symptom | Cause → fix |
 |---|---|
-| changes to huu itself don't take effect | A globally-installed `huu` re-execs into the PUBLISHED image. Iterate with `scripts/huu-try` (always builds + runs `huu:local` via Docker; `--no-build` skips the build), or `docker build -t huu:local . && HUU_IMAGE=huu:local huu …`. Developing IN the repo, `npm start` / `npm run dev:docker` AUTO-REBUILD `huu:local` first (`scripts/ensure-image.sh`, layer-cached ~2s) so you never run stale baked code; set `HUU_IMAGE=<other>` to skip the rebuild as a deliberate pin. For the fast loop, `npm run dev` (`HUU_DEV_NATIVE=1`) runs on the host with no Docker at all — no image to go stale, but also no container isolation. (`HUU_NO_DOCKER=1` stays removed — it's ignored with a notice.) |
+| changes to huu itself don't take effect | A globally-installed `huu` re-execs into the PUBLISHED image. Iterate with `scripts/huu-try` (always builds + runs `huu:local` via Docker; `--no-build` skips the build), or `docker build -t huu:local . && HUU_IMAGE=huu:local huu …`. Developing IN the repo, `npm start` / `npm run dev:docker` AUTO-REBUILD `huu:local` first (`scripts/ensure-image.sh`, layer-cached ~2s) so you never run stale baked code; set `HUU_IMAGE=<other>` to skip the rebuild as a deliberate pin. For the fast loop, `npm run dev` (`HUU_DEV_NATIVE=1`) runs on the host with no Docker at all — no image to go stale, but also no container isolation. (`HUU_NO_DOCKER=1` is a DIFFERENT door — the user-facing native bypass — and it works; see [operations.md](operations.md#docker-by-default-native-as-an-opt-in).) |
 | orphan containers after a crash | `huu prune` (uses recorded cidfiles). |
 | network hangs on VPN | huu auto-creates an MTU-matched bridge; override with `HUU_DOCKER_NETWORK`. |
-| CI runner without Docker | huu is docker-only (`--no-docker` was removed, ignored with a notice) — use a docker-enabled runner/job; recipes in [ci.md](ci.md). |
+| CI runner without Docker | huu is docker BY DEFAULT, not docker-only: run with `--no-docker` / `HUU_NO_DOCKER=1` to go native instead (loses the container's memory ceiling), or use a docker-enabled runner/job to keep it; recipes in [ci.md](ci.md). |
 
 ## macOS: runs idle forever at $0 (fixed)
 

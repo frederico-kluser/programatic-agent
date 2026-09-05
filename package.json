@@ -51,13 +51,14 @@
   "scripts": {
     "dev": "HUU_DEV_NATIVE=1 tsx --watch src/cli.tsx",
     "dev:docker": "./scripts/ensure-image.sh && HUU_IMAGE=\"${HUU_IMAGE:-huu:local}\" tsx --watch src/cli.tsx",
-    "start": "./scripts/ensure-image.sh && HUU_IMAGE=\"${HUU_IMAGE:-huu:local}\" tsx src/cli.tsx",
+    "start": "tsx scripts/start.ts",
     "build": "tsc && chmod +x dist/cli.js && mkdir -p dist/web/client && cp -R src/web/client/. dist/web/client/ && mkdir -p dist/assets && cp docs/knowledge-skills-architect-prompt.md dist/assets/",
     "build:link": "npm run build && npm link && tsx scripts/link-pipelines.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "posttest": "tsx scripts/check-test-count.ts",
     "test:watch": "vitest",
+    "smoke:dev-dashboard": "tsx scripts/smoke-dev-dashboard.tsx",
     "release-notes": "git log --pretty=format:'- %s' \"v$(node -p \"require('./package.json').version\")..HEAD\" 2>/dev/null || git log --pretty=format:'- %s'",
     "prepack": "find dist -type f \\( -name '*.test.*' -o -name '*.spec.*' \\) -delete",
     "deploy": "tsx scripts/deploy.ts"

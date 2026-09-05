@@ -121,6 +121,32 @@ function driftPct(claimed: number, actual: number): string {
   return `${pct.toFixed(1)}% fora`;
 }
 
+/**
+ * Tolerância ABSOLUTA (±0,02) da razão teste:código — a ÚNICA entrada de §1
+ * que não usa TOLERANCE (relativa). Exportada e testada isoladamente porque
+ * comparação de ponto flutuante nesta fronteira é fácil de quebrar de volta.
+ */
+export const RATIO_ABS_TOLERANCE = 0.02;
+
+/**
+ * `claimed` vem de `parsePtBr("0,74")` (decimal exato) e `actual` de
+ * `(testLines / codeLines).toFixed(2)` — ambos binários de ponto flutuante, e
+ * a SUBTRAÇÃO de dois decimais exatamente representáveis não é, ela mesma,
+ * exatamente representável: `0.74 - 0.72 === 0.020000000000000018`, não
+ * `0.02`. Um `> RATIO_ABS_TOLERANCE` nu portanto REJEITA uma diferença que
+ * está exatamente NA fronteira da tolerância — o único valor que a tolerância
+ * existe para deixar passar. RATIO_EPSILON absorve só esse ruído de ponto
+ * flutuante: é ~9 ordens de grandeza menor que a tolerância de 0.02, então não
+ * consegue mascarar uma deriva real. NÃO "simplifique" isto de volta para
+ * `Math.abs(claimed - actual) <= RATIO_ABS_TOLERANCE` — isso reintroduz a
+ * falha no caso de fronteira exata (ver check-metodo.test.ts).
+ */
+const RATIO_EPSILON = 1e-9;
+
+export function ratioWithinTolerance(claimed: number, actual: number): boolean {
+  return Math.abs(claimed - actual) <= RATIO_ABS_TOLERANCE + RATIO_EPSILON;
+}
+
 function mismatch(
   what: string,
   claimed: string,
@@ -269,7 +295,9 @@ function checkSecao1(metodo: string) {
       console.log(
         `§1 Testes (razão): doc=${ratioNum[0]} real=${ratio.toFixed(2)}`,
       );
-      if (Math.abs(ratioNum[1] - ratio) > 0.02)
+      // Tolerância ABSOLUTA (±0.02), não relativa — ver ratioWithinTolerance()
+      // acima para o porquê da comparação não ser um `> 0.02` nu.
+      if (!ratioWithinTolerance(ratioNum[1], ratio))
         mismatch('§1 Testes (razão teste:código)', ratioNum[0], ratio);
     } else {
       warnings.push('§1 Testes: razão não encontrada');
@@ -420,4 +448,8 @@ function main() {
   process.exit(0);
 }
 
-main();
+// Só roda quando invocado como script — o teste importa as funções puras
+// (mesmo padrão de scripts/check-dockerfile.ts).
+if (process.argv[1] && resolve(process.argv[1]).endsWith('check-metodo.ts')) {
+  main();
+}

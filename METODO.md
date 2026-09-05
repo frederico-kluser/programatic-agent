@@ -22,8 +22,8 @@
 - ✍️ **prescrito** — prescrição de engenharia, não extração. Pode estar errada.
 - ⚠️ **específico** — vale para *este* repo/máquina/data, não transfere.
 
-Data de escrita: **2026-08-04**. Todo número 📏 abaixo foi medido nesta data, no
-commit `f9a0d81`, e é reverificado a cada push por `scripts/check-metodo.ts`
+Data de escrita: **2026-09-05**. Todo número 📏 abaixo foi medido nesta data, no
+commit `8561e63`, e é reverificado a cada push por `scripts/check-metodo.ts`
 dentro do gate. (O cabeçalho aponta para o commit em que a medição foi feita, não
 para o commit que a introduz — um arquivo não pode conter o próprio hash, e por
 isso o verificador trata a divergência como **aviso**, nunca como erro.)
@@ -163,24 +163,24 @@ antes de qualquer outra e obriga a re-medição junto com as três de que deriva
 |---|---|
 | Idade ⚠ histórico | **363 commits**, de 2026-05-20 a 2026-08-02 (~74 dias) — medido antes do `v1.0.0 — clean start`; `git log` já não o alcança |
 | Autores ⚠ histórico | 284 `fredericokluser` · 22 `Claude` · 19+2 nome completo · 15 `t` · 1 externo — idem |
-| Total versionado | **209.035 linhas** (`git ls-files \| xargs wc -l`) |
-| `src/` | **432 arquivos, 142.990 linhas** (inclui client JS/CSS/HTML) |
-| `src/` TS+TSX **não-teste** | **69.749 linhas** |
-| Testes | **147 arquivos, 50.736 linhas** → razão teste:código **0,73 : 1** |
-| `docs/` | 36 arquivos, **14.554 linhas** (9 pares en/pt-BR) |
+| Total versionado | **223.961 linhas** (`git ls-files \| xargs wc -l`) |
+| `src/` | **450 arquivos, 156.180 linhas** (inclui client JS/CSS/HTML) |
+| `src/` TS+TSX **não-teste** | **76.182 linhas** |
+| Testes | **155 arquivos, 56.038 linhas** → razão teste:código **0,74 : 1** |
+| `docs/` | 37 arquivos, **14.858 linhas** (9 pares en/pt-BR) |
 | Skills | **22** `SKILL.md` + **22** `LEARNINGS.md` + `catalog.md` |
-| `AGENTS.md` | **152 linhas, 7.031 chars ≈ 1,8k tokens** — carregados em **toda** sessão |
+| `AGENTS.md` | **190 linhas, 9.335 chars ≈ 2,4k tokens** — carregados em **toda** sessão |
 | Pipelines default | 7 pipelines, 14 módulos, **4.321 linhas** |
-| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **10 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
+| Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **11 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |
 | Dogfooding ⚠ histórico | **17 merges de onda** do próprio huu (`merge(w4…w6-…): wave N front`), todos em **2026-07-28** (45 commits nesse dia) — anterior ao `clean start` |
 | Higiene de branch | **0** branches `huu/**` órfãos |
 | Marcadores | `TODO`/`FIXME`/`XXX` concentrados em `requeue.test.ts` (8), `dev-graph/node-catalog.ts` (6), `orchestrator/index.ts` (5), `card-focus.test.ts` (5), `types/orchestrator.ts` (4) |
 
-**A razão teste:código de 0,69 : 1 é o número mais informativo da tabela**, e
+**A razão teste:código de 0,74 : 1 é o número mais informativo da tabela**, e
 precisa de contexto para não ser lida como elogio nem como acusação. O playbook de
 origem chegou a 1,3 : 1 porque o oráculo dele era um sistema que ninguém podia
 executar — quase tudo que se escrevia era instrumento de medida. Aqui o oráculo é
-o próprio código, executável, e 0,69 : 1 com 147 arquivos de teste colocados ao
+o próprio código, executável, e 0,74 : 1 com 155 arquivos de teste colocados ao
 lado do módulo é uma cobertura respeitável **em quantidade**. A pergunta que o §7
 faz não é "tem teste suficiente?" e sim **"se isto desaparecer, o que fica
 vermelho?"** — e é aí que aparecem os buracos.
@@ -244,13 +244,13 @@ com `wc -l`) 📏:
 
 | Arquivo | Linhas | Toques | churn×linhas | Papel de singleton |
 |---|---:|---:|---:|---|
-| `CHANGELOG.md` | 1.621 | 84 | 136.164 | **O mais tocado do repositório** — mas o conflito garantido **foi resolvido**: escreve-se um fragmento por card em `.changes/`, consolidado por `scripts/changelog.ts` |
-| `src/orchestrator/index.ts` | 2.816 | 48 | 135.168 | **O pior hoje.** Loop de etapa + guard + requeue + retry num arquivo. Todo card de orquestração colide |
-| `README.md` + `README.en.md` | 1.055 + 1.047 | 56 + 48 | 59.080 + 50.256 | Gêmeos que precisam ficar em sincronia — agora com paridade **verificada** por `scripts/check-twins.ts` no gate |
-| `src/web/client/styles.css` | 1.802 | 27 | 48.654 | CSS único do cliente |
-| `src/web/server.ts` | 1.242 | 27 | 33.534 | Servidor HTTP+SSE único |
-| `src/web/client/index.html` | 682 | 30 | 20.460 | Markup único do cliente — herdou parte do churn que era do `app.js` |
-| `src/web/run-manager.ts` | 923 | 20 | 18.460 | Dono do estado multi-run no servidor |
+| `CHANGELOG.md` | 1.766 | 84 | 148.344 | **O mais tocado do repositório** — mas o conflito garantido **foi resolvido**: escreve-se um fragmento por card em `.changes/`, consolidado por `scripts/changelog.ts` |
+| `src/orchestrator/index.ts` | 2.751 | 48 | 132.048 | **O pior hoje.** Loop de etapa + guard + requeue + retry num arquivo. Todo card de orquestração colide |
+| `README.md` + `README.en.md` | 1.146 + 1.137 | 56 + 48 | 64.176 + 54.576 | Gêmeos que precisam ficar em sincronia — agora com paridade **verificada** por `scripts/check-twins.ts` no gate |
+| `src/web/client/styles.css` | 1.852 | 27 | 50.004 | CSS único do cliente |
+| `src/web/server.ts` | 1.330 | 27 | 35.910 | Servidor HTTP+SSE único |
+| `src/web/client/index.html` | 740 | 30 | 22.200 | Markup único do cliente — herdou parte do churn que era do `app.js` |
+| `src/web/run-manager.ts` | 967 | 20 | 19.340 | Dono do estado multi-run no servidor |
 
 ⚠ **A coluna *Linhas* é medida a cada gate; as colunas *Toques* e *churn×linhas*
 não são.** Os toques vêm da medição de 2026-08-02, feita sobre o histórico
@@ -274,7 +274,7 @@ um refactor a fazer antes de alargar a onda. Três leituras não óbvias:
    fragmento por card** em `.changes/<card>.md`, consolidado por
    `scripts/changelog.ts` depois do merge. O arquivo segue grande e tocado; o que
    sumiu foi a serialização obrigatória da onda.
-3. **`src/orchestrator/index.ts` é o pior de hoje** — 2.816 linhas (caiu de 3.815,
+3. **`src/orchestrator/index.ts` é o pior de hoje** — 2.751 linhas (caiu de 3.815,
    mas subiu de 39 para 48 toques). Loop de etapa, guard, requeue, retry e review
    loop no mesmo arquivo: todo card de orquestração ainda colide nele. É o próximo
    candidato natural ao tratamento que `app.js` e `types.ts` receberam.

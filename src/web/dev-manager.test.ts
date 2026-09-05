@@ -603,6 +603,207 @@ describe('web server — development mode', () => {
       expect('methodology' in postedDev()).toBe(false);
     });
   });
+
+  // ── The debate chat ──────────────────────────────────────────────────────
+
+  // `--debate` is OFF by default, so "there is no chat" is the path almost
+  // every session takes — and it has to be the SILENT one: no panel, no empty
+  // panel, no disabled button. What the session gains when the human does turn
+  // it on is a LIGHT map (three step names + agentId→side); the prose itself
+  // only ever travels on demand, over the route below.
+  describe('the debate chat', () => {
+    const startDebate = (extra: Record<string, unknown> = {}) =>
+      post(base, '/api/dev', {
+        goal: 'ver os dois lados falando',
+        modelId: 'stub-model',
+        backend: 'stub',
+        approval: 'autonomous',
+        skipKnowledgeBootstrap: true,
+        ...extra,
+      });
+
+    /** Poll `/api/dev` until `predicate` holds, or give up. */
+    const waitForSession = async (
+      predicate: (s: any) => boolean,
+      tries = 200,
+    ): Promise<any> => {
+      for (let i = 0; i < tries; i += 1) {
+        const { session } = (await (await fetch(base + '/api/dev')).json()) as { session: any };
+        if (session && predicate(session)) return session;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return null;
+    };
+
+    const getDebate = async (query = ''): Promise<{ status: number; json: any }> => {
+      const res = await fetch(base + '/api/dev/debate' + query);
+      return { status: res.status, json: await res.json().catch(() => ({})) };
+    };
+
+    it('serves the chat’s stable elements, shipped hidden', async () => {
+      const html = await (await fetch(base + '/dev')).text();
+      for (const id of ['devDebateToggle', 'devDebate', 'devDebateLog', 'devDebateRefresh', 'devDebateMeta']) {
+        expect(html).toContain(`id="${id}"`);
+      }
+      // Both the button and the panel start hidden — the server reveals them by
+      // stamping `session.debate`, which only a `--debate` epoch ever produces.
+      expect(html).toMatch(/id="devDebateToggle"\s+hidden/);
+      expect(html).toMatch(/id="devDebate"[^>]*hidden/);
+    });
+
+    // A 200 with `present: false`, not a 404: "this session has no debate" is
+    // an ANSWER, and the browser must not have to read a failure as data.
+    it('answers present:false when no session has ever run', async () => {
+      const { status, json } = await getDebate();
+      expect(status).toBe(200);
+      expect(json).toEqual({ present: false });
+    });
+
+    it('refuses a non-numeric epoch', async () => {
+      const { status, json } = await getDebate('?epoch=../../etc/passwd');
+      expect(status).toBe(400);
+      expect(json.error).toMatch(/epoch/);
+    });
+
+    // THE DEFAULT PATH, pinned: a session that never asked for the debate must
+    // not grow the field — that is what keeps the chat invisible.
+    it('a session without --debate never gains session.debate', async () => {
+      const { status } = await startDebate();
+      expect(status).toBe(200);
+      const session = await waitForSession((s) => s.runIds.length > 0);
+      expect(session).not.toBeNull();
+      expect(session.debate).toBeUndefined();
+      const { json } = await getDebate();
+      expect(json).toEqual({ present: false });
+    });
+
+    it('a --debate session stamps the map and the route finds the briefs', async () => {
+      const { status } = await startDebate({ methodology: { debate: true } });
+      expect(status).toBe(200);
+      const session = await waitForSession((s) => !!s.debate);
+      expect(session).not.toBeNull();
+      const debate = session.debate;
+      // The three step names come from the COMPILED pipeline, so the browser
+      // never has to carry a copy of literals that live in plan-to-pipeline.ts.
+      expect(debate.matchedBy).toBe('name');
+      expect(debate.names.advocate).toBeTruthy();
+      expect(debate.names.prosecutor).toBeTruthy();
+      expect(debate.names.gate).toBeTruthy();
+      expect(debate.names.advocate).not.toBe(debate.names.prosecutor);
+      // The run id rides along because an epoch is TWO runs and agent ids
+      // restart at 1 in each — the browser filters the firehose by it.
+      expect(debate.runId).toBeTruthy();
+      expect(debate.epoch).toBeGreaterThanOrEqual(1);
+      expect(typeof debate.roles).toBe('object');
+
+      const { status: dStatus, json } = await getDebate();
+      expect(dStatus).toBe(200);
+      expect(json.present).toBe(true);
+      // Session-namespaced, epoch-scoped, and named by huu — no path ever
+      // crosses the wire in the request direction.
+      expect(json.paths.a).toContain(`.huu/dev/${session.sessionId}/epoch-`);
+      expect(json.paths.a.endsWith('/debate/A.md')).toBe(true);
+      expect(json.paths.b.endsWith('/debate/B.md')).toBe(true);
+      // The stub backend writes no files, so nothing has merged — and that
+      // degrades to an EMPTY transcript, never to an error.
+      expect(json.exists).toEqual({ a: false, b: false });
+      expect(json.transcript.advocate.present).toBe(false);
+      expect(json.transcript.prosecutor.present).toBe(false);
+      expect(json.transcript.exchanges).toEqual([]);
+    });
+
+    // The SETTLED half, proved against real files at the path the route itself
+    // reported. The stub backend writes nothing, so the briefs are planted here
+    // exactly where a merged wave would have left them — what is under test is
+    // the read + the parse + the JSON contract, not the swarm.
+    it('reads and parses the briefs a merge landed', async () => {
+      const { status } = await startDebate({ methodology: { debate: true } });
+      expect(status).toBe(200);
+      expect(await waitForSession((s) => !!s.debate)).not.toBeNull();
+      const before = (await getDebate()).json;
+      expect(before.exists).toEqual({ a: false, b: false });
+
+      mkdirSync(join(repo, before.paths.a, '..'), { recursive: true });
+      writeFileSync(
+        join(repo, before.paths.a),
+        [
+          '## Decisões',
+          '',
+          '### D1 — Streaming no parser',
+          '- Escolhido: leitura em streaming',
+          '- Rejeitado: buffer inteiro',
+          '- Por quê: arquivos grandes estouram o heap',
+          '- Falsificaria: uma medição com 2x de latência',
+          '',
+          '## Riscos assumidos',
+          '- back-pressure não medida',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      writeFileSync(
+        join(repo, before.paths.b),
+        [
+          '## Veredito por decisão',
+          '- D1: CONTESTADA — não há benchmark',
+          '',
+          '## Objeções',
+          '',
+          '### D1',
+          '- Falha prevista: trava sem newline final',
+          '- Evidência: nenhuma',
+          '- Alternativa mais barata: chunking',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const { json } = await getDebate();
+      expect(json.exists).toEqual({ a: true, b: true });
+      expect(json.source).toBe('worktree');
+      const tr = json.transcript;
+      expect(tr.format).toBe('huu-debate-transcript-v1');
+      expect(tr.parsed).toBe(true);
+      expect(tr.advocate.decisions.map((d: any) => d.id)).toEqual(['D1']);
+      expect(tr.prosecutor.verdicts.map((v: any) => v.label)).toEqual(['CONTESTADA']);
+      expect(tr.contestedDecisionIds).toEqual(['D1']);
+      // One id, one turn — the shape the chat renders.
+      expect(tr.exchanges).toHaveLength(1);
+      expect(tr.exchanges[0].decisionId).toBe('D1');
+      expect(tr.exchanges[0].objection).not.toBeNull();
+    });
+
+    // A debater writes in its OWN worktree; the wave merge lands the briefs in
+    // the run's INTEGRATION worktree first and only the epoch landing puts them
+    // in the user's tree. Reading integration first is what makes the chat
+    // settle at the end of the debate wave instead of at the end of the epoch.
+    it('prefers the integration worktree over the landed tree', async () => {
+      const { status } = await startDebate({ methodology: { debate: true } });
+      expect(status).toBe(200);
+      const session = await waitForSession((s) => !!s.debate);
+      expect(session).not.toBeNull();
+      const paths = (await getDebate()).json.paths;
+
+      mkdirSync(join(repo, paths.a, '..'), { recursive: true });
+      writeFileSync(join(repo, paths.a), '## Decisões\n\n### D1 — a que já aterrissou\n- Escolhido: x\n', 'utf8');
+      const landed = join(repo, '.huu-worktrees', session.debate.runId, 'integration');
+      mkdirSync(join(landed, paths.a, '..'), { recursive: true });
+      writeFileSync(join(landed, paths.a), '## Decisões\n\n### D2 — a que acabou de dar merge\n- Escolhido: y\n', 'utf8');
+
+      const { json } = await getDebate();
+      expect(json.source).toBe('integration');
+      expect(json.transcript.advocate.decisions.map((d: any) => d.id)).toEqual(['D2']);
+    });
+
+    it('an epoch nobody ran has no debate to answer for', async () => {
+      const { status } = await startDebate({ methodology: { debate: true } });
+      expect(status).toBe(200);
+      expect(await waitForSession((s) => !!s.debate)).not.toBeNull();
+      const { status: s2, json } = await getDebate('?epoch=99');
+      expect(s2).toBe(200);
+      expect(json).toEqual({ present: false });
+    });
+  });
 });
 
 // ── The resume gate ───────────────────────────────────────────────────────

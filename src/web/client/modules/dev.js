@@ -9,6 +9,7 @@ import { makeGraphApi } from './graph/graph-api-client.js';
 import { RUN_GRAPH_EVENT } from './graph/canvas.js';
 import { saveSettings, SETTINGS_LS } from './settings.js';
 import { renderActiveRun } from './board.js';
+import { buildDebateModel, debateHtml, debateMark, ingestDebateStream, liveStream } from './debate.js';
 import { boot } from '../app.js';
 import { t } from '../i18n.js';
 
@@ -970,6 +971,7 @@ export function renderDevSession(session) {
   $('devGate').hidden = !session.awaitingApproval;
   renderDevResumeGate(session);
   renderDevOrphanGate(session);
+  renderDebateSurface(session);
 
   $('devEpochList').innerHTML = (session.epochs || [])
     .map(
@@ -1000,6 +1002,167 @@ export function renderDevSession(session) {
       !!(session.awaitingApproval || session.awaitingResume || session.awaitingOrphans),
     );
   }
+}
+
+/* ---------------- The debate chat (`--debate` only) ----------------
+   Two halves, joined here: the LIVE narration comes off the un-throttled
+   agent-stream firehose (board.js hands every frame to `ingestDevAgentStream`),
+   and the SETTLED briefs come from `GET /api/dev/debate`, which parses the
+   merged markdown server-side. See modules/debate.js for why the parse cannot
+   live in the browser and how rounds are kept apart.
+
+   DEFAULT PATH: a session without `--debate` never carries `session.debate`, so
+   the toggle stays hidden and none of this runs — no empty panel, no disabled
+   button. */
+const debateUi = {
+  open: false,
+  runId: '',
+  mark: '',
+  transcript: null,
+  error: '',
+  fetching: false,
+  /** Epoch whose read was asked for while another was in flight, or null. */
+  pending: null,
+};
+let debateTick = null;
+
+/** The run whose board frames carry this debate, or undefined. */
+function debateRun(session) {
+  const d = session && session.debate;
+  return d ? S.runs.get(d.runId) : undefined;
+}
+
+export function renderDebateSurface(session) {
+  const btn = $('devDebateToggle');
+  const panel = $('devDebate');
+  if (!btn || !panel) return;
+  const debate = session && session.debate;
+  btn.hidden = !debate;
+  if (!debate) {
+    panel.hidden = true;
+    debateUi.open = false;
+    return;
+  }
+  // A new RUN owns a new agent-id space (an epoch is two runs, ids restart at
+  // 1 in each), so the previous run's narration and briefs are dropped whole
+  // rather than re-keyed — the alternative is splicing two conversations.
+  if (debate.runId !== debateUi.runId) {
+    debateUi.runId = debate.runId;
+    debateUi.transcript = null;
+    debateUi.mark = '';
+    debateUi.error = '';
+    debateUi.pending = null;
+    liveStream.clear();
+  }
+  panel.hidden = !debateUi.open;
+  btn.classList.toggle('is-on', debateUi.open);
+  if (!debateUi.open) return;
+  const mark = debateMark(session, debateRun(session));
+  if (mark !== debateUi.mark) {
+    debateUi.mark = mark;
+    void fetchDebate(debate.epoch);
+  }
+  paintDebate(session);
+}
+
+export function paintDebate(session) {
+  const log = $('devDebateLog');
+  const debate = session && session.debate;
+  if (!log || !debate) return;
+  const run = debateRun(session);
+  const model = buildDebateModel({
+    debate,
+    state: run && run.state,
+    transcript: debateUi.transcript,
+    live: (id) => liveStream.text(id),
+  });
+  log.innerHTML = debateHtml(model, { error: debateUi.error });
+  const meta = $('devDebateMeta');
+  if (meta) {
+    meta.textContent = model
+      ? t('web.debate.epoch_round', { epoch: model.epoch, rounds: model.rounds.length })
+      : '';
+  }
+}
+
+/**
+ * The settled half. Never fatal: a failed read becomes a line in the panel.
+ *
+ * THE OVERLAP IS REMEMBERED, NOT DROPPED. Both callers advance `debateUi.mark`
+ * BEFORE calling, so a request that arrived while another was in flight used to
+ * be discarded with its trigger already consumed: the merge that had just
+ * landed was then invisible until the NEXT change of mark, and if it was the
+ * last one, until the human pressed "Reload the briefs". The alternative fix —
+ * not advancing the mark until the fetch returns — re-fires on every one of the
+ * ~8 frames/s that arrive during the in-flight window, i.e. it trades a lost
+ * read for a burst of duplicate ones. Recording ONE pending epoch and replaying
+ * it on completion costs a single extra request and loses nothing. It cannot
+ * recurse without bound: `pending` is cleared before the replay and is only
+ * ever set again while a fetch is actually in flight.
+ */
+export async function fetchDebate(epoch) {
+  if (debateUi.fetching) {
+    debateUi.pending = epoch;
+    return;
+  }
+  debateUi.fetching = true;
+  try {
+    const d = await api('/api/dev/debate?epoch=' + encodeURIComponent(String(epoch)));
+    debateUi.transcript = d && d.present ? d.transcript : null;
+    debateUi.error = '';
+  } catch (e) {
+    debateUi.error = t('web.debate.load_failed', { message: e.message });
+  } finally {
+    debateUi.fetching = false;
+  }
+  paintDebate(S.devSession);
+  if (debateUi.pending !== null) {
+    const next = debateUi.pending;
+    debateUi.pending = null;
+    await fetchDebate(next);
+  }
+}
+
+/**
+ * One trailing repaint per 120 ms.
+ *
+ * Both feeds below are high-frequency: the firehose is NOT throttled at all
+ * (one frame per line) and a run snapshot arrives up to ~8×/s. Rebuilding the
+ * whole chat's innerHTML on each would burn the tab for no visible gain.
+ */
+function scheduleDebatePaint() {
+  if (!debateUi.open || debateTick) return;
+  debateTick = setTimeout(() => {
+    debateTick = null;
+    paintDebate(S.devSession);
+  }, 120);
+}
+
+/** One raw firehose frame, from board.js's SSE handler — the LIVE half. */
+export function ingestDevAgentStream(frame) {
+  const debate = S.devSession && S.devSession.debate;
+  if (!ingestDebateStream(frame, debate)) return;
+  scheduleDebatePaint();
+}
+
+/**
+ * One run snapshot, from board.js's ingest — the chat's STRUCTURE.
+ *
+ * The session frame alone is not enough: the rounds come from the debaters'
+ * cards and the gate's verdict comes from `checkRuns`, and both live on the run
+ * snapshot. Without this the gate's ruling sat off screen until the driver
+ * happened to log something.
+ */
+export function onDevRunFrame(run) {
+  const session = S.devSession;
+  const debate = session && session.debate;
+  if (!debate || !debateUi.open || !run || run.runId !== debate.runId) return;
+  const mark = debateMark(session, run);
+  if (mark !== debateUi.mark) {
+    debateUi.mark = mark;
+    void fetchDebate(debate.epoch);
+  }
+  scheduleDebatePaint();
 }
 
 /* Resume gate: a previous session with THIS goal stopped unfinished. Declining
@@ -1419,6 +1582,21 @@ export function wireDev() {
   wireGate('devResumeReject', '/api/dev/resume', { accept: false });
   wireGate('devOrphanLand', '/api/dev/orphans', { action: 'land' });
   wireGate('devOrphanIgnore', '/api/dev/orphans', { action: 'ignore' });
+
+  // The debate chat. Both hosts are stable elements, so the listeners are
+  // wired once and null-safe — a stale cached shell degrades to "no chat".
+  const dbtToggle = $('devDebateToggle');
+  if (dbtToggle) dbtToggle.addEventListener('click', () => {
+    debateUi.open = !debateUi.open;
+    // Opening always re-reads: the panel may have been shut across a merge.
+    debateUi.mark = '';
+    renderDebateSurface(S.devSession);
+  });
+  const dbtRefresh = $('devDebateRefresh');
+  if (dbtRefresh) dbtRefresh.addEventListener('click', () => {
+    const d = S.devSession && S.devSession.debate;
+    if (d) void fetchDebate(d.epoch);
+  });
 
   $('devViewBoard').addEventListener('click', () => { showView('run'); renderActiveRun(); });
 }

@@ -176,4 +176,51 @@ export const tuiRunPtBR = {
   'tui.dev.gate_approve_epoch': 'Rodar a época {epoch}?',
   'tui.dev.gate_approve_no_tty':
     'huu dev: --approve-each precisa de um terminal interativo; encerrando sem rodar a época.',
+  // ── narração do `dev-cli.ts`: os 24 templates de linha citados no docstring
+  // de `err()`. Só chrome — dado que o usuário digitou (texto do objetivo,
+  // nomes de branch, ids de sessão, CÓDIGOS crus de motivo/status) continua
+  // viajando como parâmetro e nunca é traduzido. Cláusulas opcionais (um
+  // commit aterrissado, uma falha, a flag de retomada, um detalhe no fim) são
+  // montadas como sua PRÓPRIA frase completa via um `t()` aninhado e entram
+  // como um único placeholder — nunca concatenação em volta do `t()` externo —
+  // para a ordem das palavras ficar livre por idioma. Ver `tui.multi.batch_title`
+  // / `batch_failed_suffix` para o precedente que isso segue.
+  'tui.dev.resume_header': 'Sessão anterior encontrada',
+  'tui.dev.resume_no_id': '(sem id)',
+  'tui.dev.resume_session': 'sessão: {sessionId} · {done} época(s) concluída(s) · próxima seria a {nextEpoch}',
+  'tui.dev.resume_last_epoch': 'última época: {status}{landed}{failed}',
+  'tui.dev.resume_goal': 'objetivo: {goal}',
+  'tui.dev.suffix_landed': ' — aterrissou em {commit}',
+  'tui.dev.suffix_landing_failed': ' — LANDING FALHOU: {error}',
+  'tui.dev.orphans_landing':
+    'huu dev: --land-orphans — aterrissando {count} branch(es) de integração órfão(s).',
+  'tui.dev.orphans_header': 'Branches de integração órfãos ({count})',
+  'tui.dev.orphan_line': '{branch} — {ahead} commit(s) que o HEAD não tem{epoch}',
+  'tui.dev.orphan_epoch_suffix': ' · época {epoch}',
+  'tui.dev.event_knowledge_present': 'knowledge: presente — {reason}',
+  'tui.dev.event_knowledge_absent': 'knowledge: ausente — {reason}',
+  'tui.dev.event_bootstrap_start': 'bootstrap de knowledge com jcode (deepseek) ({model})…',
+  'tui.dev.event_bootstrap_done_ok': 'bootstrap concluído',
+  'tui.dev.event_bootstrap_done_failed': 'bootstrap FALHOU',
+  'tui.dev.event_planning': 'planejando época {epoch}…',
+  'tui.dev.event_planned_graph': 'método desenhado "{id}": {count} nó(s) — {nodes}',
+  'tui.dev.event_planned_plan': 'época {epoch}: {count} frente(s) — {fronts}',
+  'tui.dev.event_epoch_start': 'época {epoch}: rodando {count} passo(s)',
+  'tui.dev.event_epoch_done': 'época {epoch}: {status}{landed}{failed}',
+  'tui.dev.event_stopped': 'sessão encerrada: {reason}{detail}',
+  'tui.dev.suffix_dash_detail': ' — {detail}',
+  'tui.dev.event_stopped_drawn':
+    'sessão encerrada: o método desenhado "{id}" ({name}) rodou de ponta a ponta. Isso NÃO é teto de épocas: um grafo é o método COMPLETO, então a sessão é uma época por definição.{detail}',
+  'tui.dev.suffix_detail_line': '\n    detalhe: {detail}',
+  'tui.dev.plan_header': 'Plano da época {epoch}',
+  'tui.dev.plan_epoch_goal_label': 'Objetivo da época:',
+  'tui.dev.plan_ready_label': 'Pronto quando:',
+  'tui.dev.plan_front_line': '{index}. {title} [{id}]{deps}',
+  'tui.dev.plan_front_deps_parallel': ' (paralelo)',
+  'tui.dev.plan_front_deps_after': ' (depois de: {deps})',
+  'tui.dev.plan_front_meta': 'até {maxTasks} agente(s) · juiz: {verify}',
+  'tui.dev.plan_warning': '⚠ plano ajustado: {warning}',
+  'tui.dev.session_summary': 'sessão: {sessionId}{resumed} · épocas: {epochs}{drawn}',
+  'tui.dev.suffix_resumed': ' (retomada)',
+  'tui.dev.suffix_drawn_method': ' · método desenhado "{id}"',
 } as const;

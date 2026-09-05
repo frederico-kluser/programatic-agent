@@ -416,13 +416,19 @@ describe('formatPlan', () => {
 
   it('renders the epoch header, both fronts and their dependency shape', () => {
     const out = formatPlan(plan, 2, ['uma frente foi reparada']);
-    expect(out).toContain('── Plano da época 2');
-    expect(out).toContain('Objetivo da época: entregar o CLI');
-    expect(out).toContain('Pronto quando:     os testes passam');
-    expect(out).toContain('1. Superfície de linha de comando [cli] (paralelo)');
-    expect(out).toContain('2. Documentação [docs] (depois de: cli)');
-    expect(out).toContain('até 3 agente(s) · juiz: tsc limpo');
-    expect(out).toContain('⚠ plano ajustado: uma frente foi reparada');
+    // Through the catalog, not a literal: pinning the Portuguese chrome here
+    // would make the test the reason the string can never be translated.
+    expect(out).toContain(`── ${t('tui.dev.plan_header', { epoch: 2 })}`);
+    expect(out).toContain(`${t('tui.dev.plan_epoch_goal_label')} entregar o CLI`);
+    expect(out).toContain(`${t('tui.dev.plan_ready_label')} os testes passam`);
+    expect(out).toContain(
+      `1. Superfície de linha de comando [cli]${t('tui.dev.plan_front_deps_parallel')}`,
+    );
+    expect(out).toContain(
+      `2. Documentação [docs]${t('tui.dev.plan_front_deps_after', { deps: 'cli' })}`,
+    );
+    expect(out).toContain(t('tui.dev.plan_front_meta', { maxTasks: 3, verify: 'tsc limpo' }));
+    expect(out).toContain(t('tui.dev.plan_warning', { warning: 'uma frente foi reparada' }));
   });
 });
 
@@ -775,11 +781,14 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
     // the default sentence for it claims a limit was hit. On a graph that is
     // simply false, and it is how a successful run reads as a truncated one.
     const line = describeEvent(stopped, { drawnMethod: { id: 'auditoria', name: 'Auditoria' } })!;
-    expect(line).toContain('auditoria');
-    expect(line).toContain('Auditoria');
-    expect(line).toContain('rodou de ponta a ponta');
-    expect(line).toContain('NÃO é teto de épocas');
-    expect(line).toContain('o desenho rodou');
+    // Through the catalog, not a literal — see the note above.
+    expect(line).toBe(
+      t('tui.dev.event_stopped_drawn', {
+        id: 'auditoria',
+        name: 'Auditoria',
+        detail: t('tui.dev.suffix_detail_line', { detail: 'o desenho rodou' }),
+      }),
+    );
   });
 
   it('leaves every other stop reason alone on a graph session', () => {
@@ -787,7 +796,12 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
       { type: 'stopped', reason: 'landing-failed', detail: 'conflito' },
       { drawnMethod: { id: 'auditoria', name: 'Auditoria' } },
     );
-    expect(line).toBe('sessão encerrada: landing-failed — conflito');
+    expect(line).toBe(
+      t('tui.dev.event_stopped', {
+        reason: 'landing-failed',
+        detail: t('tui.dev.suffix_dash_detail', { detail: 'conflito' }),
+      }),
+    );
   });
 
   it('reports a drawn method by its NODES, and a plan by its fronts', () => {
@@ -808,7 +822,9 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
         },
       ],
     };
-    expect(describeEvent({ type: 'planned', epoch: 1, plan, warnings: [] })).toContain('1 frente(s)');
+    expect(describeEvent({ type: 'planned', epoch: 1, plan, warnings: [] })).toBe(
+      t('tui.dev.event_planned_plan', { epoch: 1, count: 1, fronts: 'cli' }),
+    );
 
     const drawn = describeEvent({
       type: 'planned',
@@ -825,9 +841,12 @@ describe('describeEvent — a graph session does not end at a ceiling', () => {
     })!;
     // A drawing has nodes, not fronts. Reporting fronts would credit a planner
     // that never ran.
-    expect(drawn).toContain('método desenhado "auditoria"');
-    expect(drawn).toContain('recon, auditar');
-    expect(drawn).not.toContain('frente(s)');
+    expect(drawn).toBe(
+      t('tui.dev.event_planned_graph', { id: 'auditoria', count: 2, nodes: 'recon, auditar' }),
+    );
+    // Locale-agnostic: whichever language is active, the word for "front(s)"
+    // must not leak into a drawing's line.
+    expect(drawn).not.toMatch(/front|frente/i);
   });
 });
 
@@ -1123,8 +1142,14 @@ describe('runDevCli — the presenter never touches stdout', () => {
     // The opening summary is written BEFORE the board mounts and stays in the
     // scrollback above it; the closing session line goes into the board.
     expect(fake.calls).toContain('session');
-    expect(fake.logs.join('\n')).toContain('sessão: sess-presenter');
-    expect(errOut.join('')).not.toContain('sessão: sess-presenter');
+    const summary = t('tui.dev.session_summary', {
+      sessionId: 'sess-presenter',
+      resumed: '',
+      epochs: 0,
+      drawn: '',
+    });
+    expect(fake.logs.join('\n')).toContain(summary);
+    expect(errOut.join('')).not.toContain(summary);
     // And the terminal is handed back before the process ends.
     expect(fake.calls.at(-1)).toBe('close');
   });

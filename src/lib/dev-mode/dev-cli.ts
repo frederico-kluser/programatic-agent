@@ -239,17 +239,20 @@ let activePresenter: DevCliPresenter | null = null;
  * One line of human-readable progress — to the board when one is mounted, to
  * stderr otherwise.
  *
- * KNOWN DEBT, and it predates the board: the narrative this function carries is
- * hardcoded Portuguese. It was always user-facing (it went to stderr), it was
- * always untranslated, and routing it into the Ink surface only made the seam
- * VISIBLE — under `HUU_LANG=en` a translated frame now wraps Portuguese lines.
- * The gates were fixed first (`tui.dev.gate_*`), because a question the reader
- * cannot read is a question they cannot answer. **24 line templates remain**,
- * all of them narrative: 4 in {@link offerResume}, 3 in
+ * KNOWN DEBT, and it predates the board: most of the narrative this function
+ * carried used to be hardcoded Portuguese. It was always user-facing (it went
+ * to stderr), it was always untranslated, and routing it into the Ink surface
+ * only made the seam VISIBLE — under `HUU_LANG=en` a translated frame wrapped
+ * Portuguese lines. The gates were fixed first (`tui.dev.gate_*`), because a
+ * question the reader cannot read is a question they cannot answer. The 24
+ * line templates that remained — 4 in {@link offerResume}, 3 in
  * {@link offerOrphanLanding}, 10 in {@link describeEvent}, 6 in
- * {@link formatPlan} and the closing `sessão:` line of {@link runDevCli}. Two
- * further sites are pass-throughs whose payload is not ours to translate
- * (`[{level}] {message}` from the driver, and the caught error's own message).
+ * {@link formatPlan} and the closing `sessão:` line of {@link runDevCli} — are
+ * now translated through `tui.dev.*` in `tui-run.ts`. Everything ELSE printed
+ * by `runDevCli` (the opening summary, refusals, `USAGE`) is still hardcoded
+ * Portuguese and out of scope here. Two sites stay pass-throughs whose payload
+ * is not ours to translate (`[{level}] {message}` from the driver, and the
+ * caught error's own message).
  */
 function err(message: string): void {
   if (activePresenter) {
@@ -321,21 +324,33 @@ function loadGraphFile(path: string, cwd: string): { ok: true; graph: DevGraph }
 
 /** Renders a plan for the approval gate — the human's only view of it. */
 export function formatPlan(plan: DevPlan, epoch: number, warnings: readonly string[]): string {
+  const header = t('tui.dev.plan_header', { epoch });
+  // Labels are NOT hand-padded in the catalog — a Portuguese label is longer
+  // than its English counterpart, so the width has to be computed from
+  // whichever pair is actually active, then applied at the render site.
+  const goalLabel = t('tui.dev.plan_epoch_goal_label');
+  const readyLabel = t('tui.dev.plan_ready_label');
+  const labelWidth = Math.max(goalLabel.length, readyLabel.length);
   const lines: string[] = [
     '',
-    `── Plano da época ${epoch} ${'─'.repeat(Math.max(0, 46 - String(epoch).length))}`,
-    `  Objetivo da época: ${plan.epochGoal}`,
-    `  Pronto quando:     ${plan.doneWhen}`,
+    `── ${header} ${'─'.repeat(Math.max(0, 46 - String(epoch).length))}`,
+    `  ${goalLabel.padEnd(labelWidth)} ${plan.epochGoal}`,
+    `  ${readyLabel.padEnd(labelWidth)} ${plan.doneWhen}`,
     '',
   ];
   plan.fronts.forEach((front, i) => {
-    const deps = front.dependsOnFronts.length > 0 ? ` (depois de: ${front.dependsOnFronts.join(', ')})` : ' (paralelo)';
-    lines.push(`  ${i + 1}. ${front.title} [${front.id}]${deps}`);
+    const deps =
+      front.dependsOnFronts.length > 0
+        ? t('tui.dev.plan_front_deps_after', { deps: front.dependsOnFronts.join(', ') })
+        : t('tui.dev.plan_front_deps_parallel');
+    lines.push(`  ${t('tui.dev.plan_front_line', { index: i + 1, title: front.title, id: front.id, deps })}`);
     lines.push(`     ${front.rationale}`);
-    lines.push(`     até ${front.maxTasks} agente(s) · juiz: ${front.verifyCondition.slice(0, 90)}`);
+    lines.push(
+      `     ${t('tui.dev.plan_front_meta', { maxTasks: front.maxTasks, verify: front.verifyCondition.slice(0, 90) })}`,
+    );
     lines.push('');
   });
-  for (const w of warnings) lines.push(`  ⚠ plano ajustado: ${w}`);
+  for (const w of warnings) lines.push(`  ${t('tui.dev.plan_warning', { warning: w })}`);
   return lines.join('\n');
 }
 
@@ -409,16 +424,24 @@ export async function offerResume(state: DevState, nextEpoch: number): Promise<b
   const done = state.epochs.length;
   const last = state.epochs[done - 1];
   err('');
-  err(`── Sessão anterior encontrada ${'─'.repeat(34)}`);
-  err(`  sessão: ${state.sessionId ?? '(sem id)'} · ${done} época(s) concluída(s) · próxima seria a ${nextEpoch}`);
+  err(`── ${t('tui.dev.resume_header')} ${'─'.repeat(34)}`);
+  err(
+    `  ${t('tui.dev.resume_session', {
+      sessionId: state.sessionId ?? t('tui.dev.resume_no_id'),
+      done,
+      nextEpoch,
+    })}`,
+  );
   if (last) {
     err(
-      `  última época: ${last.status}${last.landedCommit ? ` — aterrissou em ${last.landedCommit.slice(0, 8)}` : ''}${
-        last.landingError ? ` — LANDING FALHOU: ${last.landingError}` : ''
-      }`,
+      `  ${t('tui.dev.resume_last_epoch', {
+        status: last.status,
+        landed: last.landedCommit ? t('tui.dev.suffix_landed', { commit: last.landedCommit.slice(0, 8) }) : '',
+        failed: last.landingError ? t('tui.dev.suffix_landing_failed', { error: last.landingError }) : '',
+      })}`,
     );
   }
-  err(`  objetivo: ${state.goal}`);
+  err(`  ${t('tui.dev.resume_goal', { goal: state.goal })}`);
   // TRANSLATED, unlike the narrative lines above it. Both used to go to plain
   // stderr; the board now renders the QUESTION inside a translated frame
   // ("huu is asking" / "Y or S = yes"), and a question the reader cannot read
@@ -438,16 +461,18 @@ export async function offerOrphanLanding(
   landOrphans: boolean,
 ): Promise<OrphanAction> {
   if (landOrphans) {
-    err(`huu dev: --land-orphans — aterrissando ${orphans.length} branch(es) de integração órfão(s).`);
+    err(t('tui.dev.orphans_landing', { count: orphans.length }));
     return 'land';
   }
   err('');
-  err(`── Branches de integração órfãos (${orphans.length}) ${'─'.repeat(24)}`);
+  err(`── ${t('tui.dev.orphans_header', { count: orphans.length })} ${'─'.repeat(24)}`);
   for (const orphan of orphans) {
     err(
-      `  ${orphan.branch} — ${orphan.ahead} commit(s) que o HEAD não tem${
-        orphan.epoch === undefined ? '' : ` · época ${orphan.epoch}`
-      }`,
+      `  ${t('tui.dev.orphan_line', {
+        branch: orphan.branch,
+        ahead: orphan.ahead,
+        epoch: orphan.epoch === undefined ? '' : t('tui.dev.orphan_epoch_suffix', { epoch: orphan.epoch }),
+      })}`,
     );
   }
   const yes = await confirm(t('tui.dev.gate_orphans'), t('tui.dev.gate_orphans_no_tty'));
@@ -473,37 +498,57 @@ export interface DevEventContext {
 export function describeEvent(event: DevEvent, ctx: DevEventContext = {}): string | null {
   switch (event.type) {
     case 'knowledge':
-      return `knowledge: ${event.status.present ? 'presente' : 'ausente'} — ${event.status.reason}`;
+      return event.status.present
+        ? t('tui.dev.event_knowledge_present', { reason: event.status.reason })
+        : t('tui.dev.event_knowledge_absent', { reason: event.status.reason });
     case 'bootstrap-start':
-      return `bootstrap de knowledge com jcode (deepseek) (${event.model})…`;
+      return t('tui.dev.event_bootstrap_start', { model: event.model });
     case 'bootstrap-done':
-      return `bootstrap ${event.ok ? 'concluído' : 'FALHOU'}`;
+      return event.ok ? t('tui.dev.event_bootstrap_done_ok') : t('tui.dev.event_bootstrap_done_failed');
     case 'bootstrap-progress':
       return null; // too noisy for the CLI
     case 'planning':
-      return `planejando época ${event.epoch}…`;
+      return t('tui.dev.event_planning', { epoch: event.epoch });
     case 'planned':
       // A DRAWING has nodes, not fronts. The synthetic plan projects one front
       // per node so every existing surface keeps working, but reporting it as
       // "N frentes planejadas" would credit a planner that never ran.
       return event.graph
-        ? `método desenhado "${event.graph.id}": ${event.graph.nodeOrder.length} nó(s) — ${event.graph.nodeOrder.join(', ')}`
-        : `época ${event.epoch}: ${event.plan.fronts.length} frente(s) — ${event.plan.fronts.map((f) => f.id).join(', ')}`;
+        ? t('tui.dev.event_planned_graph', {
+            id: event.graph.id,
+            count: event.graph.nodeOrder.length,
+            nodes: event.graph.nodeOrder.join(', '),
+          })
+        : t('tui.dev.event_planned_plan', {
+            epoch: event.epoch,
+            count: event.plan.fronts.length,
+            fronts: event.plan.fronts.map((f) => f.id).join(', '),
+          });
     case 'epoch-start':
-      return `época ${event.epoch}: rodando ${event.pipeline.steps.length} passos`;
+      return t('tui.dev.event_epoch_start', { epoch: event.epoch, count: event.pipeline.steps.length });
     case 'epoch-done':
-      return `época ${event.record.epoch}: ${event.record.status}${
-        event.record.landedCommit ? ` — aterrissou em ${event.record.landedCommit.slice(0, 8)}` : ''
-      }${event.record.landingError ? ` — LANDING FALHOU: ${event.record.landingError}` : ''}`;
+      return t('tui.dev.event_epoch_done', {
+        epoch: event.record.epoch,
+        status: event.record.status,
+        landed: event.record.landedCommit
+          ? t('tui.dev.suffix_landed', { commit: event.record.landedCommit.slice(0, 8) })
+          : '',
+        failed: event.record.landingError
+          ? t('tui.dev.suffix_landing_failed', { error: event.record.landingError })
+          : '',
+      });
     case 'stopped':
       if (event.reason === 'max-epochs' && ctx.drawnMethod) {
-        return (
-          `sessão encerrada: o método desenhado "${ctx.drawnMethod.id}" (${ctx.drawnMethod.name}) rodou de ponta a ponta. ` +
-          'Isso NÃO é teto de épocas: um grafo é o método COMPLETO, então a sessão é uma época por definição.' +
-          (event.detail ? `\n    detalhe: ${event.detail}` : '')
-        );
+        return t('tui.dev.event_stopped_drawn', {
+          id: ctx.drawnMethod.id,
+          name: ctx.drawnMethod.name,
+          detail: event.detail ? t('tui.dev.suffix_detail_line', { detail: event.detail }) : '',
+        });
       }
-      return `sessão encerrada: ${event.reason}${event.detail ? ` — ${event.detail}` : ''}`;
+      return t('tui.dev.event_stopped', {
+        reason: event.reason,
+        detail: event.detail ? t('tui.dev.suffix_dash_detail', { detail: event.detail }) : '',
+      });
     case 'log':
       return event.level === 'info' ? null : `[${event.level}] ${event.message}`;
   }
@@ -1051,9 +1096,12 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
   const ok = CLEAN_STOPS.has(result.stoppedBecause) && landedAll;
 
   err(
-    `  sessão: ${result.sessionId}${result.resumed ? ' (retomada)' : ''} · épocas: ${result.epochs.length}${
-      drawnMethod ? ` · método desenhado "${drawnMethod.id}"` : ''
-    }`,
+    `  ${t('tui.dev.session_summary', {
+      sessionId: result.sessionId,
+      resumed: result.resumed ? t('tui.dev.suffix_resumed') : '',
+      epochs: result.epochs.length,
+      drawn: drawnMethod ? t('tui.dev.suffix_drawn_method', { id: drawnMethod.id }) : '',
+    })}`,
   );
 
   // The board is done; hand the terminal back BEFORE the machine-readable

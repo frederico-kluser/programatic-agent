@@ -27,6 +27,10 @@ export const cliEn = {
     'huu: systemd user scope unavailable — running without a kernel memory ceiling (the software guard still applies).',
   'cli.warn_yolo':
     'huu: --yolo: skipping Docker. The agent has access to your shell credentials (~/.ssh, ~/.aws, etc.).',
+  'cli.warn_config_corrupt_saved':
+    'huu: {path} could not be read as JSON and has been REPLACED.\n     Your API keys were in that file — the original bytes were kept at {backup} (mode 0600).\n     Open it in an editor to copy any key back into huu; delete it once you are done.',
+  'cli.warn_config_corrupt_lost':
+    'huu: {path} could not be read as JSON and has been REPLACED.\n     huu could not save a copy of the old file (disk full, or the directory is not writable), so any API key it held is gone. Add your key again in the Options screen.',
   'cli.web_launching':
     'huu: launching the web UI inside Docker — open {url} once the container is up (a few seconds on first run, longer while the image pulls).',
   'cli.web_prefer_tui': 'Prefer the terminal UI? Run {command}.',

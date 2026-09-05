@@ -27,6 +27,10 @@ export const cliPtBR = {
     'huu: escopo de usuário do systemd indisponível — rodando sem teto de memória no kernel (a guarda de software continua valendo).',
   'cli.warn_yolo':
     'huu: --yolo: pulando o Docker. O agente tem acesso às credenciais do seu shell (~/.ssh, ~/.aws, etc.).',
+  'cli.warn_config_corrupt_saved':
+    'huu: {path} não pôde ser lido como JSON e foi SUBSTITUÍDO.\n     Suas chaves de API estavam nesse arquivo — os bytes originais foram guardados em {backup} (modo 0600).\n     Abra o arquivo num editor para copiar a chave de volta para o huu; apague-o depois.',
+  'cli.warn_config_corrupt_lost':
+    'huu: {path} não pôde ser lido como JSON e foi SUBSTITUÍDO.\n     O huu não conseguiu guardar uma cópia do arquivo antigo (disco cheio, ou o diretório não é gravável), então qualquer chave de API que ele tivesse se perdeu. Cadastre a chave de novo na tela de Opções.',
   'cli.web_launching':
     'huu: subindo a UI web dentro do Docker — abra {url} assim que o container estiver de pé (alguns segundos na primeira vez, mais enquanto a imagem baixa).',
   'cli.web_prefer_tui': 'Prefere a UI de terminal? Rode {command}.',

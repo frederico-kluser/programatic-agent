@@ -2,7 +2,7 @@
 name: running-dev-mode
 description: Covers huu's development mode (src/lib/dev-mode/, `huu dev`, web `/dev`) — the one flow whose step graph is written at RUN TIME. Explains the TWO-RUN epoch (knowledge → plan → execution), the BLIND orchestrator that reads no file and gets a digest agents wrote, why gap specs must be real files committed BEFORE the run, the per-task generator→critic loop (`WorkStep.review`) with severity convergence and forward-default on every failure, opt-in per-role model routing with NO registry preflight since v3.0, session-namespaced blackboards with resume + orphan branches, the epoch-landing merge, and the MANIFESTO boundary that keeps the planner decomposing instead of inventing scope. Use for any change under src/lib/dev-mode/, src/lib/knowledge-detect.ts, src/lib/dev-mode/dev-model-policy.ts, src/web/dev-manager.ts, the `huu dev` CLI, or when debugging a dev session that stalled, refused to start, or planned the wrong thing.
 metadata:
-  version: 0.2.0
+  version: 0.2.1
   type: task
 ---
 
@@ -74,8 +74,9 @@ it is also what keeps a `--stub` session at one run per epoch.
 ### The orchestrator is BLIND — and the digest is the only exception
 
 `planKnowledge`/`planEpoch` are structured-output calls through
-`buildChatClient` → LangChain `ChatOpenAI` → the DeepSeek API
-(`src/lib/llm-client-factory.ts`; OpenRouter was the endpoint before v3.0). No
+`buildChatClient` → LangChain `ChatOpenAI` → the endpoint of the provider the
+run SELECTED (`src/lib/llm-client-factory.ts` binds `ProviderInfo.defaultBaseUrl`;
+`deepseek` and `openrouter` are both live today). No
 tools, no file reads, and **no repo digest**: the mechanically truncated file listing the old
 planner got is gone. The only thing it ever learns about this repository is
 `digest.md`, which AGENTS wrote from the code, with citations.
@@ -170,14 +171,17 @@ an unknown id now fails inside the first agent, after its worktree and branch
 already exist — exactly the failure the preflight existed to move to the border.
 
 Because of that, **the preset ids are unverified against the current provider**.
-`DEV_MODEL_PRESETS` (`src/lib/types/dev-mode.ts:114`) still routes `planner` to
-`z-ai/glm-5.2` and `critic` to `moonshotai/kimi-k2.6`, while v3.0 collapsed
-every path onto DeepSeek: the planner's id goes to `api.deepseek.com` through
-`buildChatClient`, and the critic's goes to jcode as `--model` under the
-`deepseek-v4-pro` provider profile. Neither is a DeepSeek id. Re-validate a
-preset against the selected provider before recommending it — and see
-integrating-llm-backends for why a role routed to a foreign provider is a
-billing bug, not a typo.
+`DEV_MODEL_PRESETS` (`src/lib/types/dev-mode.ts:114-134`) routes `planner` to
+`z-ai/glm-5.2` and `critic` to `moonshotai/kimi-k2.6` while every other role
+sits on a `deepseek/…` id — so a preset is only coherent under the provider that
+serves BOTH families. Under `--provider=openrouter` the aggregator routes on the
+vendor prefix and the mixed roster resolves; under `--provider=deepseek` those
+two ids are FOREIGN, and `modelIdForProvider` deliberately leaves a foreign id
+untouched (`src/lib/providers.ts:232-242`) so api.deepseek.com answers "unknown
+model" rather than huu mangling it — which, with the preflight gone, happens
+inside the first agent, after its worktree exists. Re-validate a preset against
+the selected provider before recommending it — and see integrating-llm-backends
+for why a role routed to a foreign provider is a billing bug, not a typo.
 
 `critic` is a distinct role from `judge` on purpose: the judge runs post-merge
 in the integration worktree and routes a step; the critic runs pre-merge in the
@@ -275,7 +279,8 @@ shipped completely unexercised.
 >
 > Facts verified against source on 2026-07-28; the v3.0 backend collapse
 > re-verified 2026-09-05 — model preflight and `model-registry-check.ts`
-> deleted, the LangChain path now bound to DeepSeek, and the knowledge
+> deleted, the LangChain path now bound to the SELECTED provider's base URL
+> (`deepseek` and `openrouter` both live), and the knowledge
 > BOOTSTRAP replaced by a warning (`dev-driver.ts:1308-1313`: "knowledge
 > bootstrap is not available in v3.0"). The `pi` backend no longer exists.
 

@@ -14,7 +14,16 @@
 //    leaving them uncommitted would stall the chain after epoch 1.
 // `.huu/` is often gitignored, hence the forced add.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { GitClient } from '../../git/git-client.js';
 import type { DevState } from '../types.js';
@@ -32,9 +41,98 @@ import { devPaths } from './dev-protocol.js';
  */
 export const DEV_STATE_FORMAT = 'huu-devstate-v2';
 
+/**
+ * Writes a driver-owned file ATOMICALLY: stage next to the target, then
+ * `rename` over it.
+ *
+ * WHY, and why here specifically. A plain `writeFileSync` onto the target
+ * truncates it first, so a crash or SIGKILL of THIS PROCESS between the
+ * truncate and the last byte leaves a HALF-WRITTEN `state.json`. And a
+ * half-written state does not fail loudly: `readDevState` returns `null` for
+ * anything it cannot parse, and `null` means "no resume offered" — so the
+ * accident that corrupts the file is the same accident that silently throws
+ * the session's history away and makes the next run plan epoch 1 from scratch.
+ * The driver calls `persist()` several times per epoch, so the window is not
+ * exotic. `rename(2)` is atomic within a filesystem: a reader either sees the
+ * whole previous version or the whole new one, never a prefix of either.
+ *
+ * SCOPE, exactly: death of the process. Neither the staging file nor its
+ * directory is `fsync`ed, so a power cut or a kernel panic is NOT covered — a
+ * rename can be atomic and still not have reached the platter. Nothing in
+ * `src/` fsyncs; matching the neighbours is worth more than a durability
+ * guarantee only this one call site would carry.
+ *
+ * The staging file lives in the SAME directory — `rename` across filesystems
+ * is EXDEV — and carries a per-call unique suffix so two writers cannot
+ * scribble over each other's staging file. `dev-graph/graph-store.ts:333` and
+ * `jcode/hermetic.ts:167` build the identical pid-plus-random suffix;
+ * `surf-research.ts:268` stages the same way but with a fixed `.huu.tmp`.
+ *
+ * The bytes are NOT changed by any of this: `JSON.stringify(state, null, 2)` +
+ * `\n` for the state, the same goal template as before. Neither is the mode of
+ * a file that already exists — but THAT one takes explicit work, because
+ * `rename` installs a NEW inode, created by `open(2)` with `0666 & ~umask`. A
+ * `state.json` the user had left at 0600 came back 0644 under a default umask
+ * 022 (measured). So the mode is read before the write and re-applied after
+ * it, the same fix the `chmodSync` at `graph-store.ts:355` and
+ * `surf-research.ts:274` applies, for the same stated reason. A file that did
+ * NOT exist yet gets no forced mode: the umask default is what a blob
+ * committed as 100644 wants, and the owner-only bits those two neighbours ask
+ * for are for their secrets, not for this blackboard.
+ *
+ * The staging file is removed when the write fails, and the error is rethrown:
+ * a leftover `*.huu.tmp` would be listed by nothing and cleaned by nobody. It
+ * could not be COMMITTED by accident either, because `commitBlackboard` stages
+ * only the paths it was handed BY NAME — `HUU_OWNED_PATHS` plus the driver's
+ * `extraPaths` — and a staging file nobody names is not among them. (`.huu/`
+ * being gitignored is a weaker, LATER layer, not a guarantee: the
+ * `ensureGitignored` calls live in `Orchestrator.start()`
+ * (`orchestrator/index.ts:1055`), which runs after the first
+ * `persist('abrir sessão')` (`dev-driver.ts:1303`) — on a virgin repo there is
+ * a window where the ignore line is not there yet.) But it would still be
+ * litter in the user's repo.
+ *
+ * All of the above is GUARDED, not merely asserted: `dev-state.test.ts` /
+ * "dev-state / the driver-owned writes are atomic" fails if the staging file
+ * and the rename are ever replaced by a direct write onto the target, if the
+ * failure path stops sweeping the staging file, or if the rename goes back to
+ * re-permissioning the file it replaces.
+ */
 function writeFileEnsuringDir(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content, 'utf8');
+
+  // Read BEFORE the write: after the rename the old inode is gone and its bits
+  // with it. Absent is the normal case on a first write — and the case where
+  // forcing any mode would be wrong.
+  let previousMode: number | undefined;
+  try {
+    previousMode = statSync(path).mode & 0o777;
+  } catch {
+    /* no target yet — let the umask decide, as it does for any new file */
+  }
+
+  const tmp = `${path}.${process.pid}-${Math.random().toString(36).slice(2, 10)}.huu.tmp`;
+  try {
+    writeFileSync(tmp, content, 'utf8');
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* nothing left to do — the real failure is rethrown below */
+    }
+    throw err;
+  }
+
+  if (previousMode !== undefined) {
+    try {
+      chmodSync(path, previousMode);
+    } catch {
+      /* Best effort, and deliberately AFTER the throw above: the bytes already
+         landed, so a filesystem that cannot chmod must degrade to "wrong bits",
+         never to "the write failed". */
+    }
+  }
 }
 
 /** Writes the human's goal verbatim. Never templated, never summarized. */

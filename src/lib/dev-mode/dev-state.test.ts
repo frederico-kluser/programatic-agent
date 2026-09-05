@@ -1,5 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  watch,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -209,6 +223,232 @@ describe('commitBlackboard', () => {
 
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(committedFiles().sort()).toEqual([devPaths.goal, devPaths.state]);
+  });
+});
+
+describe('dev-state / the driver-owned writes are atomic', () => {
+  // THE GUARD FOR `writeFileEnsuringDir`'s CENTRAL ARGUMENT. A plain
+  // `writeFileSync` onto `state.json` truncates it first, and a crash inside
+  // that window does NOT fail loudly: `readDevState` answers `null` for
+  // anything unparseable, and `null` means "no resume offered" — so the
+  // accident that corrupts the file is the same accident that throws the
+  // session's history away, silently. The driver persists several times per
+  // epoch, so this is the window, not a corner.
+  //
+  // Every assertion below observes the OBSERVABLE CONSEQUENCE of rename rather
+  // than the implementation: rename SWAPS IN a new inode, a truncating write
+  // reuses the old one. No timing, no crash simulation, no seam.
+
+  /** A state fat enough that a truncating rewrite is visibly not instantaneous. */
+  function bigState(marker: string): DevState {
+    return {
+      ...STATE,
+      goal: marker,
+      epochs: Array.from({ length: 400 }, (_, i) => ({
+        epoch: i + 1,
+        runId: `run-${i}`,
+        epochGoal: `${marker} — época ${i + 1} `.repeat(8),
+        frontIds: ['api', 'cli', 'tests'],
+        status: 'done' as const,
+        landedCommit: 'a'.repeat(40),
+        startedAt: '2026-07-28T00:00:00.000Z',
+        finishedAt: '2026-07-28T01:00:00.000Z',
+      })),
+    };
+  }
+
+  it('swaps in a new inode instead of truncating the state file already there', () => {
+    writeDevState(repo, STATE);
+    const path = join(repo, devPaths.state);
+    const firstInode = statSync(path).ino;
+
+    writeDevState(repo, { ...STATE, goal: 'segundo objetivo' });
+
+    expect(statSync(path).ino).not.toBe(firstInode);
+    expect(readDevState(repo)?.goal).toBe('segundo objetivo');
+  });
+
+  it('swaps in a new inode for the goal file too', () => {
+    writeGoalFile(repo, 'primeiro objetivo');
+    const path = join(repo, devPaths.goal);
+    const firstInode = statSync(path).ino;
+
+    writeGoalFile(repo, 'segundo objetivo');
+
+    expect(statSync(path).ino).not.toBe(firstInode);
+    expect(readFileSync(path, 'utf8')).toContain('segundo objetivo');
+  });
+
+  // THE COST OF THE NEW INODE. `rename` does not just swap the bytes, it swaps
+  // the FILE: the inode that lands is the staging file's, created by `open(2)`
+  // with `0666 & ~umask`. So the same mechanism that buys atomicity silently
+  // RE-PERMISSIONS the target — measured, before the fix: a `state.json` left
+  // at 0600 came back 0644 under the default umask 022. The mode is therefore
+  // read before the write and re-applied after it.
+  it('keeps the mode the state file already had instead of widening it to the umask default', () => {
+    writeDevState(repo, STATE);
+    const path = join(repo, devPaths.state);
+    chmodSync(path, 0o600);
+
+    writeDevState(repo, { ...STATE, goal: 'segundo objetivo' });
+
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('600');
+    // …and the write still happened. Preserving the mode of a file nobody
+    // updated would be no achievement.
+    expect(readDevState(repo)?.goal).toBe('segundo objetivo');
+  });
+
+  it('keeps the mode the goal file already had', () => {
+    writeGoalFile(repo, 'primeiro objetivo');
+    const path = join(repo, devPaths.goal);
+    chmodSync(path, 0o640);
+
+    writeGoalFile(repo, 'segundo objetivo');
+
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('640');
+    expect(readFileSync(path, 'utf8')).toContain('segundo objetivo');
+  });
+
+  it('forces no mode on a file that did not exist yet — a first write takes the umask default', () => {
+    // The other half of the claim, and the reason the preservation is
+    // conditional: these files are COMMITTED, as ordinary 100644 blobs. A
+    // helper that always chmod-ed to the owner-only bits the secret-bearing
+    // writers ask for (`graph-store.ts`, `surf-research.ts`) would be wrong
+    // here. Compared against a plain `writeFileSync` in the same directory so
+    // the assertion holds under any umask, hardened ones included.
+    writeDevState(repo, STATE);
+    const reference = join(repo, devPaths.root, 'reference.txt');
+    writeFileSync(reference, 'x');
+
+    expect(statSync(join(repo, devPaths.state)).mode & 0o777).toBe(
+      statSync(reference).mode & 0o777,
+    );
+  });
+
+  it('never shows a concurrent reader a half-written state', () => {
+    // A reader that opened the file BEFORE the persist — the human's `cat`, a
+    // backup tool, a second huu probing for a resume — keeps reading the
+    // COMPLETE previous version through its descriptor: rename unlinks the old
+    // inode, it does not rewrite it. Under a truncating write the same
+    // descriptor would follow the persist into whatever bytes are there.
+    writeDevState(repo, STATE);
+    const path = join(repo, devPaths.state);
+    const previous = readFileSync(path, 'utf8');
+    const reader = openSync(path, 'r');
+    try {
+      writeDevState(repo, bigState('depois'));
+      const buffer = Buffer.alloc(previous.length * 8);
+      const read = readSync(reader, buffer, 0, buffer.length, 0);
+      expect(buffer.subarray(0, read).toString('utf8')).toBe(previous);
+    } finally {
+      closeSync(reader);
+    }
+    expect(readDevState(repo)?.goal).toBe('depois');
+  });
+
+  it('overwrites a valid state with a large one without ever landing on a shape readDevState refuses', () => {
+    writeDevState(repo, STATE);
+    const big = bigState('objetivo grande');
+
+    writeDevState(repo, big);
+
+    const read = readDevState(repo);
+    expect(read).not.toBeNull();
+    expect(read).toEqual(big);
+  });
+
+  it('leaves no staging file behind', () => {
+    writeGoalFile(repo, 'migrar o parser');
+    writeDevState(repo, STATE);
+    writeDevState(repo, bigState('de novo'));
+
+    expect(readdirSync(join(repo, devPaths.root)).sort()).toEqual(['goal.md', 'state.json']);
+  });
+
+  it('removes the staging file when the write fails, and reports the failure', () => {
+    // A DIRECTORY sitting where `state.json` belongs: rename cannot replace it.
+    // Without the cleanup branch this leaves a `*.huu.tmp` nobody lists and
+    // nobody deletes, in the user's own repo.
+    mkdirSync(join(repo, devPaths.state), { recursive: true });
+
+    expect(() => writeDevState(repo, STATE)).toThrow();
+
+    expect(readdirSync(join(repo, devPaths.root)).filter((f) => f.includes('.huu.tmp'))).toEqual(
+      [],
+    );
+  });
+
+  it.runIf(process.platform === 'linux')(
+    'stages inside the blackboard directory, where rename is atomic',
+    async () => {
+      // The OTHER half of the claim: the staging file is a SIBLING of the
+      // target, because `rename` is only atomic within one filesystem — a tmp
+      // in the OS temp dir would be an EXDEV failure on any machine whose repo
+      // is on a separate mount. inotify buffers events in the KERNEL, so a
+      // watcher started here still sees the names the synchronous write
+      // created and removed while the event loop was blocked. Linux only: the
+      // macOS/Windows backends do not promise per-name events.
+      mkdirSync(join(repo, devPaths.root), { recursive: true });
+      const seen: string[] = [];
+      const watcher = watch(join(repo, devPaths.root), (_event, name) => {
+        if (name) seen.push(name);
+      });
+      try {
+        writeDevState(repo, STATE);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      } finally {
+        watcher.close();
+      }
+
+      expect(seen.some((name) => name.startsWith('state.json.') && name.endsWith('.huu.tmp'))).toBe(
+        true,
+      );
+      expect(seen).toContain('state.json');
+      // …and it is gone again by the time the call returns.
+      expect(readdirSync(join(repo, devPaths.root))).toEqual(['state.json']);
+    },
+  );
+
+  // THE FORMAT IS NOT PART OF THE CHANGE. Atomicity is about HOW the bytes
+  // reach the disk; these two are the bytes themselves, pinned so a future
+  // rewrite of the helper cannot quietly reformat a file the resume parses and
+  // a human reads.
+  it('writes byte-for-byte the same content as before — 2-space JSON, trailing newline', () => {
+    writeDevState(repo, STATE);
+    expect(readFileSync(join(repo, devPaths.state), 'utf8')).toBe(
+      `${JSON.stringify(STATE, null, 2)}\n`,
+    );
+
+    writeGoalFile(repo, '  migrar o parser  ');
+    expect(readFileSync(join(repo, devPaths.goal), 'utf8')).toBe(
+      '# Objetivo\n\n> Escrito pelo humano. Nenhum agente reescreve este arquivo.\n\nmigrar o parser\n',
+    );
+  });
+
+  // The staging file is litter, and litter in a git repo is a commit risk:
+  // `commitBlackboard` force-adds, and forced adds ignore `.gitignore`. Two
+  // independent reasons it cannot be swept in — the pathspecs are EXACT files,
+  // and everything huu writes lives under `.huu/`, which huu itself gitignores
+  // (`RUN_LOG_DIR`) — so an unforced `add -A` skips it as well.
+  it('a leftover staging file is invisible to the blackboard commit', async () => {
+    writeFileSync(join(repo, '.gitignore'), '.huu/\n');
+    git(['add', '.gitignore'], repo);
+    git(['commit', '-q', '-m', 'ignore huu'], repo);
+
+    writeGoalFile(repo, 'migrar o parser');
+    writeDevState(repo, STATE);
+    // Simulate the only way one can exist: a process killed mid-write.
+    writeFileSync(join(repo, `${devPaths.state}.4242-abcd1234.huu.tmp`), '{ half-writ');
+
+    const sha = await commitBlackboard(client, repo, 'chore(huu-dev): abrir sessão');
+    expect(sha).not.toBeNull();
+    expect(committedFiles().sort()).toEqual([devPaths.goal, devPaths.state]);
+
+    // …and it does not count as the user's dirty work either, so it cannot
+    // stall the next landing.
+    expect(await foreignDirtyPaths(client, repo)).toEqual([]);
+    git(['add', '-A'], repo);
+    expect(git(['diff', '--cached', '--name-only'], repo).split('\n').filter(Boolean)).toEqual([]);
   });
 });
 

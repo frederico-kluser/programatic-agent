@@ -25,3 +25,5 @@ dist/
 .omo/
 
 .claude/
+
+.deep-orchestrator/

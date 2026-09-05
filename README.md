@@ -80,7 +80,9 @@ Essa frase tem algumas afirmações que vale destacar:
 - **O humano subscreve o escopo.** Nenhum planner LLM decide o que o
   passo 3 deve fazer ou quais arquivos ele deve tocar. Se um passo for
   mal projetado, o resultado vai ser previsivelmente e auditavelmente
-  errado — não surpreendentemente errado.
+  errado — não surpreendentemente errado. (A exceção é o **modo de
+  desenvolvimento**, em beta: lá o grafo é escrito em runtime, e a seção
+  dele declara a contradição em vez de escondê-la.)
 - **Determinístico no método e na ordem de merge, não no resultado.** A
   topologia do pipeline, os escopos, os pontos de merge e a ordem
   (`git merge --no-ff`, branches ascendentes por agentId) são idênticos

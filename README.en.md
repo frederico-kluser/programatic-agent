@@ -79,7 +79,9 @@ That sentence has a few claims worth unpacking:
 - **The human underwrites the scope.** No LLM planner decides what
   step 3 should do or which files it should touch. If a step is
   misdesigned, the result is predictably and auditably wrong — not
-  surprisingly wrong.
+  surprisingly wrong. (The exception is **development mode**, in beta:
+  there the graph is written at run time, and its section owns the
+  contradiction instead of hiding it.)
 - **Deterministic in method and merge order, not in result.** The
   pipeline topology, the scopes, the merge points and the order
   (`git merge --no-ff`, branches ascending by agentId) are identical on

@@ -246,7 +246,7 @@ com `wc -l`) 📏:
 |---|---:|---:|---:|---|
 | `CHANGELOG.md` | 1.766 | 84 | 148.344 | **O mais tocado do repositório** — mas o conflito garantido **foi resolvido**: escreve-se um fragmento por card em `.changes/`, consolidado por `scripts/changelog.ts` |
 | `src/orchestrator/index.ts` | 2.751 | 48 | 132.048 | **O pior hoje.** Loop de etapa + guard + requeue + retry num arquivo. Todo card de orquestração colide |
-| `README.md` + `README.en.md` | 1.232 + 1.224 | 56 + 48 | 68.992 + 58.752 | Gêmeos que precisam ficar em sincronia — agora com paridade **verificada** por `scripts/check-twins.ts` no gate |
+| `README.md` + `README.en.md` | 1.234 + 1.226 | 56 + 48 | 69.104 + 58.848 | Gêmeos que precisam ficar em sincronia — agora com paridade **verificada** por `scripts/check-twins.ts` no gate |
 | `src/web/client/styles.css` | 1.852 | 27 | 50.004 | CSS único do cliente |
 | `src/web/server.ts` | 1.330 | 27 | 35.910 | Servidor HTTP+SSE único |
 | `src/web/client/index.html` | 740 | 30 | 22.200 | Markup único do cliente — herdou parte do churn que era do `app.js` |

@@ -17,6 +17,10 @@ export const tuiEn = {
   'tui.apikey.save_disabled': 'Save disabled — key lives only in process memory for this run.',
   'tui.apikey.field': 'API key: ',
   'tui.apikey.prefix_warning': 'expected to start with "{prefix}"',
+  'tui.apikey.foreign_key':
+    'That is a {foreignLabel} key (it starts with "{prefix}"), not a {label} key. ENTER is blocked: ' +
+    'saving it here would store it as your {label} credential and send it to the wrong vendor. ' +
+    'Paste the {label} key, or press ESC and pick {foreignLabel} as your provider.',
   'tui.apikey.save_globally': 'Save globally for all huu runs on this computer',
   'tui.apikey.toggle_save': 'toggle save',
 

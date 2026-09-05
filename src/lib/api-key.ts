@@ -9,13 +9,18 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   API_KEY_REGISTRY,
+  detectForeignKeySpec,
   findSpec,
   type ApiKeySpec,
 } from './api-key-registry.js';
-import { providerToBackend, type LlmProvider } from './providers.js';
+import {
+  apiKeySpecNameForProvider,
+  resolveRunProvider,
+  type LlmProvider,
+} from './providers.js';
 import type { AgentBackendKind } from './types.js';
 
-export { API_KEY_REGISTRY, findSpec };
+export { API_KEY_REGISTRY, detectForeignKeySpec, findSpec };
 export type { ApiKeySpec };
 
 /** Which precedence tier of the resolver supplied a key value. */
@@ -176,31 +181,38 @@ export function findMissingRequiredKeys(): ApiKeySpec[] {
 }
 
 /**
- * Backend-aware variant of `findMissingRequiredKeys`. Returns specs the
- * given backend would block on:
- *   1. The backend-bound spec for `backend` (regardless of `required`),
- *      because choosing a backend implies its primary credential is
- *      mandatory — even when the registry has `required: false` to
- *      keep legacy callers from blocking other backends.
- *   2. Plus any spec without `backendBound` that is `required: true` —
- *      those are universal, enforced regardless of which backend runs.
- *      (Currently none — AA was demoted to `required: false` so it no
- *      longer gates the run flow after pipeline configuration.)
+ * The run-blocking credential gate, keyed by the PROVIDER that will actually
+ * serve the run. This is the PRIMARY form: `deepseek` and `openrouter` both
+ * dispatch to the `jcode` backend, so the backend alone no longer identifies
+ * a credential — only the provider does.
  *
- * Specs bound to a DIFFERENT backend are skipped so an Azure run
- * doesn't ask for an OpenRouter key the user will never use.
+ * A spec surfaces (i.e. blocks) when it is either:
+ *   1. `providerBound` to `provider` and unresolved — enforced REGARDLESS of
+ *      `required`, because picking a provider makes its key mandatory. This
+ *      is what lets a provider key stay `required: false` (invisible to the
+ *      universal gate, so it never blocks the OTHER provider's runs) and
+ *      still block its OWN runs.
+ *   2. Universal (no `providerBound`), `required: true` and unresolved —
+ *      enforced for every run whatever the provider.
+ *
+ * The invariant: a run demands EXACTLY the credentials of the provider it is
+ * about to spend money on. Never both provider keys (that was the trap of
+ * binding both specs to `jcode`), and never zero (rule 1 blocks a provider
+ * whose own key is missing even when `required` is false).
+ *
+ * `provider === undefined` means "no provider will be called" — the `stub`
+ * backend. Only rule 2 can then surface, and no spec is in that shape today,
+ * so `--stub` stays runnable with no key at all.
  */
-export function findMissingKeysForBackend(
-  backend: AgentBackendKind,
+export function findMissingKeysForProvider(
+  provider: LlmProvider | undefined,
 ): ApiKeySpec[] {
   const out: ApiKeySpec[] = [];
-  // stub has no credentials; only universal `required` specs (none today)
-  // could surface, and none are bound to it.
   for (const spec of API_KEY_REGISTRY) {
-    const bound = spec.backendBound;
+    const bound = spec.providerBound;
     if (bound) {
-      if (bound !== backend) continue;
-      // Backend-bound spec for the active backend: always enforce.
+      if (bound !== provider) continue;
+      // Bound spec for the ACTIVE provider: always enforce, `required` or not.
       if (!resolveApiKey(spec)) out.push(spec);
     } else if (spec.required) {
       if (!resolveApiKey(spec)) out.push(spec);
@@ -210,13 +222,51 @@ export function findMissingKeysForBackend(
 }
 
 /**
- * Provider-keyed wrapper around {@link findMissingKeysForBackend}. The UI
- * picks a provider (OpenRouter / Azure AI Foundry); this resolves it to the
- * backing dispatch kind and returns the credential specs still missing for
- * it (OpenRouter → the openrouter key; Azure → the API key + endpoint URL).
+ * Backend-keyed wrapper around {@link findMissingKeysForProvider}, for
+ * callers that only hold an {@link AgentBackendKind}.
+ *
+ * It can only answer for the backend's DEFAULT provider — `jcode` serves
+ * both `deepseek` and `openrouter`, and demanding both keys would be wrong.
+ * A caller that knows which provider the user picked MUST call
+ * `findMissingKeysForProvider` directly; otherwise this reports the default
+ * provider's missing keys and an OpenRouter-only user looks blocked while
+ * holding a perfectly good key.
+ *
+ * `stub` is served by NO provider (`providersForBackend('stub') === []`), so
+ * it resolves to `undefined` and stays keyless by construction rather than
+ * by a hardcoded special case.
  */
-export function findMissingKeysForProvider(provider: LlmProvider): ApiKeySpec[] {
-  return findMissingKeysForBackend(providerToBackend(provider));
+export function findMissingKeysForBackend(
+  backend: AgentBackendKind,
+): ApiKeySpec[] {
+  return findMissingKeysForProvider(resolveRunProvider(backend));
+}
+
+/**
+ * The credential spec a run will actually spend, from the provider the user
+ * chose. `undefined` when no provider serves the backend (`stub`).
+ *
+ * Every credential decision goes through here instead of
+ * `BackendBundle.apiKeySpecName` — the bundle is keyed on the BACKEND, and
+ * `jcode` serves two providers, so it structurally cannot name the right key.
+ */
+export function specForProvider(
+  provider: LlmProvider | undefined,
+): ApiKeySpec | undefined {
+  const name = apiKeySpecNameForProvider(provider);
+  return name ? findSpec(name) : undefined;
+}
+
+/**
+ * Resolve the credential of the provider a run picked. `''` when there is no
+ * provider (stub) or the key is missing — callers gate on
+ * {@link findMissingKeysForProvider}, never on this value's emptiness alone.
+ */
+export function resolveApiKeyForProvider(
+  provider: LlmProvider | undefined,
+): string {
+  const spec = specForProvider(provider);
+  return spec ? resolveApiKey(spec) : '';
 }
 
 /**
@@ -297,9 +347,6 @@ export function resolveDeepSeekApiKey(): string {
   if (!spec) return '';
   return resolveApiKey(spec);
 }
-
-/** @deprecated Use resolveDeepSeekApiKey() instead. */
-export const resolveOpenRouterApiKey = resolveDeepSeekApiKey;
 
 /**
  * Read the whole global config store as a plain object. Missing/corrupt file

@@ -5,7 +5,7 @@ export const cliPtBR = {
   'cli.err_not_a_repo':
     'huu: não é um repositório git: {cwd}\nO huu roda cada agente numa worktree isolada do git, então precisa de um repositório.\nRode \'git init\' aqui, ou entre num repositório existente, e tente de novo.',
   'cli.err_unknown_provider':
-    'huu: --provider={value}: provedor desconhecido. Válidos: openrouter, azure',
+    'huu: --provider={value}: provedor desconhecido. Válidos: {valid}',
   'cli.err_unknown_backend': 'huu: --backend={value}: backend desconhecido. Válidos: {valid}',
   'cli.err_import_pipeline': 'Falha ao importar o pipeline: {message}',
   'cli.err_per_file_no_files':

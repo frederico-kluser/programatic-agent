@@ -18,6 +18,10 @@ export const tuiPtBR = {
     'Salvamento desativado — a chave fica só na memória do processo nesta execução.',
   'tui.apikey.field': 'Chave de API: ',
   'tui.apikey.prefix_warning': 'esperado começar com "{prefix}"',
+  'tui.apikey.foreign_key':
+    'Isso é uma chave do {foreignLabel} (começa com "{prefix}"), não do {label}. O ENTER está ' +
+    'bloqueado: salvá-la aqui a guardaria como sua credencial do {label} e a enviaria para o ' +
+    'fornecedor errado. Cole a chave do {label}, ou aperte ESC e escolha {foreignLabel} como provedor.',
   'tui.apikey.save_globally': 'Salvar globalmente para todas as execuções do huu neste computador',
   'tui.apikey.toggle_save': 'alternar salvamento',
 

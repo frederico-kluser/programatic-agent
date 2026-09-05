@@ -18,7 +18,8 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { findSpec, resolveApiKey } from '../api-key.js';
+import { resolveApiKey, specForProvider } from '../api-key.js';
+import { resolveRunProvider, type LlmProvider } from '../providers.js';
 import { parseDevGraph } from '../dev-graph/graph-schema.js';
 import { DEVGRAPH_SLUG_PATTERN, type DevGraph } from '../dev-graph/graph-types.js';
 import { selectBackend, type AgentBackendKind } from '../../orchestrator/backends/registry.js';
@@ -57,6 +58,13 @@ export interface RunDevCliArgs {
   cwd: string;
   /** Backend chosen via `--backend=` / `--provider=` / `--stub`; defaults to jcode. */
   backend?: AgentBackendKind;
+  /**
+   * LLM provider chosen via `--provider=`. SEPARATE axis from `backend`:
+   * `jcode` serves both `deepseek` and `openrouter`, so the backend alone
+   * names neither the credential nor the endpoint. Omitted means "the
+   * backend's default provider".
+   */
+  provider?: LlmProvider;
   concurrency?: number;
   autoScale?: boolean;
 }
@@ -646,19 +654,25 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
 
   const bundle = selectBackend(backend);
 
+  // THE provider this session will spend on. Derived from the user's
+  // `--provider=` through `resolveRunProvider`, which yields `undefined` for a
+  // backend that serves none (`stub`) and discards a provider the backend
+  // cannot serve. `bundle.apiKeySpecName` is deliberately NOT consulted: it is
+  // keyed on the BACKEND, and `jcode` serves two providers, so it is
+  // `undefined` there — the `?? 'deepseek'` that used to paper over that made
+  // every dev session resolve (and later spend) the DeepSeek credential no
+  // matter which provider had been chosen.
+  const devProvider = resolveRunProvider(backend, input.provider);
+
   let apiKey = '';
   let endpoint: string | undefined;
   if (bundle.requiresApiKey) {
-    // Credential name comes from the bundle, never hard-coded here:
-    // `huu dev --backend=jcode` used to demand the OpenRouter key (and refuse
-    // to start without it) because this branch pinned the name itself.
-    const specName = bundle.apiKeySpecName ?? 'deepseek';
-    const spec = findSpec(specName);
+    const spec = specForProvider(devProvider);
     if (spec) apiKey = resolveApiKey(spec);
     if (!apiKey) {
       err(
         `huu dev: the ${spec?.label ?? bundle.label} provider requires an API key but ` +
-          `${spec?.envVar ?? specName} is not set. Export it, mount a secret at ` +
+          `${spec?.envVar ?? 'its API key'} is not set. Export it, mount a secret at ` +
           `${spec?.secretMountPath ?? '/run/secrets/<key>'}, or persist it via the TUI first.`,
       );
       return 1;
@@ -669,7 +683,11 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
     apiKey: apiKey || 'stub',
     modelId: opts.modelId,
     backend,
-    // provider removed from AppConfig
+    // Carried, not re-derived: the planner's chat client (`llmContextFor`) and
+    // the jcode spawn (`--provider-profile` + `api_key_env`) both read this
+    // field. Dropping it here is what sent `apiKey` — resolved above for
+    // `devProvider` — to the DEFAULT provider's endpoint.
+    provider: devProvider,
     endpoint,
   };
 

@@ -151,7 +151,9 @@ export async function runArchitect(opts: RunArchitectOptions): Promise<Architect
     return runArchitectStub(opts);
   }
 
-  const ctx: LlmClientContext = opts.llmContext ?? { backend: 'jcode', deepseekApiKey: opts.apiKey };
+  // Provider-NEUTRAL fallback — see `llm-client-factory.ts`: the legacy
+  // `deepseekApiKey` field is honored ONLY for the deepseek provider.
+  const ctx: LlmClientContext = opts.llmContext ?? { backend: 'jcode', apiKey: opts.apiKey };
   const invoke: ArchitectInvoker =
     opts.invoker ??
     (async <T>(

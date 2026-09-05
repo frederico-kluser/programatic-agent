@@ -8,9 +8,10 @@ import {
   applyResolverModel,
   applyTimeout,
   pickRunKey,
+  runCredential,
   type RunSnapshot,
 } from './run-manager.js';
-import { findSpec, saveApiKey } from '../lib/api-key.js';
+import { findMissingKeysForProvider, findSpec, saveApiKey } from '../lib/api-key.js';
 import type { Pipeline } from '../lib/types.js';
 
 function setupRepo(): string {
@@ -326,5 +327,122 @@ describe('pickRunKey (web run key precedence)', () => {
       source: 'none',
       storedOverridesEnv: false,
     });
+  });
+});
+
+/**
+ * THE BLOCK, pinned. The reviewer's matrix, executed at the REAL web gate.
+ *
+ * Before this fix the credential came from `selectBackend(backend).apiKeySpecName`
+ * — hard-coded `'deepseek'` — so `params.provider` was accepted, stored for
+ * display, and then ignored. Three cells were wrong at once:
+ *   · only OPENROUTER_API_KEY + provider openrouter → REFUSED ("jcode needs an
+ *     API key"), holding a perfectly good key;
+ *   · only DEEPSEEK_API_KEY + provider openrouter → ACCEPTED and run against
+ *     DeepSeek, silently ignoring the user's choice;
+ *   · the AppConfig handed to the orchestrator carried no provider at all.
+ */
+describe('the provider decides the credential (web run gate)', () => {
+  const TRACKED = [
+    'DEEPSEEK_API_KEY',
+    'DEEPSEEK_API_KEY_FILE',
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_API_KEY_FILE',
+    'XDG_CONFIG_HOME',
+    'HUU_CONFIG_DIR',
+  ] as const;
+  const saved: Record<string, string | undefined> = {};
+  let cfgHome: string;
+
+  beforeEach(() => {
+    for (const k of TRACKED) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    cfgHome = mkdtempSync(join(tmpdir(), 'huu-runcred-'));
+    process.env.XDG_CONFIG_HOME = cfgHome;
+  });
+  afterEach(() => {
+    for (const k of TRACKED) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    rmSync(cfgHome, { recursive: true, force: true });
+  });
+
+  it('names the OpenRouter spec for an OpenRouter run and the DeepSeek spec for a DeepSeek run', () => {
+    // MUTATION KILLED: `runCredential` going back to
+    // `selectBackend(backend).apiKeySpecName` (or to any backend-keyed
+    // lookup). Both providers share the `jcode` backend, so a backend-keyed
+    // answer is identical for both — this assertion separates them.
+    expect(runCredential('jcode', 'openrouter').spec?.envVar).toBe('OPENROUTER_API_KEY');
+    expect(runCredential('jcode', 'deepseek').spec?.envVar).toBe('DEEPSEEK_API_KEY');
+    // A backend that serves no provider spends no credential.
+    expect(runCredential('stub').spec).toBeUndefined();
+    expect(runCredential('stub').provider).toBeUndefined();
+    // No pick → the backend's first provider, never "both" and never "none".
+    expect(runCredential('jcode').provider).toBe('deepseek');
+  });
+
+  it('only OPENROUTER_API_KEY: an OpenRouter run resolves a key and never asks for DEEPSEEK_API_KEY', () => {
+    // The exact state of the machine that triggered the BLOCK.
+    process.env.OPENROUTER_API_KEY = 'sk-or-only-this-one';
+    const { provider, spec } = runCredential('jcode', 'openrouter');
+    expect(provider).toBe('openrouter');
+    expect(spec?.envVar).toBe('OPENROUTER_API_KEY');
+    // These two calls ARE what `WebRunManager.start` does, in this order.
+    const picked = pickRunKey(undefined, undefined, spec);
+    expect(picked.value).toBe('sk-or-only-this-one');
+    expect(picked.source).toBe('env');
+    // Nothing in the chain names the other provider's variable.
+    expect(spec?.envVar).not.toBe('DEEPSEEK_API_KEY');
+    expect(findMissingKeysForProvider('openrouter')).toEqual([]);
+  });
+
+  it('only DEEPSEEK_API_KEY: an OpenRouter run is REFUSED, not silently run as DeepSeek', async () => {
+    // MUTATION KILLED: falling back to the backend's default provider when
+    // `params.provider` names one whose key is missing. That fallback is the
+    // silent-substitution bug — the user picks OpenRouter, pays DeepSeek.
+    process.env.DEEPSEEK_API_KEY = 'sk-deepseek-only';
+    const { spec } = runCredential('jcode', 'openrouter');
+    expect(spec?.envVar).toBe('OPENROUTER_API_KEY');
+    expect(pickRunKey(undefined, undefined, spec).value).toBe('');
+
+    const dir = setupRepo();
+    try {
+      const mgr = new WebRunManager(dir, () => {});
+      const pipeline: Pipeline = { name: 'p', steps: [{ name: 's', prompt: 'x', files: [] }] };
+      // The refusal happens BEFORE any orchestrator is constructed, so this
+      // never spawns an agent.
+      expect(() =>
+        mgr.start({
+          pipeline,
+          pipelineName: 'p',
+          backend: 'jcode',
+          provider: 'openrouter',
+          modelId: 'anthropic/claude-sonnet-4',
+        }),
+      ).toThrow(/OpenRouter/i);
+      // And the same run with the provider the key belongs to is NOT refused
+      // for a credential reason — proof the refusal is about the PROVIDER, not
+      // about the run being unlaunchable in this environment.
+      expect(runCredential('jcode', 'deepseek').spec?.envVar).toBe('DEEPSEEK_API_KEY');
+      expect(pickRunKey(undefined, undefined, runCredential('jcode', 'deepseek').spec).value).toBe(
+        'sk-deepseek-only',
+      );
+      mgr.abort();
+      await waitFor(() => !mgr.isActive(), 3000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  it('no key at all: each provider asks for ITS OWN variable, never for both', () => {
+    expect(findMissingKeysForProvider('deepseek').map((s) => s.envVar)).toEqual([
+      'DEEPSEEK_API_KEY',
+    ]);
+    expect(findMissingKeysForProvider('openrouter').map((s) => s.envVar)).toEqual([
+      'OPENROUTER_API_KEY',
+    ]);
   });
 });

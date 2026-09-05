@@ -19,6 +19,8 @@
  * env passthrough, orphan cleanup) iterates this list — no other files
  * need to learn about the new key.
  */
+import type { LlmProvider } from './providers.js';
+
 export interface ApiKeySpec {
   /**
    * Internal identifier. Used as the JSON property name in the persisted
@@ -57,14 +59,19 @@ export interface ApiKeySpec {
    */
   required: boolean;
   /**
-   * When set, this spec is "owned" by a specific agent backend and the
-   * App should only enforce its presence when that backend is active.
-   * Specs without `backendBound` are universal — when `required: true`
-   * they're enforced regardless of backend. The provider selector resolves
-   * a provider to its backend (`deepseek` → `jcode`) before checking, so
-   * this stays backend-keyed.
+   * When set, this spec is the credential of ONE specific LLM provider. The
+   * run gate enforces it only when that provider is the one about to be
+   * used — and then REGARDLESS of `required`, because choosing a provider
+   * makes its key mandatory. Specs without `providerBound` are universal:
+   * enforced for every run when `required: true`, invisible when `false`.
+   *
+   * The axis is the PROVIDER, not the backend — this field replaced
+   * `backendBound` when OpenRouter rejoined. `deepseek` and `openrouter`
+   * BOTH dispatch to the `jcode` backend, so a backend-keyed binding would
+   * have made one run demand BOTH keys. Provider-keyed, a run asks for
+   * exactly the credential it is going to spend, no more and no less.
    */
-  backendBound?: 'jcode';
+  providerBound?: LlmProvider;
 }
 
 export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
@@ -78,20 +85,30 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
     hint: 'starts with sk-',
     validatePrefix: 'sk-',
     required: true,
-    backendBound: 'jcode',
+    providerBound: 'deepseek',
   },
   {
-    // Legacy OpenRouter key — kept for backwards compat with stored configs.
-    // No longer required; not bound to any backend.
+    // First-class again: OpenRouter is the provider that fronts the
+    // heterogeneous roster (Claude, GPT, GLM) the DeepSeek endpoint cannot
+    // serve. `name` is INTENTIONALLY unchanged from its legacy-era value —
+    // it is the JSON property of every already-persisted config store (and
+    // the spec `api-key-pool.test.ts` exercises), so renaming it would
+    // orphan saved keys.
+    //
+    // `required: false` + `providerBound: 'openrouter'` is the deliberate
+    // shape: the binding is what gates an OpenRouter run (bound specs are
+    // enforced regardless of `required`), while `required: false` keeps it
+    // OUT of the universal gate so a DeepSeek run never asks for it.
     name: 'openrouter',
     envVar: 'OPENROUTER_API_KEY',
     envFileVar: 'OPENROUTER_API_KEY_FILE',
     secretMountPath: '/run/secrets/openrouter_api_key',
     hostSecretScope: 'huu-openrouter-key',
-    label: 'OpenRouter (legacy)',
+    label: 'OpenRouter',
     hint: 'starts with sk-or-',
     validatePrefix: 'sk-or-',
     required: false,
+    providerBound: 'openrouter',
   },
   {
     // AA is purely informational — it enriches the model selector with
@@ -115,10 +132,10 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
   // file, so env vars and secret mounts alone would never reach it.
   //
   // All three are `required: false` AND deliberately carry NO
-  // `backendBound`: findMissingKeysForBackend only enforces a spec without
-  // `backendBound` when `required: true`, so these stay invisible to the run
-  // gate. Web research is an OPTIONAL capability — a missing key degrades the
-  // research step (see docs/dev-mode.md), it must never block a run.
+  // `providerBound`: the run gate only enforces an unbound spec when
+  // `required: true`, so these stay invisible to it. Web research is an
+  // OPTIONAL capability — a missing key degrades the research step (see
+  // docs/dev-mode.md), it must never block a run.
   {
     name: 'tavily',
     envVar: 'TAVILY_API_KEY',
@@ -154,4 +171,56 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
 
 export function findSpec(name: string): ApiKeySpec | undefined {
   return API_KEY_REGISTRY.find((s) => s.name === name);
+}
+
+/**
+ * Detect a value pasted into the WRONG spec's prompt.
+ *
+ * The foot-gun this closes: DeepSeek keys start with `sk-`, OpenRouter keys
+ * with `sk-or-`. A prefix check alone can never separate them — `sk-or-…`
+ * satisfies `startsWith('sk-')` — so an OpenRouter user pushed to the DeepSeek
+ * prompt pasted their key, saw NO warning, and huu persisted it under the name
+ * `deepseek` and shipped it to api.deepseek.com. Making the deepseek prefix
+ * "discriminant enough" is impossible (a prefix cannot express "sk- but not
+ * sk-or-"), so the discrimination has to be CROSS-SPEC.
+ *
+ * The rule, in three parts:
+ *   1. Only specs that DECLARE a `validatePrefix` are judged. A spec with no
+ *      declared format (Artificial Analysis, Brave, Parallel) has no basis to
+ *      call anything foreign — claiming every `sk-…` value for DeepSeek would
+ *      be a false positive that blocks perfectly good keys.
+ *   2. A value that satisfies the target's own prefix is foreign only when
+ *      another spec's prefix is STRICTLY MORE SPECIFIC (longer) and also
+ *      matches: `sk-or-` (6) refines `sk-` (3), so an OpenRouter key is
+ *      refused by the DeepSeek prompt.
+ *   3. A value that does NOT satisfy the target's prefix is foreign as soon as
+ *      it matches any other spec's prefix — a plain `sk-…` DeepSeek key in the
+ *      OpenRouter prompt, a `tvly-…` in either.
+ *
+ * Anything else (a value matching nothing at all) is left to the SOFT prefix
+ * warning, deliberately: keys do change format, and a shape we simply do not
+ * recognise must not lock the user out.
+ *
+ * Returns the spec the value really belongs to, or `undefined`.
+ */
+export function detectForeignKeySpec(
+  target: ApiKeySpec,
+  value: string,
+): ApiKeySpec | undefined {
+  const v = value.trim();
+  if (!v) return undefined;
+  const own = target.validatePrefix;
+  if (!own) return undefined;
+  const matchesOwn = v.startsWith(own);
+  let best: ApiKeySpec | undefined;
+  for (const spec of API_KEY_REGISTRY) {
+    if (spec.name === target.name) continue;
+    const prefix = spec.validatePrefix;
+    if (!prefix || !v.startsWith(prefix)) continue;
+    // Satisfies the target's own format: only a strictly longer (more
+    // specific) prefix can overrule it.
+    if (matchesOwn && prefix.length <= own.length) continue;
+    if (!best || prefix.length > (best.validatePrefix?.length ?? 0)) best = spec;
+  }
+  return best;
 }

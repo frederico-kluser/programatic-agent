@@ -15,9 +15,11 @@ import {
   maskKey,
   resolveApiKey,
   resolveApiKeyWithSource,
+  resolveApiKeyForProvider,
   resolveDeepSeekApiKey,
-  resolveOpenRouterApiKey,
   saveApiKey,
+  specForProvider,
+  detectForeignKeySpec,
 } from './api-key.js';
 
 describe('api-key registry', () => {
@@ -114,23 +116,39 @@ describe('api-key registry', () => {
       expect(spec.validatePrefix).toBe('sk-');
     });
 
-    it('deepseek is bound to jcode and required', () => {
+    it('deepseek is bound to the deepseek PROVIDER (not to a backend)', () => {
       const spec = findSpec('deepseek')!;
-      expect(spec.backendBound).toBe('jcode');
-      // `required: true` since the pi removal: jcode is the only backend that
-      // actually talks to a model, so its credential gates every real run.
-      // The binding is what keeps `stub` — the one keyless backend — exempt.
+      expect(spec.providerBound).toBe('deepseek');
       expect(spec.required).toBe(true);
     });
 
+    it('openrouter is bound to its provider AND `required: false`', () => {
+      // This exact shape (`providerBound` set + `required: false`) is what
+      // makes the gate's two rules distinguishable: the binding must enforce
+      // the key for an OpenRouter run while `required: false` keeps it out of
+      // the universal gate, so a DeepSeek run never asks for it.
+      const spec = findSpec('openrouter')!;
+      expect(spec.providerBound).toBe('openrouter');
+      expect(spec.required).toBe(false);
+      expect(spec.envVar).toBe('OPENROUTER_API_KEY');
+    });
+
+    it('the two provider keys bind to DIFFERENT providers', () => {
+      // Binding both to the shared `jcode` backend was the design error this
+      // replaced: it would make a single run demand BOTH credentials.
+      expect(findSpec('deepseek')!.providerBound).not.toBe(
+        findSpec('openrouter')!.providerBound,
+      );
+    });
+
     it('the research specs are optional AND unbound — invisible to the run gate', () => {
-      // `findMissingKeysForBackend` only enforces a spec without
-      // `backendBound` when `required: true`. Both flags together are what
-      // keeps a missing research key from ever blocking a run.
+      // The gate only enforces a spec without `providerBound` when
+      // `required: true`. Both flags together are what keeps a missing
+      // research key from ever blocking a run.
       for (const name of ['tavily', 'parallel', 'brave']) {
         const spec = findSpec(name)!;
         expect(spec.required, `${name}.required`).toBe(false);
-        expect(spec.backendBound, `${name}.backendBound`).toBeUndefined();
+        expect(spec.providerBound, `${name}.providerBound`).toBeUndefined();
       }
     });
   });
@@ -380,7 +398,7 @@ describe('api-key registry', () => {
   describe('findMissingKeysForBackend (backend-aware)', () => {
     it('jcode backend: requires ONLY deepseek when nothing is configured', () => {
       // Non-vacuous on three fronts:
-      //  · the research specs (tavily/parallel/brave) carry no `backendBound`
+      //  · the research specs (tavily/parallel/brave) carry no `providerBound`
       //    and `required: false`, so they never reach the run gate;
       //  · AA is `required: false` too — the model selector degrades
       //    gracefully instead of blocking a fully configured run;
@@ -416,11 +434,13 @@ describe('api-key registry', () => {
       expect(resolveApiKey(findSpec('deepseek')!)).toBe('sk-jcode-stored');
     });
 
-    it('the legacy openrouter key never gates a jcode run', () => {
-      // OpenRouter survives the pi removal only as a `required: false` entry
-      // kept for stored configs. It carries no `backendBound`, so it must stay
-      // invisible to every backend gate — a jcode run asks for DeepSeek alone.
+    it('the openrouter key never gates a DEEPSEEK run', () => {
+      // OpenRouter is a first-class provider again, but its spec is bound to
+      // the `openrouter` provider — so it stays invisible to a run served by
+      // deepseek (which is what the backend-keyed wrapper defaults to), and
+      // `required: false` keeps it out of the universal gate too.
       expect(findMissingKeysForBackend('jcode').map((s) => s.name)).not.toContain('openrouter');
+      expect(findMissingKeysForProvider('deepseek').map((s) => s.name)).not.toContain('openrouter');
       expect(findMissingRequiredKeys().map((s) => s.name)).not.toContain('openrouter');
     });
 
@@ -429,10 +449,8 @@ describe('api-key registry', () => {
     });
   });
 
-  describe('findMissingKeysForProvider', () => {
-    it('the deepseek provider resolves to jcode and needs the deepseek key', () => {
-      // `providerToBackend('deepseek') === 'jcode'`, so the provider-keyed
-      // wrapper must return exactly what the backend-keyed gate returns.
+  describe('findMissingKeysForProvider (the PRIMARY gate)', () => {
+    it('the deepseek provider needs the deepseek key', () => {
       const names = findMissingKeysForProvider('deepseek').map((s) => s.name);
       expect(names).toEqual(['deepseek']);
       expect(names).toEqual(findMissingKeysForBackend('jcode').map((s) => s.name));
@@ -442,31 +460,151 @@ describe('api-key registry', () => {
       process.env.DEEPSEEK_API_KEY = 'sk-provider-set';
       expect(findMissingKeysForProvider('deepseek')).toEqual([]);
     });
+
+    it('the openrouter provider blocks on ITS key even though `required: false`', () => {
+      // MUTATION KILLED: gating the bound branch on `required`
+      // (`if (spec.required && !resolveApiKey(spec))`) — the openrouter spec
+      // is the only one in the `bound && required: false` shape, so before it
+      // existed this branch had no test that could fail. With the mutation the
+      // result is [] and an OpenRouter run launches with NO credential.
+      expect(findMissingKeysForProvider('openrouter').map((s) => s.name)).toEqual([
+        'openrouter',
+      ]);
+    });
+
+    it('an openrouter run asks for the openrouter key ONLY — never both', () => {
+      // MUTATION KILLED: dropping the `bound !== provider` skip (or binding
+      // both specs to the shared `jcode` backend). Either makes this return
+      // ['deepseek', 'openrouter'] and blocks a user who legitimately has one
+      // key for the provider they picked.
+      process.env.OPENROUTER_API_KEY = 'sk-or-live';
+      expect(findMissingKeysForProvider('openrouter')).toEqual([]);
+      // …and the OTHER provider is still correctly blocked by the same env.
+      expect(findMissingKeysForProvider('deepseek').map((s) => s.name)).toEqual([
+        'deepseek',
+      ]);
+    });
+
+    it('a deepseek run is not unblocked by an openrouter key (and vice versa)', () => {
+      // The credential axis must be the provider, not "any key present".
+      process.env.DEEPSEEK_API_KEY = 'sk-ds-live';
+      expect(findMissingKeysForProvider('deepseek')).toEqual([]);
+      expect(findMissingKeysForProvider('openrouter').map((s) => s.name)).toEqual([
+        'openrouter',
+      ]);
+    });
+
+    it('WITH NO KEY AT ALL, every provider is refused', () => {
+      // The floor of the invariant: relaxing `required`, or loosening the
+      // bound branch, must never make a keyless run launchable.
+      for (const p of ['deepseek', 'openrouter'] as const) {
+        expect(findMissingKeysForProvider(p).length, p).toBeGreaterThan(0);
+      }
+    });
+
+    it('provider `undefined` (stub: no provider is called) demands nothing', () => {
+      // MUTATION KILLED: replacing `providersForBackend(backend).at(0)` with a
+      // hardcoded provider — `stub` would then demand that provider's key and
+      // `huu --stub` could no longer run keyless.
+      expect(findMissingKeysForProvider(undefined)).toEqual([]);
+      expect(findMissingKeysForBackend('stub')).toEqual([]);
+    });
   });
 
-  describe('resolveOpenRouterApiKey (deprecated alias of resolveDeepSeekApiKey)', () => {
-    // `api-key.ts` exports the alias as `resolveOpenRouterApiKey =
-    // resolveDeepSeekApiKey`: the NAME is legacy, the VALUE is the DeepSeek
-    // credential. Nothing in src/ calls it any more — only this pin keeps the
-    // mismatch documented instead of silently misleading a future caller.
-    it('resolves the DEEPSEEK key, not the openrouter one', () => {
-      process.env.DEEPSEEK_API_KEY = 'sk-deepseek-via-alias';
-      expect(resolveOpenRouterApiKey()).toBe('sk-deepseek-via-alias');
-      expect(resolveOpenRouterApiKey()).toBe(resolveDeepSeekApiKey());
+  describe('specForProvider — the ONLY authority on which key a run spends', () => {
+    it('separates the two providers that share the jcode backend', () => {
+      // MUTATION KILLED: deriving the spec from the BACKEND again (
+      // `selectBackend('jcode').apiKeySpecName`). Both providers dispatch to
+      // jcode, so a backend-keyed answer is the SAME for both — this pair of
+      // assertions cannot both hold under that mutation.
+      expect(specForProvider('deepseek')?.envVar).toBe('DEEPSEEK_API_KEY');
+      expect(specForProvider('openrouter')?.envVar).toBe('OPENROUTER_API_KEY');
+      expect(specForProvider(undefined)).toBeUndefined();
     });
 
-    it('IGNORES OPENROUTER_API_KEY despite its name', () => {
-      // The `openrouter` spec still exists in the registry (legacy,
-      // `required: false`) — but the alias does NOT point at it. Should a
-      // future wave bring OpenRouter back as a real provider, this is the
-      // assertion that has to be revisited first.
-      process.env.OPENROUTER_API_KEY = 'sk-or-legacy';
-      expect(resolveOpenRouterApiKey()).toBe('');
-      expect(resolveApiKey(findSpec('openrouter')!)).toBe('sk-or-legacy');
+    it('resolves ONLY the chosen provider key, even when the other one is set', () => {
+      // MUTATION KILLED: falling back to any other resolvable credential when
+      // the chosen provider's key is missing — the silent substitution that
+      // spent DeepSeek money on an OpenRouter run.
+      process.env.DEEPSEEK_API_KEY = 'sk-deepseek-only';
+      expect(resolveApiKeyForProvider('deepseek')).toBe('sk-deepseek-only');
+      expect(resolveApiKeyForProvider('openrouter')).toBe('');
+      expect(resolveApiKeyForProvider(undefined)).toBe('');
     });
 
-    it('is empty when nothing is set', () => {
-      expect(resolveOpenRouterApiKey()).toBe('');
+    it('with ONLY the OpenRouter key, the OpenRouter run is ready and DeepSeek is not', () => {
+      // The reviewer's "só OR" row — the state of the machine that BLOCKED.
+      process.env.OPENROUTER_API_KEY = 'sk-or-only-this-one';
+      expect(findMissingKeysForProvider('openrouter')).toEqual([]);
+      expect(resolveApiKeyForProvider('openrouter')).toBe('sk-or-only-this-one');
+      expect(findMissingKeysForProvider('deepseek').map((s) => s.envVar)).toEqual([
+        'DEEPSEEK_API_KEY',
+      ]);
+    });
+  });
+
+  describe('detectForeignKeySpec — the credential foot-gun', () => {
+    // Why this exists: `sk-or-…` SATISFIES the DeepSeek spec's `sk-` prefix, so
+    // the soft prefix warning is silent exactly where the damage is worst — the
+    // OpenRouter key gets stored under the name `deepseek` and sent to
+    // api.deepseek.com. A prefix cannot express "sk- but not sk-or-", so the
+    // discrimination has to be cross-spec.
+    const deepseek = findSpec('deepseek')!;
+    const openrouter = findSpec('openrouter')!;
+    const aa = findSpec('artificialAnalysis')!;
+
+    it('refuses an OpenRouter key pasted into the DeepSeek prompt', () => {
+      // MUTATION KILLED: dropping the cross-spec check and relying on
+      // `validatePrefix` alone — `'sk-or-v1-abc'.startsWith('sk-')` is TRUE, so
+      // the prefix check reports nothing at all.
+      expect(deepseek.validatePrefix).toBe('sk-');
+      expect('sk-or-v1-abc'.startsWith(deepseek.validatePrefix!)).toBe(true);
+      expect(detectForeignKeySpec(deepseek, 'sk-or-v1-abc')?.name).toBe('openrouter');
+    });
+
+    it('refuses a DeepSeek key pasted into the OpenRouter prompt', () => {
+      expect(detectForeignKeySpec(openrouter, 'sk-abc123')?.name).toBe('deepseek');
+    });
+
+    it('accepts each provider its OWN key', () => {
+      // MUTATION KILLED: making the check "any other prefix that matches",
+      // which would claim every `sk-…` for one of the two and lock both out.
+      expect(detectForeignKeySpec(deepseek, 'sk-abc123')).toBeUndefined();
+      expect(detectForeignKeySpec(openrouter, 'sk-or-v1-abc')).toBeUndefined();
+    });
+
+    it('never judges a spec that declares no format, and never judges an unknown shape', () => {
+      // MUTATION KILLED: dropping the `if (!target.validatePrefix) return`
+      // guard — an Artificial Analysis key that happens to start with `sk-`
+      // would be refused as "a DeepSeek key", blocking a valid credential.
+      expect(aa.validatePrefix).toBeUndefined();
+      expect(detectForeignKeySpec(aa, 'sk-whatever')).toBeUndefined();
+      // A shape nothing claims stays a SOFT warning's business, not a block.
+      expect(detectForeignKeySpec(deepseek, 'totally-new-format')).toBeUndefined();
+      expect(detectForeignKeySpec(deepseek, '   ')).toBeUndefined();
+    });
+
+    it('catches a research key in a provider prompt too', () => {
+      expect(detectForeignKeySpec(deepseek, 'tvly-abc')?.name).toBe('tavily');
+    });
+  });
+
+  describe('resolveDeepSeekApiKey', () => {
+    // The `resolveOpenRouterApiKey` alias that used to sit beside it (a
+    // misleading name pointing at the DeepSeek credential, zero callers) was
+    // DELETED when OpenRouter became a real provider again: the name now
+    // belongs to a real key, and an alias resolving the other provider's
+    // credential would be a live foot-gun rather than dead weight.
+    it('resolves the DEEPSEEK key and ignores OPENROUTER_API_KEY', () => {
+      process.env.DEEPSEEK_API_KEY = 'sk-deepseek-direct';
+      process.env.OPENROUTER_API_KEY = 'sk-or-other';
+      expect(resolveDeepSeekApiKey()).toBe('sk-deepseek-direct');
+      expect(resolveApiKey(findSpec('openrouter')!)).toBe('sk-or-other');
+    });
+
+    it('is empty when the deepseek key is unset, whatever openrouter holds', () => {
+      process.env.OPENROUTER_API_KEY = 'sk-or-other';
+      expect(resolveDeepSeekApiKey()).toBe('');
     });
   });
 

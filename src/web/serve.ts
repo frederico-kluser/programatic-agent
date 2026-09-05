@@ -13,12 +13,19 @@ import { setResilient } from '../lib/crash-guard.js';
 import { t } from '../lib/i18n/index.js';
 import type { AgentBackendKind } from '../orchestrator/backends/registry.js';
 import type { Pipeline } from '../lib/types.js';
+import type { LlmProvider } from '../lib/providers.js';
 
 export interface StartWebServerArgs {
   cwd: string;
   args: string[];
   env: NodeJS.ProcessEnv;
   lockedBackend?: AgentBackendKind;
+  /**
+   * Provider locked from `--provider=`. Must travel on its own: both providers
+   * map to the SAME `jcode` backend, so `lockedBackend` cannot carry it and
+   * the browser's provider segment silently reverted to DeepSeek.
+   */
+  lockedProvider?: LlmProvider;
   initialPipeline?: Pipeline;
   defaultAutoScale: boolean;
   defaultConcurrency?: number;
@@ -98,6 +105,7 @@ export async function startWebServer(opts: StartWebServerArgs): Promise<void> {
   const { server } = createWebServer({
     cwd: opts.cwd,
     lockedBackend: opts.lockedBackend,
+    lockedProvider: opts.lockedProvider,
     initialPipeline: opts.initialPipeline,
     defaultAutoScale: opts.defaultAutoScale,
     defaultConcurrency: opts.defaultConcurrency,

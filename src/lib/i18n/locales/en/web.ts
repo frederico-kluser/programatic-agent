@@ -276,6 +276,8 @@ export const webEn = {
     'Validated against the provider, then kept only in this browser tab — never written to disk.',
   'web.key.validated_session': 'Key validated ✓ — kept in this browser only',
   'web.key.rejected': 'Key rejected (HTTP {status}). Check it and paste again.',
+  'web.key.wrong_provider':
+    'That is a {label} key — not saved. Pick {label} as your provider, or paste the right key.',
   'web.key.unverified': "Couldn't verify the value ({reason}) — using it for this session anyway.",
 
   'web.history.title': 'Run history',
@@ -313,19 +315,19 @@ export const webEn = {
   'web.settings.ram_hint':
     'Share of total RAM huu may use across ALL concurrent runs on this machine (10–95). Applied IMMEDIATELY to running and queued runs, persisted on the server, and enforced by the pressure guard (the topbar chip shows the live value). Higher = more parallelism, thinner safety margin; the rest is reserved for the OS. Empty = 70%.',
   'web.settings.ram_applied': 'RAM budget: {percent}% — applied to all runs now',
-  'web.settings.keys': 'OpenRouter API keys',
+  'web.settings.keys': 'Provider API keys',
   'web.settings.checking': 'Checking…',
   'web.settings.validate_add': 'Validate & add',
   'web.settings.validating': 'Validating…',
   'web.settings.keys_hint':
-    'Checked against OpenRouter first — a rejected key is never saved. A valid key joins the pool and is used by every new run (this session and future huu starts); this tab starts using it immediately. With more than one key huu rotates per attempt, skipping burned and cooling ones. Validation results and any run problem are also logged in the terminal running huu.',
+    'Checked against the selected provider first — a rejected key, or one that belongs to a different provider, is never saved. A valid key joins the pool and is used by every new run (this session and future huu starts); this tab starts using it immediately. With more than one key huu rotates per attempt, skipping burned and cooling ones. Validation results and any run problem are also logged in the terminal running huu.',
   'web.settings.in_use': 'in use',
   'web.settings.remove_key': 'Remove this key from the pool',
   'web.settings.pool_count_one': '{count} key in the pool · huu rotates per attempt, skipping burned and cooling ones.',
   'web.settings.pool_count_other': '{count} keys in the pool · huu rotates per attempt, skipping burned and cooling ones.',
   'web.settings.pool_reset': 'reset burned / cooldowns',
   'web.settings.pool_reset_done': 'Burned keys and cooldowns cleared',
-  'web.settings.no_key': 'No OpenRouter key yet — paste one below.',
+  'web.settings.no_key': 'No {label} key yet — paste one below.',
   'web.settings.active_key': '✓ Active: {masked} — {source}',
   'web.settings.clear_saved': 'clear saved key',
   'web.settings.env_ignored':
@@ -333,12 +335,14 @@ export const webEn = {
   'web.settings.session_key':
     'This tab holds a validated session key and sends it with runs launched here.',
   'web.settings.status_unavailable': 'Key status unavailable: {message}',
-  'web.settings.paste_first': 'Paste an OpenRouter key first.',
+  'web.settings.paste_first': 'Paste a {label} key first.',
+  'web.settings.key_wrong_provider':
+    'That is a {label} key, not a {expected} key — nothing was saved.',
   'web.settings.key_rejected':
-    'OpenRouter rejected this key (HTTP {status}) — nothing saved. Check it and paste again.',
+    '{label} rejected this key (HTTP {status}) — nothing saved. Check it and paste again.',
   'web.settings.key_saved': 'Key validated ✓ and saved — every new run will use it',
   'web.settings.key_unverified':
-    "Couldn't reach OpenRouter to verify ({reason}) — key saved anyway; runs will try it.",
+    "Couldn't reach {label} to verify ({reason}) — key saved anyway; runs will try it.",
   'web.settings.key_removed': 'Key removed from the pool',
   'web.settings.key_cleared': 'Saved key cleared',
   'web.settings.key_cleared_note': 'Saved key cleared — {note}',

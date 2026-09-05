@@ -15,6 +15,7 @@ import { resolve as resolvePath } from 'node:path';
 import { Orchestrator } from '../orchestrator/index.js';
 import type { AgentOutputChunk } from '../orchestrator/types.js';
 import { selectBackend, type AgentBackendKind } from '../orchestrator/backends/registry.js';
+import { apiKeySpecNameForProvider, resolveRunProvider } from '../lib/providers.js';
 import { findSpec } from '../lib/api-key.js';
 import { createKeyPoolHandle, type KeyPoolHandle } from '../lib/api-key-pool.js';
 import { generateRunId } from '../lib/run-id.js';
@@ -415,6 +416,7 @@ export class WebDevManager {
     if (!params.modelId?.trim()) throw new Error('modelId is required');
 
     const bundle = selectBackend(params.backend);
+    const devProvider = resolveRunProvider(params.backend, params.provider);
     const runDirectory = params.runDirectory ? resolvePath(params.runDirectory) : this.cwd;
 
     // The web surface offers NO epoch ceiling: a session runs until the planner
@@ -434,13 +436,16 @@ export class WebDevManager {
     let apiKeySource: AppConfig['apiKeySource'];
     let keyPool: KeyPoolHandle | undefined;
     if (bundle.requiresApiKey) {
-      // Same rule as the run path (`run-manager.ts`): the credential name is
-      // whatever the backend bundle declares, so a jcode dev session asks for
-      // the DeepSeek key instead of refusing to start without an OpenRouter
-      // one.
-      const specName = bundle.apiKeySpecName ?? 'deepseek';
-      const spec = findSpec(specName);
-      const picked = pickRunKey(params.apiKey, this.runs.getWebKey(specName), spec);
+      // Same rule as the run path (`run-manager.ts`): the PROVIDER names the
+      // credential, never the backend bundle — `jcode` serves two providers,
+      // so `bundle.apiKeySpecName` is undefined there by design.
+      const specName = apiKeySpecNameForProvider(devProvider);
+      const spec = specName ? findSpec(specName) : undefined;
+      const picked = pickRunKey(
+        params.apiKey,
+        specName ? this.runs.getWebKey(specName) : undefined,
+        spec,
+      );
       apiKey = picked.value;
       apiKeySource = picked.source;
       if (!apiKey) {
@@ -467,7 +472,8 @@ export class WebDevManager {
       apiKey: apiKey || 'stub',
       modelId: params.modelId,
       backend: params.backend,
-            endpoint,
+      provider: devProvider,
+      endpoint,
       apiKeySource,
     };
 

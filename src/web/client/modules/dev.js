@@ -3,7 +3,7 @@
 import { buildDevModelsPayload, describeDevModelsPayload, presetValues } from '../dev-models.js';
 import { buildDevMethodologyPayload, parseStoredMethodology } from '../dev-methodology.js';
 import { esc, toast, shortDir, projectName } from './utils.js';
-import { $, S, api, DEFAULT_MODEL_ID, sessionKey, backendSpecName, providerInfoById, providerReady, providerBackend } from './state.js';
+import { $, S, api, DEFAULT_MODEL_ID, sessionKey, activeKeySpecName, providerInfoById, providerReady, providerBackend } from './state.js';
 import { showView, switchMode, refreshModelsAndKeys, wireModeSwitch } from './launch.js';
 import { makeGraphApi } from './graph/graph-api-client.js';
 import { RUN_GRAPH_EVENT } from './graph/canvas.js';
@@ -82,12 +82,12 @@ export function renderDevProviderSeg() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = S.provider === p.id ? 'on' : '';
-    btn.textContent = p.label + (providerReady(p) ? '' : ' •');
-    btn.title = p.description + (providerReady(p) ? ' · key ✓' : ' · key needed');
+    btn.textContent = p.label + (providerReady(S, p) ? '' : ' •');
+    btn.title = p.description + (providerReady(S, p) ? ' · key ✓' : ' · key needed');
     if (locked && p.id !== S.boot.lockedProvider) btn.disabled = true;
     btn.addEventListener('click', () => {
       S.provider = p.id;
-      S.backend = providerBackend(p.id);
+      S.backend = providerBackend(S, p.id);
       renderDevProviderSeg();
     });
     seg.appendChild(btn);
@@ -729,7 +729,10 @@ export async function finishDictation() {
   setMicUi('busy', t('web.dev.mic_transcribing'));
   try {
     const audio = await blobToWavBase64(blob);
-    const specName = backendSpecName('pi');           // transcription is OpenRouter-only
+    // Transcription is OpenRouter-only (Gemini via OpenRouter), so the spec is
+    // that provider's by definition — NOT the run's provider, and not a lookup
+    // through the backend (which now names no spec at all).
+    const specName = 'openrouter';
     const res = await api('/api/dev/transcribe', {
       method: 'POST',
       body: JSON.stringify({ audio, format: 'wav', apiKey: sessionKey(specName) || undefined }),
@@ -1115,7 +1118,10 @@ export function devStartBody(goal, modelId, extra = {}) {
   // purpose: "a session without a drawing posts the same bytes" is the
   // invariant this wave has to keep, and quietly starting to send a key would
   // break it in the one direction nobody would test for.
-  const specName = backendSpecName(S.backend);
+  // The ACTIVE PROVIDER's spec. `backendSpecName(S.backend)` could not answer
+  // this (jcode serves two providers, so the server reports no spec for it) and
+  // was additionally called without `S.boot`, so it always returned undefined.
+  const specName = activeKeySpecName(S);
   return {
     goal,
     provider: S.provider,

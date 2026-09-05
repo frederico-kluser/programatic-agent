@@ -21,13 +21,25 @@
  *    `<dir>/config.toml` — directly, with NO `.jcode` segment in between — and
  *    it wins even when `$HOME/.jcode/config.toml` exists and lacks the profile.
  *
- * So the hermetic branch MATERIALIZES huu's own `config.toml` (the
- * `deepseek-v4-pro` openai-compatible profile the jcode factory spawns with)
- * under `~/.huu/jcode-home/` and points `JCODE_HOME` at that directory. The
- * backend then works identically on a clean host and inside the container, with
- * no hand-written `~/.jcode/config.toml` anywhere. Note what is NOT in the file:
- * the credential. The profile only names `DEEPSEEK_API_KEY`; huu's api-key chain
- * (`lib/api-key-registry.ts`, spec `deepseek`) puts the value in the spawn env.
+ * So the hermetic branch MATERIALIZES huu's own `config.toml` under
+ * `~/.huu/jcode-home/` and points `JCODE_HOME` at that directory. The backend
+ * then works identically on a clean host and inside the container, with no
+ * hand-written `~/.jcode/config.toml` anywhere.
+ *
+ * The file declares ONE openai-compatible profile PER PROVIDER huu exposes
+ * (`deepseek-v4-pro` → api.deepseek.com, `openrouter` → openrouter.ai), each
+ * derived from the provider table in `lib/providers.ts`. It is a static
+ * CATALOG: `--provider-profile` is what picks from it per spawn
+ * ({@link jcodeProviderProfile}). Writing only the current run's provider
+ * would make two runs of different providers fight over the same self-healing
+ * file forever — and pinning ONE profile for every run, which is what this
+ * module used to do, sent an OpenRouter user's `sk-or-…` key to
+ * api.deepseek.com as a Bearer token.
+ *
+ * Note what is NOT in the file: the credential. Each profile only NAMES its
+ * variable via `api_key_env`; huu's api-key chain
+ * (`lib/api-key-registry.ts`) puts the value in the spawn env, and
+ * `withJcodeApiKey` narrows it to the ONE provider the run chose.
  *
  * The rest of the isolation, unchanged:
  *  - Zero embeddings (`JCODE_MEMORY_ENABLED=false`) — each agent run is
@@ -49,7 +61,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { findSpec } from '../../../lib/api-key-registry.js';
 import { getHuuHome } from '../../../lib/huu-home.js';
+import {
+  DEFAULT_PROVIDER,
+  PROVIDERS,
+  apiKeySpecNameForProvider,
+  providerInfo,
+  type LlmProvider,
+} from '../../../lib/providers.js';
 
 /**
  * Hermetic is the DEFAULT. Only an explicit `HUU_JCODE_HERMETIC=0|false`
@@ -71,10 +91,87 @@ export function jcodeAgentDir(): string {
 }
 
 /**
- * The provider profile the jcode factory spawns with (`--provider-profile`).
- * The materialized config MUST declare it or jcode refuses to start.
+ * jcode profile shape for ONE provider: the `[providers.<name>]` block the
+ * materialized config declares and `--provider-profile` selects.
+ *
+ * `base_url` and `api_key_env` are NOT stored here — they are derived from the
+ * provider table (`lib/providers.ts`) and the credential registry
+ * (`lib/api-key-registry.ts`) when the TOML is composed, so the URL jcode dials
+ * and the variable it reads can never disagree with the URL huu's own LangChain
+ * clients dial or the key huu's resolver fills. That divergence is exactly the
+ * bug this module shipped: a `--provider-profile` pinned to DeepSeek while the
+ * user had chosen OpenRouter sent an `sk-or-…` secret to api.deepseek.com.
  */
-export const JCODE_PROVIDER_PROFILE = 'deepseek-v4-pro';
+interface JcodeProfile {
+  /** Profile name — the `<name>` in `[providers.<name>]` and `--provider-profile <name>`. */
+  name: string;
+  /** `default_model` for the profile, in the shape THAT endpoint expects. */
+  defaultModel: string;
+  contextWindow: number;
+  maxTokens: number;
+}
+
+/**
+ * One profile per provider, exhaustive BY TYPE: `Record<LlmProvider, …>` makes
+ * a new member of {@link LlmProvider} a COMPILE error here instead of a run
+ * that silently falls back to somebody else's endpoint.
+ *
+ * `deepseek`'s profile name stays `deepseek-v4-pro` on purpose — it is the
+ * exact string `docs/jcode-setup-guide.md` §3 documents and the one clean-host
+ * combination proven to resolve; renaming it would only strand that doc.
+ */
+const JCODE_PROFILES: Readonly<Record<LlmProvider, JcodeProfile>> = {
+  deepseek: {
+    name: 'deepseek-v4-pro',
+    // BARE, not `deepseek/deepseek-v4-pro`: api.deepseek.com is a
+    // single-vendor endpoint. Same rule `modelIdForProvider` applies to the
+    // `--model` huu actually passes, so the declared default and the spawned
+    // model are written in ONE namespace.
+    defaultModel: 'deepseek-v4-pro',
+    contextWindow: 1000000,
+    maxTokens: 384000,
+  },
+  openrouter: {
+    name: 'openrouter',
+    // PREFIXED: openrouter.ai routes ON the vendor segment.
+    defaultModel: 'deepseek/deepseek-v4-pro',
+    contextWindow: 1048576,
+    maxTokens: 384000,
+  },
+};
+
+/** The `--provider-profile` name for a provider. */
+export function jcodeProviderProfile(p: LlmProvider): string {
+  return JCODE_PROFILES[p].name;
+}
+
+/**
+ * The env var a provider's jcode profile reads (`api_key_env`). Taken from the
+ * credential registry through the provider table, so the profile, the Docker
+ * wrapper's secret mount and the spawn env can never name three different
+ * variables.
+ */
+export function jcodeApiKeyEnvVar(p: LlmProvider): string {
+  const specName = apiKeySpecNameForProvider(p);
+  const envVar = specName ? findSpec(specName)?.envVar : undefined;
+  if (!envVar) {
+    // Unreachable while every provider's `apiKeySpecName` names a registry
+    // entry — and a THROW is the right answer if that ever stops being true.
+    // Guessing a variable name here is how a credential ends up in the wrong
+    // one; refusing keeps the spawn from starting at all.
+    throw new Error(`jcode: provider "${p}" has no credential spec in API_KEY_REGISTRY`);
+  }
+  return envVar;
+}
+
+/**
+ * The profile the factory spawns with WHEN THE CALLER PICKED NO PROVIDER.
+ *
+ * Read the name literally — it is a DEFAULT, not "the jcode profile". jcode
+ * serves every provider in {@link PROVIDERS}; anything that knows which one the
+ * user chose must call {@link jcodeProviderProfile} with it.
+ */
+export const JCODE_PROVIDER_PROFILE = jcodeProviderProfile(DEFAULT_PROVIDER);
 
 /** jcode reads exactly this file name from `$JCODE_HOME`. */
 export const JCODE_CONFIG_FILENAME = 'config.toml';
@@ -93,39 +190,54 @@ export function jcodeConfigHomeDir(): string {
   return join(getHuuHome(), '.huu', 'jcode-home');
 }
 
+/** One `[providers.<name>]` + `[[providers.<name>.models]]` pair. */
+function jcodeProfileBlock(p: LlmProvider): string {
+  const profile = JCODE_PROFILES[p];
+  const info = providerInfo(p);
+  return `[providers.${profile.name}]
+type = "openai-compatible"
+base_url = "${info.defaultBaseUrl}"
+auth = "bearer"
+api_key_env = "${jcodeApiKeyEnvVar(p)}"
+default_model = "${profile.defaultModel}"
+requires_api_key = true
+
+[[providers.${profile.name}.models]]
+id = "${profile.defaultModel}"
+context_window = ${profile.contextWindow}
+max_tokens = ${profile.maxTokens}
+`;
+}
+
 /**
- * huu's own jcode provider config.
+ * huu's own jcode provider config — ONE profile per provider huu exposes.
  *
- * Byte-for-byte the profile documented in `docs/jcode-setup-guide.md` §3 — the
- * one combination proven to resolve — plus a leading banner (TOML comments,
- * verified harmless: jcode parses this file and reaches the "DEEPSEEK_API_KEY
- * not found" stage, i.e. the profile resolved).
+ * Why every provider and not just the chosen one: `ensureJcodeConfig` compares
+ * bytes and self-heals, and N agents spawn in parallel. A file whose CONTENT
+ * depended on the current run's provider would be rewritten on every run that
+ * switched, and two runs of different providers racing would fight over it
+ * forever. The file is a static CATALOG; `--provider-profile` is what selects
+ * from it per spawn.
  *
- * No secret lives here: `api_key_env` names the variable, the value arrives in
- * the spawn env.
+ * The DeepSeek block is byte-for-byte the profile documented in
+ * `docs/jcode-setup-guide.md` §3 — the one combination proven to resolve — plus
+ * a leading banner (TOML comments, verified harmless: jcode parses this file and
+ * reaches the "DEEPSEEK_API_KEY not found" stage, i.e. the profile resolved).
+ *
+ * No secret lives here. Each profile only NAMES its variable via `api_key_env`;
+ * the value arrives in the spawn env (`withJcodeApiKey`).
  */
 export const JCODE_CONFIG_TOML = `# Managed by huu — this file is owned by the jcode backend and any local edit
-# is silently reverted on the next agent spawn. Do not put secrets here: the
-# credential is read from the DEEPSEEK_API_KEY environment variable.
+# is silently reverted on the next agent spawn. Do not put secrets here: each
+# profile only NAMES its credential variable via api_key_env, and huu puts the
+# value in the spawn environment.
 # Source: src/orchestrator/backends/jcode/hermetic.ts
 
 [provider]
-default_provider = "${JCODE_PROVIDER_PROFILE}"
-default_model = "${JCODE_PROVIDER_PROFILE}"
+default_provider = "${JCODE_PROFILES[DEFAULT_PROVIDER].name}"
+default_model = "${JCODE_PROFILES[DEFAULT_PROVIDER].defaultModel}"
 
-[providers.${JCODE_PROVIDER_PROFILE}]
-type = "openai-compatible"
-base_url = "https://api.deepseek.com/v1"
-auth = "bearer"
-api_key_env = "DEEPSEEK_API_KEY"
-default_model = "${JCODE_PROVIDER_PROFILE}"
-requires_api_key = true
-
-[[providers.${JCODE_PROVIDER_PROFILE}.models]]
-id = "${JCODE_PROVIDER_PROFILE}"
-context_window = 1000000
-max_tokens = 384000
-`;
+${PROVIDERS.map((info) => jcodeProfileBlock(info.id)).join('\n')}`;
 
 /**
  * Materialize `<dir>/config.toml` so jcode can resolve
@@ -224,7 +336,7 @@ export interface JcodeSessionEnvironment {
  *  - `JCODE_NO_TELEMETRY=1` — no external telemetry.
  *  - `JCODE_AGENT_DIR` → `~/.huu/jcode-agent` — isolated RUNTIME dir.
  *  - `JCODE_HOME` → `~/.huu/jcode-home` — isolated CONFIG dir, holding a
- *    huu-materialized `config.toml` with the `deepseek-v4-pro` profile. An
+ *    huu-materialized `config.toml` holding ONE profile per provider. An
  *    ambient `JCODE_HOME` is overridden on purpose: leaving it would hand the
  *    config back to the host, which is the dependency this branch exists to cut.
  *  - Both dirs are created best-effort; a failure degrades (see below) instead

@@ -1,15 +1,25 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { findSpec } from '../../../lib/api-key.js';
+import { API_KEY_REGISTRY } from '../../../lib/api-key-registry.js';
 import {
   jcodeMissingApiKeyMessage,
   jcodeMissingExecutableMessage,
 } from '../../../lib/jcode-bundle.js';
+import {
+  modelIdForProvider,
+  resolveRunProvider,
+  DEFAULT_PROVIDER,
+  type LlmProvider,
+} from '../../../lib/providers.js';
 import type { AgentEvent, AgentFactory, SpawnedAgent } from '../../types.js';
 import { buildAgentMessageHeader } from '../_shared/build-message.js';
 import { createDisposableState } from '../_shared/lifecycle.js';
 import { translateJcodeOutput } from './event-mapper.js';
-import { JCODE_PROVIDER_PROFILE, buildJcodeSessionEnvironment } from './hermetic.js';
+import {
+  buildJcodeSessionEnvironment,
+  jcodeApiKeyEnvVar,
+  jcodeProviderProfile,
+} from './hermetic.js';
 
 /**
  * jcodeAgentFactory — spawns `jcode run` as a subprocess.
@@ -43,12 +53,25 @@ import { JCODE_PROVIDER_PROFILE, buildJcodeSessionEnvironment } from './hermetic
  *
  * The escape hatch `HUU_JCODE_HERMETIC=0` reverts to host-global jcode config.
  *
- * Credential: the `deepseek-v4-pro` profile authenticates from the
- * `DEEPSEEK_API_KEY` env var, and a subprocess has no other channel — so
- * {@link withJcodeApiKey} injects the key huu already resolved (`config.apiKey`)
- * into the spawn environment. See that function for why inheriting the parent's
- * env is not enough (the container gets the key as a secret MOUNT, never as an
- * env var).
+ * PROVIDER-DRIVEN, end to end. jcode serves BOTH providers huu exposes, and
+ * three things must agree on which one this spawn is for:
+ *   · `--provider-profile` — the `[providers.<name>]` block in the hermetic
+ *     config.toml, i.e. the BASE URL the request is sent to;
+ *   · `--model` — rendered in that endpoint's namespace
+ *     ({@link modelIdForProvider});
+ *   · the credential env var the profile reads (`api_key_env`).
+ * All three are derived from `config.provider` here. Pinning any of them to a
+ * constant is a CREDENTIAL LEAK, not a cosmetic bug: this module used to pass
+ * `--provider-profile deepseek-v4-pro` unconditionally while injecting the key
+ * huu resolved, so an OpenRouter run shipped its `sk-or-…` secret to
+ * api.deepseek.com as a Bearer token.
+ *
+ * Credential: a subprocess has no channel but the environment, so
+ * {@link withJcodeApiKey} injects the key huu already resolved
+ * (`config.apiKey`) into the variable THAT provider's profile names. See that
+ * function for why inheriting the parent's env is not enough (the container
+ * gets the key as a secret MOUNT, never as an env var) and for why the OTHER
+ * provider's key is stripped from the child env.
  */
 
 /** CLI arguments common to every jcode spawn. */
@@ -69,18 +92,41 @@ const JCODE_BASE_ARGS = ['run', '--no-update'] as const;
  * always opens with `# Agent N — …`, but the prompt is user-authored text and
  * this backend must not depend on its first byte.
  *
- * The profile NAME comes from the same constant `hermetic.ts` writes into the
- * materialized config.toml. A literal here would be a second source of truth
- * for a string that MUST match: a rename on either side would leave jcode dying
- * on "Unknown provider profile …" instead of failing to compile.
+ * The profile NAME comes from `hermetic.ts`, which writes the very same string
+ * into the materialized config.toml. A literal here would be a second source of
+ * truth for a string that MUST match: a rename on either side would leave jcode
+ * dying on "Unknown provider profile …" instead of failing to compile.
+ *
+ * And it is keyed on the PROVIDER, never fixed. `--provider-profile <NAME>`
+ * selects `[providers.<NAME>]`, i.e. the base_url and the api_key_env — measured
+ * against jcode v0.81.4, it also implies `--provider openai-compatible`. A
+ * constant profile therefore sends every run to ONE vendor whatever the user
+ * chose, which is how an `sk-or-…` key ended up as a Bearer token at
+ * api.deepseek.com.
+ *
+ * `--model` is rendered through {@link modelIdForProvider} for the same reason
+ * in the other direction: jcode passes it VERBATIM to the endpoint (the
+ * `[[providers.X.models]]` list is NOT an allowlist — an undeclared model goes
+ * through untouched), so the id must already be written in that endpoint's
+ * namespace. huu's catalog is OpenRouter-shaped (`vendor/model`); OpenRouter
+ * takes it as-is, api.deepseek.com wants it bare.
+ *
+ * `provider` may be `undefined` — a caller that predates the choice. It then
+ * resolves to the backend's default via {@link resolveRunProvider}, which also
+ * discards a provider jcode does not serve rather than trusting it.
  */
-export function buildJcodeArgs(modelId: string, promptText: string): string[] {
+export function buildJcodeArgs(
+  modelId: string,
+  promptText: string,
+  provider?: LlmProvider,
+): string[] {
+  const active = resolveRunProvider('jcode', provider) ?? DEFAULT_PROVIDER;
   return [
     ...JCODE_BASE_ARGS,
     '--provider-profile',
-    JCODE_PROVIDER_PROFILE,
+    jcodeProviderProfile(active),
     '--model',
-    modelId,
+    modelIdForProvider(active, modelId),
     '--',
     promptText,
   ];
@@ -151,14 +197,6 @@ export function jcodeOversizedPromptMessage(promptText: string): string | null {
   ].join('\n');
 }
 
-/**
- * The env var the `deepseek-v4-pro` provider profile reads (`api_key_env` in
- * jcode's config.toml). Taken from the registry's `deepseek` spec so the
- * profile, the Docker wrapper's secret mount and this spawn can never end up
- * naming three different variables.
- */
-const DEEPSEEK_KEY_ENV_VAR = findSpec('deepseek')?.envVar ?? 'DEEPSEEK_API_KEY';
-
 /** Which tier supplied the credential the subprocess will see. */
 export type JcodeApiKeySource = 'config' | 'env' | 'none';
 
@@ -167,6 +205,37 @@ export interface JcodeApiKeyInjection {
   env: NodeJS.ProcessEnv;
   /** `config` = huu's resolved key, `env` = inherited, `none` = nothing to use. */
   source: JcodeApiKeySource;
+  /** The provider the injection was made FOR, after resolution. */
+  provider: LlmProvider;
+  /** The variable {@link provider}'s jcode profile reads — where the key went. */
+  envVar: string;
+}
+
+/**
+ * Strip every OTHER LLM provider's credential out of the child environment.
+ *
+ * The active provider's profile reads exactly one variable, so an inherited
+ * `DEEPSEEK_API_KEY` sitting next to an OpenRouter run is not read by jcode —
+ * but it IS handed to an agent that runs arbitrary shell commands in the
+ * worktree. A run must carry the credential it was authorized to spend and no
+ * other, so the unrelated ones (and their `_FILE` companions, which point at a
+ * file holding the same value) are removed.
+ *
+ * Only `providerBound` specs are touched: the research keys (Brave, Tavily,
+ * Parallel) and Artificial Analysis are not provider credentials and the agent
+ * tooling legitimately uses them. Mutates the object it is given — always a
+ * fresh copy made by the caller.
+ */
+function stripForeignProviderKeys(
+  env: NodeJS.ProcessEnv,
+  active: LlmProvider,
+): NodeJS.ProcessEnv {
+  for (const spec of API_KEY_REGISTRY) {
+    if (!spec.providerBound || spec.providerBound === active) continue;
+    delete env[spec.envVar];
+    delete env[spec.envFileVar];
+  }
+  return env;
 }
 
 /**
@@ -184,26 +253,41 @@ export interface JcodeApiKeyInjection {
  * it. `config.apiKey` is the resolver's answer (mount → store → `_FILE` → env),
  * so it must win.
  *
+ * WHICH VARIABLE — the part that leaked. The name is derived from `provider`
+ * through `jcodeApiKeyEnvVar` → the provider table → `API_KEY_REGISTRY`, the
+ * same chain that resolved `configApiKey` in the first place and the same one
+ * `hermetic.ts` writes as `api_key_env`. A constant here (it used to be
+ * `DEEPSEEK_API_KEY`) puts whatever key huu resolved into DeepSeek's variable,
+ * and the constant `--provider-profile` then pointed it at api.deepseek.com:
+ * an OpenRouter user's secret, sent to another vendor as a Bearer token. The
+ * key is NEVER written into a variable belonging to a provider other than the
+ * one it was resolved for — and the other providers' variables are stripped
+ * from the child env entirely ({@link stripForeignProviderKeys}).
+ *
  * Precedence, and the one rule that is easy to get wrong:
  *  1. `configApiKey` when non-empty — what huu resolved for this run.
- *  2. otherwise an inherited `DEEPSEEK_API_KEY`, left EXACTLY as it is.
+ *  2. otherwise the provider's own inherited variable, left EXACTLY as it is.
  *  3. otherwise nothing — the caller fails with an actionable message.
  *
- * Step 2 is why this never assigns an empty string: writing
- * `DEEPSEEK_API_KEY: ''` would SHADOW a perfectly good value the parent process
- * exported, turning "huu has no key of its own" into "jcode has no key at all".
- * Pure and env-injected, so the precedence is unit-testable without a spawn.
+ * Step 2 is why this never assigns an empty string: writing `<VAR>: ''` would
+ * SHADOW a perfectly good value the parent process exported, turning "huu has
+ * no key of its own" into "jcode has no key at all". Pure and env-injected, so
+ * the precedence is unit-testable without a spawn.
  */
 export function withJcodeApiKey(
   env: NodeJS.ProcessEnv,
   configApiKey: string | undefined,
+  provider?: LlmProvider,
 ): JcodeApiKeyInjection {
+  const active = resolveRunProvider('jcode', provider) ?? DEFAULT_PROVIDER;
+  const envVar = jcodeApiKeyEnvVar(active);
+  const next = stripForeignProviderKeys({ ...env }, active);
   const resolved = (configApiKey ?? '').trim();
   if (resolved) {
-    return { env: { ...env, [DEEPSEEK_KEY_ENV_VAR]: resolved }, source: 'config' };
+    return { env: { ...next, [envVar]: resolved }, source: 'config', provider: active, envVar };
   }
-  const inherited = (env[DEEPSEEK_KEY_ENV_VAR] ?? '').trim();
-  return { env: { ...env }, source: inherited ? 'env' : 'none' };
+  const inherited = (next[envVar] ?? '').trim();
+  return { env: next, source: inherited ? 'env' : 'none', provider: active, envVar };
 }
 
 /** One `jcode run` invocation — the unit `prompt()` awaits. */
@@ -225,6 +309,12 @@ export const jcodeAgentFactory: AgentFactory = async (
   const modelId = config.modelId.trim();
   if (!modelId) throw new Error('Model ID missing.');
 
+  // THE provider decision, made ONCE and reused for the profile, the model
+  // namespace and the credential variable. `resolveRunProvider` also discards a
+  // provider jcode does not serve, so a mismatched pair can never send one
+  // provider's key to another's host.
+  const provider = resolveRunProvider('jcode', config.provider) ?? DEFAULT_PROVIDER;
+
   // Hermetic composition: huu-owned agent dir, no embeddings, no telemetry.
   const jcodeEnv = buildJcodeSessionEnvironment();
   if (jcodeEnv.hermetic) {
@@ -235,13 +325,14 @@ export const jcodeAgentFactory: AgentFactory = async (
   }
 
   // The credential. The subprocess reads it from the environment and nowhere
-  // else, so this is the ONLY place the key huu resolved can reach jcode.
-  const key = withJcodeApiKey(jcodeEnv.env, config.apiKey);
+  // else, so this is the ONLY place the key huu resolved can reach jcode — and
+  // it lands in the variable THIS provider's profile reads, never another's.
+  const key = withJcodeApiKey(jcodeEnv.env, config.apiKey, provider);
   if (key.source === 'none') {
     // Fail HERE rather than let jcode spawn and die on its own message: this
     // one names the variable and every way to set it (mirrors the pi backend,
     // which also refuses before creating a session).
-    const message = jcodeMissingApiKeyMessage();
+    const message = jcodeMissingApiKeyMessage(provider);
     onEvent({ type: 'error', message });
     throw new Error(message);
   }
@@ -249,8 +340,8 @@ export const jcodeAgentFactory: AgentFactory = async (
     type: 'log',
     message:
       key.source === 'config'
-        ? `jcode auth: ${DEEPSEEK_KEY_ENV_VAR} set from the key huu resolved for this run`
-        : `jcode auth: inheriting ${DEEPSEEK_KEY_ENV_VAR} from the environment`,
+        ? `jcode auth: ${key.envVar} set from the key huu resolved for this ${provider} run`
+        : `jcode auth: inheriting ${key.envVar} from the environment (${provider})`,
   });
   const spawnEnv = key.env;
 
@@ -262,7 +353,7 @@ export const jcodeAgentFactory: AgentFactory = async (
   let child: ChildProcess | null = null;
 
   function spawnJcode(promptText: string): JcodeTurn {
-    const args = buildJcodeArgs(modelId, promptText);
+    const args = buildJcodeArgs(modelId, promptText, provider);
 
     // Log the OPTIONS, never the prompt: the positional is the agent's entire
     // briefing (2–13 KB for this repo's own pipelines) and would bury the log.

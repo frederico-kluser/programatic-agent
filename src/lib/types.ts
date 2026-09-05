@@ -8,7 +8,8 @@
  * factory dispatch. This local alias avoids a `lib/` → `orchestrator/`
  * import cycle (lib imports must stay backend-agnostic).
  *
- * Only `jcode` is the real backend (DeepSeek V4 Pro via subprocess).
+ * Only `jcode` is the real backend (a subprocess, serving BOTH the
+ * `deepseek` and `openrouter` providers — see `providers.ts`).
  * `stub` is the no-LLM smoke-test backend.
  * (pi and azure — OpenRouter / Azure AI Foundry via @mariozechner/pi-coding-agent — were removed in v3.0.)
  */
@@ -20,6 +21,20 @@ export type { LlmProvider } from './providers.js';
 export interface AppConfig {
   apiKey: string;
   modelId: string;
+  /**
+   * The LLM provider the user actually chose — the axis that decides WHICH
+   * credential {@link AppConfig.apiKey} is, which base URL the LangChain
+   * helpers talk to, and which `--provider-profile` the jcode subprocess must
+   * eventually receive. `undefined` means "no provider will be called"
+   * (`backend: 'stub'`) or "a caller that predates the choice"; readers then
+   * fall back to `resolveRunProvider(config.backend ?? 'jcode')`.
+   *
+   * This field exists because `backend` CANNOT answer the question: `jcode`
+   * serves both `deepseek` and `openrouter`. Dropping the user's pick at this
+   * boundary is what made an OpenRouter run demand `DEEPSEEK_API_KEY` (and,
+   * when that key happened to exist, silently spend it).
+   */
+  provider?: import('./providers.js').LlmProvider;
   budgetUsd?: number;
   /**
    * Optional backend-specific endpoint URL.

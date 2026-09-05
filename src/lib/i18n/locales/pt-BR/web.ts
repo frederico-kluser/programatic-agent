@@ -279,6 +279,8 @@ export const webPtBR = {
     'Validada contra o provedor e mantida só nesta aba do navegador — nunca gravada em disco.',
   'web.key.validated_session': 'Chave validada ✓ — mantida só neste navegador',
   'web.key.rejected': 'Chave rejeitada (HTTP {status}). Confira e cole de novo.',
+  'web.key.wrong_provider':
+    'Isso é uma chave do {label} — nada foi salvo. Escolha {label} como provedor, ou cole a chave certa.',
   'web.key.unverified':
     'Não deu para verificar o valor ({reason}) — usando nesta sessão mesmo assim.',
 
@@ -317,12 +319,12 @@ export const webPtBR = {
   'web.settings.ram_hint':
     'Fatia da RAM total que o huu pode usar somando TODAS as execuções simultâneas desta máquina (10–95). Aplicada IMEDIATAMENTE às execuções em andamento e na fila, persistida no servidor e imposta pela guarda de pressão (o chip da barra mostra o valor vivo). Maior = mais paralelismo, margem de segurança menor; o resto fica reservado ao sistema. Vazio = 70%.',
   'web.settings.ram_applied': 'Orçamento de RAM: {percent}% — aplicado a todas as execuções agora',
-  'web.settings.keys': 'Chaves de API do OpenRouter',
+  'web.settings.keys': 'Chaves de API do provedor',
   'web.settings.checking': 'Verificando…',
   'web.settings.validate_add': 'Validar e adicionar',
   'web.settings.validating': 'Validando…',
   'web.settings.keys_hint':
-    'Verificada primeiro contra o OpenRouter — uma chave rejeitada nunca é salva. Uma chave válida entra no pool e é usada por toda execução nova (nesta sessão e nos próximos huu); esta aba passa a usá-la imediatamente. Com mais de uma chave o huu alterna por tentativa, pulando as queimadas e as em espera. Os resultados da validação e qualquer problema de execução também vão para o terminal onde o huu roda.',
+    'Verificada primeiro contra o provedor selecionado — uma chave rejeitada, ou que pertence a outro provedor, nunca é salva. Uma chave válida entra no pool e é usada por toda execução nova (nesta sessão e nos próximos huu); esta aba passa a usá-la imediatamente. Com mais de uma chave o huu alterna por tentativa, pulando as queimadas e as em espera. Os resultados da validação e qualquer problema de execução também vão para o terminal onde o huu roda.',
   'web.settings.in_use': 'em uso',
   'web.settings.remove_key': 'Remover esta chave do pool',
   'web.settings.pool_count_one':
@@ -331,7 +333,7 @@ export const webPtBR = {
     '{count} chaves no pool · o huu alterna por tentativa, pulando as queimadas e as em espera.',
   'web.settings.pool_reset': 'zerar queimadas / esperas',
   'web.settings.pool_reset_done': 'Chaves queimadas e esperas zeradas',
-  'web.settings.no_key': 'Ainda não há chave do OpenRouter — cole uma abaixo.',
+  'web.settings.no_key': 'Ainda não há chave do {label} — cole uma abaixo.',
   'web.settings.active_key': '✓ Ativa: {masked} — {source}',
   'web.settings.clear_saved': 'apagar a chave salva',
   'web.settings.env_ignored':
@@ -339,12 +341,14 @@ export const webPtBR = {
   'web.settings.session_key':
     'Esta aba tem uma chave de sessão validada e a envia com as execuções lançadas aqui.',
   'web.settings.status_unavailable': 'Status da chave indisponível: {message}',
-  'web.settings.paste_first': 'Cole uma chave do OpenRouter primeiro.',
+  'web.settings.paste_first': 'Cole uma chave do {label} primeiro.',
+  'web.settings.key_wrong_provider':
+    'Isso é uma chave do {label}, não do {expected} — nada foi salvo.',
   'web.settings.key_rejected':
-    'O OpenRouter rejeitou esta chave (HTTP {status}) — nada foi salvo. Confira e cole de novo.',
+    'O {label} rejeitou esta chave (HTTP {status}) — nada foi salvo. Confira e cole de novo.',
   'web.settings.key_saved': 'Chave validada ✓ e salva — toda execução nova vai usá-la',
   'web.settings.key_unverified':
-    'Não deu para falar com o OpenRouter para verificar ({reason}) — a chave foi salva mesmo assim; as execuções vão tentar.',
+    'Não deu para falar com o {label} para verificar ({reason}) — a chave foi salva mesmo assim; as execuções vão tentar.',
   'web.settings.key_removed': 'Chave removida do pool',
   'web.settings.key_cleared': 'Chave salva apagada',
   'web.settings.key_cleared_note': 'Chave salva apagada — {note}',

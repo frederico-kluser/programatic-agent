@@ -44,6 +44,7 @@ import {
 } from './api-data.js';
 import {
   clearStoredApiKey,
+  detectForeignKeySpec,
   findSpec,
   maskKey,
   resolveApiKeyWithSource,
@@ -83,6 +84,13 @@ export interface WebServerOptions {
   cwd: string;
   /** Pre-selected backend from CLI flags (`--backend`, `--provider`, `--stub`). */
   lockedBackend?: AgentBackendKind;
+  /**
+   * Provider locked from `--provider=`. Carried separately from
+   * `lockedBackend` because both providers map to the SAME `jcode` kind —
+   * re-deriving it from the backend silently rewrote `--provider=openrouter`
+   * into `deepseek` in the browser's provider segment.
+   */
+  lockedProvider?: LlmProvider;
   /** Pipeline preloaded via `huu run <file>` — offered as the first choice. */
   initialPipeline?: Pipeline;
   /** Default concurrency strategy (false when `--no-auto-scale`). */
@@ -364,6 +372,7 @@ export function createWebServer(opts: WebServerOptions): {
         opts.cwd,
         backend,
         backendKey,
+        provider ?? undefined,
       );
       return sendJson(res, 200, { models, source });
     }
@@ -373,7 +382,10 @@ export function createWebServer(opts: WebServerOptions): {
         ? providerToBackend(provider)
         : parseBackendKind(url.searchParams.get('backend') ?? 'jcode');
       if (!backend) return sendJson(res, 400, { error: 'unknown backend' });
-      return sendJson(res, 200, keyStatus(backend));
+      // The PROVIDER decides which credential is missing. Passing only the
+      // backend made this endpoint answer for jcode's first provider, so the
+      // browser's OpenRouter launch form was told `deepseek` was missing.
+      return sendJson(res, 200, keyStatus(backend, provider ?? undefined));
     }
     if (method === 'GET' && path === '/api/keys/status') {
       // Per-spec key status for the ⚙ Options panel: which tier would supply
@@ -419,6 +431,13 @@ export function createWebServer(opts: WebServerOptions): {
           'keys',
           `${spec.label} ${masked} REJECTED by the provider (HTTP ${result.httpStatus}) — not usable`,
         );
+      } else if (result.status === 'wrong-key') {
+        termLog(
+          'error',
+          'keys',
+          `${masked} is a ${result.label} key, not a ${spec.label} key — refused before saving ` +
+            `(it would have been stored as "${spec.name}" and sent to the wrong vendor)`,
+        );
       } else {
         termLog('warn', 'keys', `${spec.label} ${masked} could not be verified (${result.reason})`);
       }
@@ -437,6 +456,21 @@ export function createWebServer(opts: WebServerOptions): {
       const spec = findKeySpec(name);
       if (!spec) return sendJson(res, 400, { error: `unknown key: ${name}` });
       if (!value.trim()) return sendJson(res, 400, { error: 'empty value' });
+      // Defense in depth: the ⚙ Options flow calls /api/keys/validate first,
+      // but this endpoint PERSISTS, so it refuses another provider's key on
+      // its own rather than trusting the caller to have asked.
+      const foreign = detectForeignKeySpec(spec, value);
+      if (foreign) {
+        termLog(
+          'error',
+          'keys',
+          `${maskKey(value)} is a ${foreign.label} key, not a ${spec.label} key — not saved`,
+        );
+        return sendJson(res, 400, {
+          error: `that looks like a ${foreign.label} key, not a ${spec.label} key`,
+          validation: { status: 'wrong-key', belongsTo: foreign.name, label: foreign.label },
+        });
+      }
       saveApiKey(spec, value);
       manager.setWebKey(name, value);
       termLog(
@@ -493,6 +527,17 @@ export function createWebServer(opts: WebServerOptions): {
       if (!value.trim()) return sendJson(res, 400, { error: 'empty value' });
       const validation = await validateKeyValue(spec, value, { endpoint });
       const masked = maskKey(value);
+      if (validation.status === 'wrong-key') {
+        termLog(
+          'error',
+          'keys',
+          `${masked} is a ${validation.label} key, not a ${spec.label} key — not added to the pool`,
+        );
+        return sendJson(res, 400, {
+          error: `that looks like a ${validation.label} key, not a ${spec.label} key`,
+          validation,
+        });
+      }
       if (validation.status === 'invalid') {
         termLog(
           'error',
@@ -1021,7 +1066,9 @@ export function createWebServer(opts: WebServerOptions): {
       lockedBackend: opts.lockedBackend ?? null,
       // The user-facing provider locked from the CLI (--provider/--backend),
       // derived from the locked backend. null = user chooses in the UI.
-      lockedProvider: opts.lockedBackend
+      lockedProvider: opts.lockedProvider
+        ? opts.lockedProvider
+        : opts.lockedBackend
         ? backendToProvider(opts.lockedBackend)
         : null,
       defaults: {

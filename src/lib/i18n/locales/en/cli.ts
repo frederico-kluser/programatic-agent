@@ -4,7 +4,8 @@ export const cliEn = {
   'cli.err_dir_not_directory': 'huu: --dir={path}: not a directory',
   'cli.err_not_a_repo':
     'huu: not a git repository: {cwd}\nhuu runs each agent in an isolated git worktree, so it requires a repo.\nRun \'git init\' here, or cd into an existing repo, then try again.',
-  'cli.err_unknown_provider': 'huu: --provider={value}: unknown provider. Valid: openrouter, azure',
+  'cli.err_unknown_provider':
+    'huu: --provider={value}: unknown provider. Valid: {valid}',
   'cli.err_unknown_backend': 'huu: --backend={value}: unknown backend. Valid: {valid}',
   'cli.err_import_pipeline': 'Failed to import pipeline: {message}',
   'cli.err_per_file_no_files':

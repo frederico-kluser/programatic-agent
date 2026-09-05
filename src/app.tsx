@@ -24,15 +24,16 @@ import {
   selectBackend,
   type AgentBackendKind,
 } from './orchestrator/backends/registry.js';
-import { backendToProvider } from './lib/providers.js';
+import { resolveRunProvider, type LlmProvider } from './lib/providers.js';
 import { listAllPipelines, savePipelineToMemory, deletePipelineFromMemory } from './lib/pipeline-io.js';
 import { listPipelinesInMemory } from './lib/pipeline-memory.js';
 import { ensureAllDefaultPipelines } from './lib/pipeline-bootstrap.js';
 import {
-  findMissingKeysForBackend,
+  findMissingKeysForProvider,
   findSpec,
   resolveApiKey,
   saveApiKey,
+  specForProvider,
   type ApiKeySpec,
 } from './lib/api-key.js';
 import { log as dlog, bump as dbump } from './lib/debug-logger.js';
@@ -76,6 +77,12 @@ interface AppProps {
    * shown the selector before model picking.
    */
   backend?: AgentBackendKind;
+  /**
+   * Provider locked from `--provider=`. Travels separately from `backend`
+   * because `providerToBackend` is many-to-one: both `deepseek` and
+   * `openrouter` become `jcode`, so the backend cannot carry the pick.
+   */
+  provider?: LlmProvider;
   /** When true and initialPipeline is set, jumps straight from welcome → editor. */
   autoStart?: boolean;
   /**
@@ -95,6 +102,7 @@ export function App({
   conflictResolverFactory,
   requiresApiKey,
   backend: initialBackend,
+  provider: initialProvider,
   autoStart,
   autoScale,
   concurrency,
@@ -103,16 +111,19 @@ export function App({
   const { stdout } = useStdout();
   useTerminalResize();
 
-  // jcode is picked DIRECTLY as a backend (no provider indirection), so its
-  // credential is the DeepSeek key — see `selectBackend('jcode')`.
-  const deepseekSpec = findSpec('deepseek');
+  // The credential of the provider huu STARTS on (`--provider=`, else the
+  // backend's first provider). Not "the DeepSeek key" any more: jcode serves
+  // two providers and only the provider names the spec.
+  const bootProvider = resolveRunProvider(initialBackend ?? 'jcode', initialProvider);
+  const bootSpec = specForProvider(bootProvider);
 
   const [fsm, setFsm] = useState<FsmState>(() =>
     initialState({
       initialPipeline,
       autoStart,
       initialBackend,
-      deepseekResolvedKey: deepseekSpec ? resolveApiKey(deepseekSpec) : '',
+      initialProvider,
+      deepseekResolvedKey: bootSpec ? resolveApiKey(bootSpec) : '',
       requiresApiKey: requiresApiKey ?? true,
     }),
   );
@@ -145,6 +156,7 @@ export function App({
     projectDirs,
     modelId,
     backendKind,
+    provider: activeProvider,
     apiKey,
     pipelineSourceName,
   } = fsm;
@@ -191,17 +203,21 @@ export function App({
     activeFactory ?? agentFactory ?? jcodeFallbackBundle.agentFactory;
   const resolverFactory = activeResolverFactory ?? conflictResolverFactory;
 
-  // Active spec used by the missing-key check. With jcode as the only
-  // credential-bearing backend, that entry is always the DeepSeek key; `stub`
-  // is keyless and never reaches the check.
-  const activeSpec: ApiKeySpec | undefined = deepseekSpec;
+  // Active spec used by the missing-key check — keyed on the PROVIDER the user
+  // chose, never on the backend. `stub` resolves to no provider and therefore
+  // to no spec, so it stays keyless by construction.
+  const activeSpec: ApiKeySpec | undefined = useMemo(
+    () => specForProvider(activeProvider),
+    [activeProvider],
+  );
 
   const helperLlmContext: import('./lib/llm-client-factory.js').LlmClientContext = useMemo(() => {
     return {
       backend: backendKind,
-      deepseekApiKey: deepseekSpec ? resolveApiKey(deepseekSpec) : '',
+      provider: activeProvider,
+      apiKey: activeSpec ? resolveApiKey(activeSpec) : '',
     };
-  }, [backendKind, deepseekSpec]);
+  }, [backendKind, activeProvider, activeSpec]);
 
   // Side effects mirroring the legacy navigate() callback: full-screen
   // clear and dlog when screen.kind changes.
@@ -502,8 +518,10 @@ export function App({
             // FSM remains pure. Mirrors legacy navigateToRunSkippingModel.
             // The 'stub' branch short-circuits inside the FSM, so we
             // only consult the api-key registry for real backends.
-            const missing =
-              backendKind === 'stub' ? [] : findMissingKeysForBackend(backendKind);
+            // Gate on the PROVIDER. `findMissingKeysForBackend` answered for
+            // the backend's FIRST provider, so an OpenRouter run was told it
+            // was missing DEEPSEEK_API_KEY.
+            const missing = findMissingKeysForProvider(activeProvider);
             const resolved = activeSpec ? resolveApiKey(activeSpec) : apiKey;
             dispatch({
               type: 'runDirect',
@@ -511,6 +529,7 @@ export function App({
               modelId: p.steps[0]!.modelId!,
               requiresApiKey: activeRequiresApiKey,
               backendKind,
+              provider: activeProvider,
               missingKeys: missing,
               resolvedApiKey: resolved,
             });
@@ -530,28 +549,29 @@ export function App({
   } else if (screen.kind === 'backend-selector') {
     body = (
       <BackendSelector
-        onSelect={(kind) => {
+        onSelect={(chosenProvider, kind) => {
           const bundle = selectBackend(kind);
+          // The provider the user actually highlighted — carried, not derived.
+          const nextProvider = resolveRunProvider(kind, chosenProvider);
           setActiveFactory(() => bundle.agentFactory);
           setActiveResolverFactory(() => bundle.conflictResolverFactory);
           setActiveRequiresApiKey(bundle.requiresApiKey);
           // Skip model selector when every step already has its own model.
           // Never skip for a multi-run batch — it picks ONE shared model.
           if (!isMulti && allStepsHaveModel(pipeline)) {
-            const missing = kind === 'stub' ? [] : findMissingKeysForBackend(kind);
-            // The credential name comes from the bundle the user JUST picked,
-            // NOT from `activeSpec` above — that one is keyed on `backendKind`,
-            // which this dispatch has not updated yet. The distinction matters
-            // for `stub`, whose bundle declares no spec at all: resolving the
-            // DeepSeek key here anyway would put it in `AppConfig.apiKey` for a
-            // backend that must stay keyless.
-            const specName = bundle.apiKeySpecName;
-            const spec = specName ? findSpec(specName) : undefined;
+            const missing = findMissingKeysForProvider(nextProvider);
+            // The credential name comes from the PROVIDER the user just
+            // picked, NOT from `activeSpec` (keyed on the not-yet-updated
+            // state) and NOT from `bundle.apiKeySpecName` (keyed on the
+            // backend, which serves both providers and so names neither).
+            // `stub` resolves to no provider → no spec → stays keyless.
+            const spec = specForProvider(nextProvider);
             const resolved = spec ? resolveApiKey(spec) : apiKey;
             dispatch({
               type: 'runDirect',
               modelId: pipeline!.steps[0]!.modelId!,
               backendKind: kind,
+              provider: nextProvider,
               requiresApiKey: bundle.requiresApiKey,
               missingKeys: missing,
               resolvedApiKey: resolved,
@@ -561,6 +581,7 @@ export function App({
           dispatch({
             type: 'backend.select',
             backendKind: kind,
+            provider: nextProvider,
             requiresApiKey: bundle.requiresApiKey,
             skipModelSelector: false,
           });
@@ -722,22 +743,25 @@ export function App({
     body = (
       <ModelSelectorOverlay
         backend={screen.backendKind}
+        provider={screen.provider}
         onSelect={(id) => {
-          // findMissingKeysForBackend gates on the backend's primary
-          // spec only. AA used to be universal-required and prompted
-          // here, but that fired AFTER pipeline+backend+model picking —
-          // a foot-gun. AA is now optional (set ARTIFICIAL_ANALYSIS_API_KEY
-          // before launching huu) and the model selector degrades
-          // gracefully when missing. Re-resolve at decision time so
-          // keys persisted earlier in the same session are picked up.
-          const missing =
-            screen.backendKind === 'stub' ? [] : findMissingKeysForBackend(screen.backendKind);
-          const resolved = activeSpec ? resolveApiKey(activeSpec) : apiKey;
+          // Gate on the PROVIDER the screen is carrying. AA used to be
+          // universal-required and prompted here, but that fired AFTER
+          // pipeline+backend+model picking — a foot-gun. AA is now optional
+          // (set ARTIFICIAL_ANALYSIS_API_KEY before launching huu) and the
+          // model selector degrades gracefully when missing. Re-resolve at
+          // decision time so keys persisted earlier in the same session are
+          // picked up.
+          const runProvider = resolveRunProvider(screen.backendKind, screen.provider);
+          const missing = findMissingKeysForProvider(runProvider);
+          const spec = specForProvider(runProvider);
+          const resolved = spec ? resolveApiKey(spec) : apiKey;
           dispatch({
             type: 'modelSelector.select',
             modelId: id,
             requiresApiKey: activeRequiresApiKey,
             backendKind: screen.backendKind,
+            provider: runProvider,
             missingKeys: missing,
             resolvedApiKey: resolved,
           });
@@ -787,6 +811,7 @@ export function App({
         </Box>
         <ModelSelectorOverlay
           backend={screen.backendKind}
+          provider={screen.provider}
           onSelect={(id) => dispatch({ type: 'resolverModelSelector.select', modelId: id })}
           onCancel={() => dispatch({ type: 'resolverModelSelector.skip' })}
         />
@@ -800,7 +825,10 @@ export function App({
       apiKey: screen.apiKey || 'stub',
       modelId: screen.modelId,
       backend: backendKind,
-      provider: backendToProvider(backendKind),
+      // The user's actual pick, all the way to the orchestrator: it names the
+      // credential in `apiKey`, the base URL the helper clients use, and the
+      // jcode `--provider-profile` the spawn layer will consume.
+      provider: activeProvider,
       endpoint: undefined,
     };
     body = isMulti ? (

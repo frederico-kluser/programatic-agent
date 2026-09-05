@@ -25,7 +25,8 @@
       "outputPrice": 2.4156,
       "description": "★ SÓ orquestrador — ausente do registry do pi (que para no glm-5.1), então NÃO roda como agente, juiz ou revisor. Serve de planner porque essa via é LangChain→OpenRouter.",
       "bestFor": ["planning", "reasoning"],
-      "tier": "planning"
+      "tier": "planning",
+      "provider": "openrouter"
     },
     {
       "id": "openai/gpt-5.4",
@@ -34,7 +35,8 @@
       "outputPrice": 15.0,
       "description": "★ planejamento — frontier para arquitetar pipelines complexas no Pipeline Architect.",
       "bestFor": ["planning", "reasoning"],
-      "tier": "planning"
+      "tier": "planning",
+      "provider": "openrouter"
     },
     {
       "id": "anthropic/claude-opus-4.6",
@@ -43,7 +45,8 @@
       "outputPrice": 25.0,
       "description": "★ planejamento — frontier para arquitetar pipelines complexas no Pipeline Architect.",
       "bestFor": ["planning", "reasoning"],
-      "tier": "planning"
+      "tier": "planning",
+      "provider": "openrouter"
     },
     {
       "id": "minimax/minimax-m2.7",
@@ -52,7 +55,8 @@
       "outputPrice": 1.31,
       "description": "Rápido e barato — use para steps simples, per-file, fan-out paralelo (lint, rename, JSDoc, traduzir, boilerplate).",
       "bestFor": ["cheap", "fast"],
-      "tier": "fast"
+      "tier": "fast",
+      "provider": "openrouter"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -61,7 +65,58 @@
       "outputPrice": 2.72,
       "description": "★ crítico recomendado — cross-family em relação ao worker DeepSeek. Contexto 256k, mas saída máx. 16k no registry do pi: é esse teto que obriga o cap de achados por rodada.",
       "bestFor": ["coding", "reasoning", "agentic"],
-      "tier": "workhorse"
+      "tier": "workhorse",
+      "provider": "openrouter"
+    },
+    {
+      "id": "anthropic/claude-opus-5",
+      "label": "Claude Opus 5 (OpenRouter)",
+      "inputPrice": 5.0,
+      "outputPrice": 25.0,
+      "description": "★ planejamento — frontier de 1M de contexto pela OpenRouter. Use para arquitetar pipelines complexas; caro demais para rodar todos os steps.",
+      "bestFor": ["planning", "reasoning", "coding"],
+      "tier": "planning",
+      "provider": "openrouter"
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (OpenRouter)",
+      "inputPrice": 2.0,
+      "outputPrice": 10.0,
+      "description": "★ planejamento — 1,05M de contexto por ~40% do preço do Opus 5. Boa opção de família cruzada para crítico ou juiz.",
+      "bestFor": ["planning", "reasoning", "agentic"],
+      "tier": "planning",
+      "provider": "openrouter"
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "label": "DeepSeek V4 Pro (OpenRouter)",
+      "inputPrice": 0.951,
+      "outputPrice": 1.903,
+      "description": "O V4 Pro roteado pela OpenRouter: mesma capacidade do acesso direto, com uma credencial só. Custa ~2× o endpoint nativo da DeepSeek.",
+      "bestFor": ["reasoning", "coding", "planning"],
+      "tier": "workhorse",
+      "provider": "openrouter"
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "label": "DeepSeek V4 Flash (OpenRouter)",
+      "inputPrice": 0.086,
+      "outputPrice": 0.173,
+      "description": "★ default da OpenRouter — o mais barato do catálogo com 1M de contexto. O workhorse para rodar os steps quando o provedor é OpenRouter.",
+      "bestFor": ["fast", "cheap", "coding"],
+      "tier": "fast",
+      "provider": "openrouter"
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "label": "GLM-5.3 Flash (OpenRouter)",
+      "inputPrice": 0.075,
+      "outputPrice": 0.25,
+      "description": "Barato e com 1,31M de contexto — use em fan-out per-file e tarefas mecânicas, ou como crítico de família cruzada frente a um worker DeepSeek.",
+      "bestFor": ["cheap", "fast"],
+      "tier": "fast",
+      "provider": "openrouter"
     }
   ]
 }

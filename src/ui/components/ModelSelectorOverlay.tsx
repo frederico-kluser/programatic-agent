@@ -17,6 +17,7 @@ import { buildMetricsIndex } from '../../models/aa-enrichment.js';
 import type { AAModel } from 'model-selector-ink';
 import type { ModelEntry } from '../../contracts/models.js';
 import type { AgentBackendKind } from '../../lib/types.js';
+import type { LlmProvider } from '../../lib/providers.js';
 import { t } from '../../lib/i18n/index.js';
 
 const MORE_MODELS_VALUE = '__more_models__';
@@ -34,6 +35,13 @@ export interface ModelSelectorOverlayProps {
    * combination is invalid.
    */
   backend?: AgentBackendKind;
+  /**
+   * The provider that will actually serve the run. THE sharp filter: `jcode`
+   * serves both DeepSeek and OpenRouter, so `backend` alone leaves a Claude
+   * entry and a DeepSeek entry in the same list and lets the user pick a model
+   * the chosen provider cannot serve.
+   */
+  provider?: LlmProvider;
 }
 
 type OverlayMode = 'quick' | 'table';
@@ -62,6 +70,7 @@ function buildItem(
 export function buildQuickItems(
   metricsIndex: ReadonlyMap<string, AARowMetrics> | null,
   backend?: AgentBackendKind,
+  provider?: LlmProvider,
 ): SelectItem[] {
   const startedAt = Date.now();
   const projectRoot = process.cwd();
@@ -104,7 +113,7 @@ export function buildQuickItems(
 
   items.push({ label: `── ${t('tui.model.recommended')} ──`, value: '__separator_1__' });
 
-  for (const entry of loadRecommendedModels(projectRoot, backend)) {
+  for (const entry of loadRecommendedModels(projectRoot, backend, provider)) {
     if (seen.has(entry.id)) continue;
     items.push(buildItem(entry, getMetrics(entry.id), ''));
   }
@@ -173,6 +182,7 @@ export function ModelSelectorOverlay({
   onSelect,
   onCancel,
   backend,
+  provider,
 }: ModelSelectorOverlayProps): React.JSX.Element {
   const [mode, setMode] = useState<OverlayMode>('quick');
   const aaState = useAAState();
@@ -180,9 +190,9 @@ export function ModelSelectorOverlay({
   const metricsIndex = useMemo(() => {
     if (aaState.kind !== 'loaded') return null;
     const projectRoot = process.cwd();
-    const catalog = loadRecommendedModels(projectRoot, backend);
+    const catalog = loadRecommendedModels(projectRoot, backend, provider);
     return buildMetricsIndex(catalog, aaState.models);
-  }, [aaState, backend]);
+  }, [aaState, backend, provider]);
 
   useEffect(() => {
     dlog('mount', 'ModelSelectorOverlay', { mode });
@@ -239,7 +249,7 @@ export function ModelSelectorOverlay({
   );
 
   if (mode === 'quick') {
-    const items = buildQuickItems(metricsIndex, backend);
+    const items = buildQuickItems(metricsIndex, backend, provider);
     const aaSubtitle =
       aaState.kind === 'loading'
         ? t('tui.model.aa_loading')

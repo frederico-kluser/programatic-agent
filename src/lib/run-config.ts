@@ -16,16 +16,21 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Pipeline, PipelineStep } from './types.js';
+// IMPORTED, never redeclared: a second `z.enum([...])` of the provider union
+// would diverge silently the day a provider is added (the run-config copy was
+// still single-member long after `providers.ts` grew a second one).
+import { LlmProviderSchema } from './providers.js';
 
 const AgentBackendKindSchema = z.enum(['jcode', 'stub']);
-const LlmProviderSchema = z.enum(['deepseek']);
 
 export const RunConfigSchema = z.object({
   modelId: z.string().min(1),
   backend: AgentBackendKindSchema.default('jcode'),
   /**
-   * LLM provider: `deepseek` (default). When set, the launcher derives
-   * `backend` from it and resolves the matching API key.
+   * LLM provider: `deepseek` or `openrouter`. When set, the launcher derives
+   * `backend` from it (both dispatch to `jcode`) and resolves the matching
+   * API key — the provider, not the backend, is what selects the credential.
+   * Absent means "the backend's default provider".
    */
   provider: LlmProviderSchema.optional(),
   /**

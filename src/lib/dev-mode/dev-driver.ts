@@ -59,6 +59,7 @@ import { Orchestrator } from '../../orchestrator/index.js';
 import { GitClient } from '../../git/git-client.js';
 import type { AgentFactory } from '../../orchestrator/types.js';
 import type { LlmClientContext } from '../llm-client-factory.js';
+import { resolveRunProvider } from '../providers.js';
 import { detectKnowledge, type KnowledgeStatus } from '../knowledge-detect.js';
 import { generateRunId } from '../run-id.js';
 import type {
@@ -2161,9 +2162,19 @@ function isUsableVerifyCommands(value: DevVerifyCommands | undefined): value is 
 }
 
 /**
- * Map an {@link AppConfig} onto the backend-aware context the planner's chat
+ * Map an {@link AppConfig} onto the PROVIDER-aware context the planner's chat
  * client needs.
+ *
+ * `provider` is carried through and the key travels in the neutral `apiKey`
+ * field. The old shape (`deepseekApiKey`) was honored by `buildChatClient`
+ * only when the resolved provider was `deepseek`, so an OpenRouter dev session
+ * would have thrown "API key missing" while holding the right key.
  */
 export function llmContextFor(config: AppConfig): LlmClientContext {
-  return { backend: config.backend ?? 'jcode', deepseekApiKey: config.apiKey };
+  const backend = config.backend ?? 'jcode';
+  return {
+    backend,
+    provider: resolveRunProvider(backend, config.provider),
+    apiKey: config.apiKey,
+  };
 }

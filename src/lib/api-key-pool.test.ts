@@ -108,10 +108,16 @@ describe('api-key-pool', () => {
     });
 
     it('keeps OTHER specs in the store untouched', () => {
-      const azure = findSpec('azureApiKey')!;
-      saveApiKey(azure, 'az-keep');
+      // Any OTHER surviving spec does: the azure pair this used to use went
+      // away with the azure backend, but the isolation it pinned is live —
+      // the pool may only ever rewrite its own flat field and its own
+      // `_pools` entry.
+      const other = findSpec('artificialAnalysis')!;
+      saveApiKey(other, 'aa-keep');
       addPoolKey(spec, 'sk-or-A');
-      expect(readRawStore().azureApiKey).toBe('az-keep');
+      expect(readRawStore().artificialAnalysis).toBe('aa-keep');
+      // ...and the pool's own mirror still landed.
+      expect(readRawStore().openrouter).toBe('sk-or-A');
     });
 
     it('a corrupt store degrades to an empty pool instead of throwing', () => {

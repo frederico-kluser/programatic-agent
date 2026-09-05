@@ -19,10 +19,14 @@ import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { resolveApiKey, specForProvider } from '../api-key.js';
+import { t } from '../i18n/index.js';
 import { resolveRunProvider, type LlmProvider } from '../providers.js';
 import { parseDevGraph } from '../dev-graph/graph-schema.js';
 import { DEVGRAPH_SLUG_PATTERN, type DevGraph } from '../dev-graph/graph-types.js';
 import { selectBackend, type AgentBackendKind } from '../../orchestrator/backends/registry.js';
+import { Orchestrator } from '../../orchestrator/index.js';
+import { generateRunId } from '../run-id.js';
+import type { OrchestratorState, Pipeline } from '../types.js';
 import {
   DEV_DEFAULT_MAX_EPOCHS,
   DEV_MAX_FRONTS,
@@ -57,15 +61,91 @@ import {
   runDevMode,
   type DevEvent,
   type DevModeResult,
+  type DevRunHandle,
+  type DevRunPhase,
   type DevStopReason,
   type OrphanAction,
 } from './dev-driver.js';
 import type { OrphanBranch } from './orphan-branches.js';
 
+/**
+ * THE LIVE FACE OF A DEV SESSION — the seam that lets `huu dev --cli` show a
+ * kanban while `huu dev` keeps printing a log.
+ *
+ * It exists because of one hard constraint: **the stdout of `huu dev` is a
+ * machine contract**. The single JSON object this module writes at the end is
+ * parsed by scripts, so no front-end may ever write a byte to stdout. Ink
+ * renders to `process.stdout` by default, which is exactly the trap — the Ink
+ * implementation of this interface therefore renders to **stderr**, the channel
+ * this file has always used for human-readable progress. With the dashboard on
+ * or off, stdout carries the same bytes.
+ *
+ * It is also what keeps the layering honest: `src/lib/` must not import
+ * `src/ui/`, so the Ink implementation lives in
+ * `src/ui/components/DevDashboard.tsx` and `src/cli.tsx` (the top layer, which
+ * may import both) injects it. Absent ⇒ the headless path, unchanged.
+ */
+export interface DevCliPresenter {
+  /** Called once, right before the session starts. */
+  session(info: {
+    goal: string;
+    repoRoot: string;
+    modelId: string;
+    backend: string;
+    /** Epoch ceiling, for the header. */
+    maxEpochs: number;
+  }): void;
+  /** One line of human-readable progress — what {@link err} writes otherwise. */
+  log(line: string): void;
+  /** The driver's event stream, raw, so the surface can render the epoch timeline. */
+  event(event: DevEvent): void;
+  /**
+   * An orchestrator run opened. Carries the PIPELINE, which is the whole reason
+   * the CLI supplies its own `orchestratorFactory`: `onState` hands out an
+   * `OrchestratorState` and nothing else, while `RunKanban` needs the pipeline
+   * to resolve per-step model overrides. The pipeline only ever exists at this
+   * seam. Mirrors what `src/web/dev-manager.ts` does for the browser.
+   */
+  runStarted(info: { epoch: number; phase: DevRunPhase; pipeline: Pipeline; runId: string }): void;
+  /** A snapshot of the live run — the kanban's input. */
+  runState(state: OrchestratorState): void;
+  /** The live run finished (the driver is now landing the epoch). */
+  runEnded(): void;
+  /**
+   * A y/N gate, rendered by the presenter. Ink owns stdin in raw mode while it
+   * is mounted, so the `readline` prompt this file uses headlessly would fight
+   * it for keystrokes; the gates move INSIDE the surface instead.
+   */
+  confirm(question: string): Promise<boolean>;
+  /** Last frame, then tear down. Awaited before the JSON reaches stdout. */
+  close(): Promise<void>;
+}
+
 export interface RunDevCliArgs {
   /** Argv after the `dev` subcommand, with CLI-global flags already filtered. */
   args: string[];
   cwd: string;
+  /**
+   * An ALREADY-BUILT surface. The eager form, for callers that own the mount
+   * themselves and have nothing to refuse first — the tests and
+   * `scripts/smoke-dev-dashboard.tsx`. A command line should use
+   * {@link presenterFactory} instead; see there for why.
+   */
+  presenter?: DevCliPresenter;
+  /**
+   * BUILDS the surface, and is called only once the session is actually about
+   * to start. That is the whole point: an Ink board mounted before argv is
+   * parsed paints an empty 31-line panel ON TOP of the refusal the user needs
+   * to read (`huu dev --cli` with no `--model` did exactly that), and the early
+   * `return 1` never reaches `close()`, so the panel is never even unmounted.
+   * Every refusal in this file therefore happens with the terminal still plain,
+   * and this factory runs after the last of them.
+   *
+   * Injected by `src/cli.tsx` when the user asked for the TUI front-end
+   * (`huu dev --cli`); absent on every other invocation, which keeps the
+   * headless path byte-identical.
+   */
+  presenterFactory?: () => DevCliPresenter;
   /** Backend chosen via `--backend=` / `--provider=` / `--stub`; defaults to jcode. */
   backend?: AgentBackendKind;
   /**
@@ -145,7 +225,37 @@ function positiveNumber(raw: string | undefined, label: string): number | undefi
   return n;
 }
 
+/**
+ * The presenter that owns the terminal right now, or `null` for the plain-log
+ * path. Module state on purpose: `err()` and `confirm()` are used by exported
+ * helpers (`offerResume`, `offerOrphanLanding`) whose signatures are part of
+ * this module's tested surface, and threading a presenter through all of them
+ * would change every caller to express one boolean. Installed and torn down by
+ * {@link runDevCli} around the session, and never observable outside it.
+ */
+let activePresenter: DevCliPresenter | null = null;
+
+/**
+ * One line of human-readable progress — to the board when one is mounted, to
+ * stderr otherwise.
+ *
+ * KNOWN DEBT, and it predates the board: the narrative this function carries is
+ * hardcoded Portuguese. It was always user-facing (it went to stderr), it was
+ * always untranslated, and routing it into the Ink surface only made the seam
+ * VISIBLE — under `HUU_LANG=en` a translated frame now wraps Portuguese lines.
+ * The gates were fixed first (`tui.dev.gate_*`), because a question the reader
+ * cannot read is a question they cannot answer. **24 line templates remain**,
+ * all of them narrative: 4 in {@link offerResume}, 3 in
+ * {@link offerOrphanLanding}, 10 in {@link describeEvent}, 6 in
+ * {@link formatPlan} and the closing `sessão:` line of {@link runDevCli}. Two
+ * further sites are pass-throughs whose payload is not ours to translate
+ * (`[{level}] {message}` from the driver, and the caught error's own message).
+ */
 function err(message: string): void {
+  if (activePresenter) {
+    activePresenter.log(message);
+    return;
+  }
   process.stderr.write(`${message}\n`);
 }
 
@@ -275,6 +385,11 @@ async function confirm(question: string, nonTtyNote: string): Promise<boolean> {
     err(nonTtyNote);
     return false;
   }
+  // Ink holds stdin in RAW MODE while the dashboard is mounted, so a readline
+  // interface opened next to it eats keystrokes (or blocks forever waiting for
+  // a newline the terminal will never deliver). The gate is rendered by the
+  // surface instead — same question, same default, one owner of stdin.
+  if (activePresenter) return activePresenter.confirm(question);
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const answer = await new Promise<string>((res) => rl.question(`${question} [y/N] `, res));
@@ -304,10 +419,12 @@ export async function offerResume(state: DevState, nextEpoch: number): Promise<b
     );
   }
   err(`  objetivo: ${state.goal}`);
-  return confirm(
-    'Retomar essa sessão (continuando a numeração das épocas)?',
-    'huu dev: sem terminal interativo — começando uma sessão NOVA (use --resume para retomar sem perguntar).',
-  );
+  // TRANSLATED, unlike the narrative lines above it. Both used to go to plain
+  // stderr; the board now renders the QUESTION inside a translated frame
+  // ("huu is asking" / "Y or S = yes"), and a question the reader cannot read
+  // is a gate they cannot answer. The lines that merely DESCRIBE the previous
+  // session stay in Portuguese — see the note on `err`.
+  return confirm(t('tui.dev.gate_resume'), t('tui.dev.gate_resume_no_tty'));
 }
 
 /**
@@ -333,10 +450,7 @@ export async function offerOrphanLanding(
       }`,
     );
   }
-  const yes = await confirm(
-    'Aterrissar esses branches (merge --no-ff) antes de começar?',
-    'huu dev: sem terminal interativo — deixando os branches órfãos como estão (use --land-orphans para aterrissá-los).',
-  );
+  const yes = await confirm(t('tui.dev.gate_orphans'), t('tui.dev.gate_orphans_no_tty'));
   return yes ? 'land' : 'ignore';
 }
 
@@ -833,6 +947,71 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
     err(`  metodologias: ${activeMethods.map((d) => `--${d.flag}`).join(' ')}`);
   }
 
+  // ── the live surface takes over the terminal ────────────────────────────────
+  //
+  // Everything ABOVE this point printed to plain stderr and stays in the
+  // scrollback above the board: those lines are refusals and the opening
+  // summary, and a user who mistypes a flag must read the reason, not watch it
+  // scroll inside a log pane that is about to be torn down.
+  //
+  // …and it is built HERE, never by the caller: `presenterFactory` is invoked
+  // at this exact line, after the parse, the credential, the drawn method and
+  // the model preflight have all had their chance to refuse.
+  const presenter = input.presenter ?? input.presenterFactory?.();
+  if (presenter) {
+    presenter.session({
+      goal: opts.goal,
+      repoRoot,
+      modelId: opts.modelId,
+      backend,
+      maxEpochs: opts.maxEpochs,
+    });
+    activePresenter = presenter;
+  }
+  /** Tears the surface down and hands the terminal back to plain stderr. */
+  const closePresenter = async (): Promise<void> => {
+    if (!presenter) return;
+    activePresenter = null;
+    await presenter.close();
+  };
+
+  // THE PIPELINE SEAM. `onState` carries an `OrchestratorState` and nothing
+  // else, but a kanban needs the compiled `Pipeline` too (per-step `modelId`
+  // overrides, `integrationModelId`). The pipeline exists at exactly one place
+  // a caller can observe — the factory the driver builds each run through — so
+  // the CLI supplies its own, exactly as `src/web/dev-manager.ts` does for the
+  // browser. Construction MIRRORS the driver's own default (`runPipeline` in
+  // dev-driver.ts): same options, plus a run id so the surface can name the run.
+  const orchestratorFactory = presenter
+    ? (pipeline: Pipeline, epoch: number, phase: DevRunPhase): DevRunHandle => {
+        const runId = generateRunId();
+        const orch = new Orchestrator(config, pipeline, repoRoot, bundle.agentFactory, {
+          initialConcurrency: input.concurrency,
+          conflictResolverFactory: bundle.conflictResolverFactory,
+          autoScale: input.autoScale ?? input.concurrency === undefined,
+          runId,
+        });
+        presenter.runStarted({ epoch, phase, pipeline, runId });
+        return {
+          subscribe: (listener) =>
+            orch.subscribe((state) => {
+              // Feed BOTH the driver (evidence, cost) and the board.
+              listener(state);
+              presenter.runState(state);
+            }),
+          start: async () => {
+            try {
+              return await orch.start();
+            } finally {
+              presenter.runEnded();
+            }
+          },
+          abort: () => orch.abort(),
+          setGreedy: () => orch.enableGreedyMode(),
+        };
+      }
+    : undefined;
+
   let result: DevModeResult;
   try {
     result = await runDevMode({
@@ -844,21 +1023,26 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
       concurrency: input.concurrency,
       autoScale: input.autoScale,
       ...(opts.resume ? { resume: opts.resume } : {}),
+      ...(orchestratorFactory ? { orchestratorFactory } : {}),
       onResumeOffer: offerResume,
       onOrphanBranches: (orphans) => offerOrphanLanding(orphans, opts.landOrphans),
       onEvent: (event) => {
+        presenter?.event(event);
         const line = describeEvent(event, drawnMethod ? { drawnMethod } : {});
         if (line) err(`  ${line}`);
       },
       onApprove: async (plan, epoch, warnings) => {
         err(formatPlan(plan, epoch, warnings));
         return confirm(
-          `Rodar a época ${epoch}?`,
-          'huu dev: --approve-each precisa de um terminal interativo; encerrando sem rodar a época.',
+          t('tui.dev.gate_approve_epoch', { epoch }),
+          t('tui.dev.gate_approve_no_tty'),
         );
       },
     });
   } catch (e) {
+    // Close FIRST: the message has to survive on the terminal, and a mounted
+    // Ink instance owns the frame it would land in.
+    await closePresenter();
     err(`huu dev: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
@@ -871,6 +1055,10 @@ export async function runDevCli(input: RunDevCliArgs): Promise<number> {
       drawnMethod ? ` · método desenhado "${drawnMethod.id}"` : ''
     }`,
   );
+
+  // The board is done; hand the terminal back BEFORE the machine-readable
+  // verdict is written, so nothing can repaint over it.
+  await closePresenter();
 
   process.stdout.write(
     `${JSON.stringify(

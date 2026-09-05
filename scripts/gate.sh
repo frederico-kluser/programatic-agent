@@ -60,6 +60,16 @@ is_ci() {
 # arguments their own acceptance criteria specify (METODO M1-02: a selector
 # that must match ≥1 test). Leaving the flag on kept the whole gate red
 # forever, since any PENDENTE forces exit 1.
+#
+# smoke-dev-dashboard is the 11th step and it is LAST for two reasons. It is the
+# slowest thing here (~45 s: it drives two REAL epochs of a stub dev session
+# through real git worktrees), and it needs no dist/ at all — it runs the
+# TypeScript sources through tsx — so nothing above it depends on where it sits.
+# It exists because the `huu dev --cli` board is one `??` away from writing Ink
+# frames into the ONE JSON object `huu dev` puts on stdout, and that stream is a
+# machine contract. It was written as an orphan script nothing ever ran: green
+# typecheck, green suite and a green smoke all coexisted with 650 KB of ANSI on
+# stdout. A guard nobody runs is not a guard.
 STEPS=(
   "typecheck|npm run typecheck|"
   "test|npm test|"
@@ -71,6 +81,7 @@ STEPS=(
   "check-twins|npx tsx scripts/check-twins.ts|"
   "check-metodo|npx tsx scripts/check-metodo.ts|"
   "check-dockerfile|npx tsx scripts/check-dockerfile.ts|"
+  "smoke-dev-dashboard|npx tsx scripts/smoke-dev-dashboard.tsx|"
 )
 
 # ---- helpers ---------------------------------------------------------------

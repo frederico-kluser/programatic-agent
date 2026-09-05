@@ -140,4 +140,44 @@ export const tuiRunEn = {
   'tui.multi.all_finished': 'all runs finished',
   'tui.multi.aborting': 'aborting…',
   'tui.multi.shared_concurrency': 'concurrency is shared across runs',
+  // ── development mode (`huu dev --cli`): the live epoch board ───────────────
+  // AI-driven surface end to end (a planner writes the pipeline at run time),
+  // so the chrome is `theme.ai` on purpose — see AGENTS.md "Visual conventions".
+  'tui.dev.title': 'dev mode',
+  'tui.dev.goal': 'goal',
+  'tui.dev.epochs': 'epochs',
+  'tui.dev.epoch': 'epoch',
+  'tui.dev.of_max': 'of {max}',
+  'tui.dev.phase_planning': 'planning',
+  'tui.dev.phase_knowledge': 'knowledge',
+  'tui.dev.phase_bootstrap': 'bootstrap',
+  'tui.dev.phase_work': 'execution',
+  'tui.dev.badge_running': 'running',
+  'tui.dev.badge_landed': 'landed {commit}',
+  'tui.dev.badge_failed': 'failed',
+  'tui.dev.session_title': 'Session',
+  'tui.dev.session_waiting': 'starting the session…',
+  'tui.dev.epoch_divider': 'epoch {epoch} · {phase}',
+  'tui.dev.board_waiting': 'Waiting for the {phase} run of epoch {epoch}…',
+  'tui.dev.board_planning': 'The blind orchestrator is planning epoch {epoch} — there is no board yet.',
+  'tui.dev.run_over': 'run finished — landing the epoch',
+  'tui.dev.stopped': 'session ended: {reason}',
+  'tui.dev.gate_title': 'huu is asking',
+  'tui.dev.gate_hint': 'Y or S = yes · any other key = no',
+  'tui.dev.hint_quit': 'ends the session',
+  'tui.dev.hint_live': 'live board — every epoch of the session runs here',
+  'tui.dev.no_tty': 'huu dev: --cli needs an interactive terminal; keeping the plain log.',
+  // The three y/N gates `huu dev` asks. They live in the catalog because the
+  // board renders them INSIDE a translated frame: leaving them hardcoded put a
+  // Portuguese question inside an English "huu is asking / Y or S = yes" box,
+  // and the question is the one string a user must understand to answer it.
+  'tui.dev.gate_resume': 'Resume that session (continuing the epoch numbering)?',
+  'tui.dev.gate_resume_no_tty':
+    'huu dev: no interactive terminal — starting a NEW session (use --resume to resume without asking).',
+  'tui.dev.gate_orphans': 'Land those branches (merge --no-ff) before starting?',
+  'tui.dev.gate_orphans_no_tty':
+    'huu dev: no interactive terminal — leaving the orphan branches alone (use --land-orphans to land them).',
+  'tui.dev.gate_approve_epoch': 'Run epoch {epoch}?',
+  'tui.dev.gate_approve_no_tty':
+    'huu dev: --approve-each needs an interactive terminal; stopping without running the epoch.',
 } as const;

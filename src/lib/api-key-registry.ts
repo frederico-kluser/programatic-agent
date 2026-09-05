@@ -179,7 +179,28 @@ export const API_KEY_REGISTRY: readonly ApiKeySpec[] = [
     secretMountPath: '/run/secrets/brave_api_key',
     hostSecretScope: 'huu-brave-key',
     label: 'Brave Search (web research)',
-    hint: 'API key from brave.com/search/api — the ONLY search backend; without it the `external` lane cannot be answered',
+    hint: 'starts with BSA — API key from brave.com/search/api, the ONLY search backend; without it the `external` lane cannot be answered',
+    // DECLARED ON PURPOSE, and it is a SAFETY field here, not a UX nicety.
+    //
+    // `detectForeignKeySpec` only judges a target that declares a format (see
+    // its rule 1). Brave used to declare none, so an `sk-or-…` OpenRouter key
+    // pasted into THIS prompt passed the cross-spec guard untouched — and,
+    // since `brave` is the one non-LLM spec that owns a live probe, the guard
+    // being a no-op meant the OpenRouter secret was put on the wire to
+    // api.search.brave.com in an `X-Subscription-Token` header. Declaring the
+    // prefix is what makes the guard structurally able to catch it.
+    //
+    // The value is measured, not guessed: the installed surf CLI's Brave
+    // adapter documents `X-Subscription-Token` keys as `BSA…` (see
+    // `surf-agent-skill/src/lib/keys-cmd.mjs`), and every Brave key held on
+    // this machine's `~/.config/surf/keys.json` is `BSA` + 28 characters.
+    // Nothing in the registry claims `BSA`, and no Brave key observed starts
+    // with `sk-` or `tvly-`, so no legitimate Brave key becomes "foreign".
+    //
+    // Note the ASYMMETRIC cost, which is why this is safe: a key that does NOT
+    // match only trips the SOFT prefix warning, which the user can ignore and
+    // submit through. Only a value matching ANOTHER spec's prefix blocks.
+    validatePrefix: 'BSA',
     required: false,
   },
 ];
@@ -201,9 +222,11 @@ export function findSpec(name: string): ApiKeySpec | undefined {
  *
  * The rule, in three parts:
  *   1. Only specs that DECLARE a `validatePrefix` are judged. A spec with no
- *      declared format (Artificial Analysis, Brave, Parallel) has no basis to
- *      call anything foreign — claiming every `sk-…` value for DeepSeek would
- *      be a false positive that blocks perfectly good keys.
+ *      declared format has no basis to call anything foreign — claiming every
+ *      `sk-…` value for DeepSeek would be a false positive that blocks
+ *      perfectly good keys, and `wrong-key` is a BLOCKING verdict with no
+ *      in-product override (`ApiKeyPrompt` refuses to submit, `POST /api/keys`
+ *      refuses to save).
  *   2. A value that satisfies the target's own prefix is foreign only when
  *      another spec's prefix is STRICTLY MORE SPECIFIC (longer) and also
  *      matches: `sk-or-` (6) refines `sk-` (3), so an OpenRouter key is
@@ -215,6 +238,21 @@ export function findSpec(name: string): ApiKeySpec | undefined {
  * Anything else (a value matching nothing at all) is left to the SOFT prefix
  * warning, deliberately: keys do change format, and a shape we simply do not
  * recognise must not lock the user out.
+ *
+ * THE LIMITATION RULE 1 CREATES, stated exactly rather than glossed over.
+ * The guard is a NO-OP for any spec that declares no `validatePrefix`: an
+ * OpenRouter key pasted into such a prompt is accepted and persisted under
+ * that spec's name. Today that is `artificialAnalysis` and `parallel`, and it
+ * is deliberate — their key formats are not known to this repo, so calling an
+ * `sk-…` value foreign there would be a guess that hard-blocks a real key.
+ *
+ * What keeps that limitation from becoming a LEAK is a separate, checkable
+ * invariant: every spec that owns a key PROBE declares a prefix
+ * (`brave` is why this comment exists — see its entry above, and the invariant
+ * test in `key-validation.test.ts`). A prefix-less spec therefore has no probe,
+ * so a value pasted into it never leaves the machine during validation. The
+ * blast radius of rule 1 is "stored under the wrong name", not "sent to the
+ * wrong host".
  *
  * Returns the spec the value really belongs to, or `undefined`.
  */

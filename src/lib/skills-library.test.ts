@@ -171,6 +171,85 @@ Append-only log.
     expect(out).toMatch(/FAIL\[vocab-test\].*vocabulary/);
   });
 
+  // Regression: the old "backend name consistency check" derived its grep
+  // alternation FROM the valid kinds in registry.ts, so its `err` branch was
+  // UNREACHABLE — `AgentBackendKind = 'pi' | 'azure' | 'stub'` sat in a real
+  // SKILL.md for weeks while the validator printed OK. These two tests pin
+  // both halves of the replacement: it must fail on a live assertion, and it
+  // must stay quiet on a historical mention.
+  it('validate-skills.sh catches a REMOVED backend asserted as live', () => {
+    const name = 'removed-backend-live-test';
+
+    const skillMd = `---
+name: ${name}
+description: Temporary skill for removed-backend liveness testing.
+metadata:
+  type: knowledge
+---
+
+# Removed Backend Test
+
+\`AgentBackendKind = 'pi' | 'azure' | 'stub'\` — three kinds.
+Note: azure IS a real backend, and \`backends/pi/\` holds the factory.
+Run it with \`--backend=pi\`; the pi agent reads your AGENTS.md.
+`;
+    const learningsMd = `# Learnings — ${name}
+Append-only log.
+
+<!-- entries below this line -->
+- [2026-09-05][source:inference][task:test][probation] Test entry.
+`;
+
+    const cleanup = setupTempSkill(name, skillMd, learningsMd);
+    let out = '';
+    try {
+      out = runValidatorExpectFail();
+    } finally {
+      cleanup();
+    }
+    expect(out).toMatch(/FAIL\[removed-backend-live-test\].*REMOVED backend as live/);
+    // Every one of the four shapes must be caught, not just the first.
+    expect(out).toMatch(/line 10 asserts a REMOVED backend as live/);
+    expect(out).toMatch(/line 11 asserts a REMOVED backend as live/);
+    expect(out).toMatch(/line 12 asserts a REMOVED backend as live/);
+  });
+
+  it('validate-skills.sh allows HISTORICAL mentions of a removed backend', () => {
+    const name = 'removed-backend-history-test';
+
+    const skillMd = `---
+name: ${name}
+description: Temporary skill for removed-backend historical-mention testing.
+metadata:
+  type: knowledge
+---
+
+# Removed Backend History
+
+\`pi\` and \`azure\` were deleted in v3.0, so \`backends/pi/\` no longer exists.
+The pi backend was the default until v3.0; the azure backend is gone.
+\`docs/pi-coding-agent.md\` survives only as a REMOVED-backend marker.
+`;
+    // A LEARNINGS journal is dated by construction — a 2026-06 entry about the
+    // pi backend records what was true then and must never fail the gate.
+    const learningsMd = `# Learnings — ${name}
+Append-only log.
+
+<!-- entries below this line -->
+- [2026-06-25][source:inference][task:test][probation] The pi backend used \`AgentBackendKind = 'pi' | 'azure' | 'stub'\` back then.
+`;
+
+    const cleanup = setupTempSkill(name, skillMd, learningsMd);
+    let out = '';
+    try {
+      out = runValidator();
+    } finally {
+      cleanup();
+    }
+    expect(out).toContain('OK');
+    expect(out).not.toContain(name);
+  });
+
   it('validate-skills.sh catches non-existent catalog entries', () => {
     const catalogPath = join(skillsDir, 'catalog.md');
     const catalogOrig = readFileSync(catalogPath, 'utf-8');

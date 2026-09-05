@@ -32,7 +32,7 @@ You are the agent responding to a plan request. Every plan is **research-grounde
 
 ## Vendored divergences from upstream (surf-skill@5.2.0)
 
-1. **No `WebSearch`/`WebFetch` rung.** The pi agent inside huu's container has no such tool — Layer B is `surf-free-skill` CLI, Layer C writes a `blocker` finding.
+1. **No `WebSearch`/`WebFetch` rung.** The agent inside huu's container has no such tool — Layer B is `surf-free-skill` CLI, Layer C writes a `blocker` finding.
 2. **`<evolution>` step appended** (required by this repo's task-skill taxonomy).
 3. **Layer C remediation points at huu's key store** (`~/.config/surf/keys.json` materialized from huu's `tavily`/`parallel`/`brave` specs), not the upstream installer.
 

@@ -8,6 +8,7 @@ import type { Server } from 'node:http';
 import { createWebServer } from './server.js';
 import { runDevMode } from '../lib/dev-mode/dev-driver.js';
 import { DEV_METHODOLOGIES } from '../lib/dev-mode/methodology-registry.js';
+import { DEV_MODEL_ROLES } from '../lib/dev-mode/dev-model-policy.js';
 import { GRAPHS_DIR, writeGraph } from '../lib/dev-graph/graph-store.js';
 import type { DevGraph } from '../lib/dev-graph/graph-types.js';
 
@@ -285,7 +286,7 @@ describe('web server — development mode', () => {
     });
     const session = (await (await fetch(base + '/api/dev')).json()).session;
     expect(Object.keys(session.models).sort()).toEqual(
-      ['critic', 'integration', 'judge', 'planner', 'recon', 'reporter', 'worker'].sort(),
+      [...DEV_MODEL_ROLES].sort(),
     );
     for (const [role, id] of Object.entries(session.models)) {
       expect(id, role).toBe('stub-model');

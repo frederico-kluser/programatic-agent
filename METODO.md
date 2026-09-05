@@ -155,20 +155,20 @@ esta ficou entre 2026-07-30 e 2026-08-01), não transformar cada commit em
 falha de gate — número exato aqui envelhece em uma tarde.
 
 As quatro linhas de VOLUME (total versionado, `src/`, TS+TSX não-teste, testes)
-foram re-medidas em **2026-09-05**: a razão teste:código é a única entrada com
-tolerância ABSOLUTA (±0,02), então ela atravessa o limiar antes de qualquer
-outra e obriga a re-medição junto com as três de que ela deriva.
+e a de Skills foram re-medidas em **2026-09-05**: a razão teste:código é a
+única entrada com tolerância ABSOLUTA (±0,02), então ela atravessa o limiar
+antes de qualquer outra e obriga a re-medição junto com as três de que deriva.
 
 | | |
 |---|---|
 | Idade ⚠ histórico | **363 commits**, de 2026-05-20 a 2026-08-02 (~74 dias) — medido antes do `v1.0.0 — clean start`; `git log` já não o alcança |
 | Autores ⚠ histórico | 284 `fredericokluser` · 22 `Claude` · 19+2 nome completo · 15 `t` · 1 externo — idem |
-| Total versionado | **203.784 linhas** (`git ls-files \| xargs wc -l`) |
-| `src/` | **427 arquivos, 137.797 linhas** (inclui client JS/CSS/HTML) |
-| `src/` TS+TSX **não-teste** | **67.881 linhas** |
-| Testes | **144 arquivos, 47.896 linhas** → razão teste:código **0,71 : 1** |
+| Total versionado | **209.035 linhas** (`git ls-files \| xargs wc -l`) |
+| `src/` | **432 arquivos, 142.990 linhas** (inclui client JS/CSS/HTML) |
+| `src/` TS+TSX **não-teste** | **69.749 linhas** |
+| Testes | **147 arquivos, 50.736 linhas** → razão teste:código **0,73 : 1** |
 | `docs/` | 36 arquivos, **14.554 linhas** (9 pares en/pt-BR) |
-| Skills | **21** `SKILL.md` + **21** `LEARNINGS.md` + `catalog.md` |
+| Skills | **22** `SKILL.md` + **22** `LEARNINGS.md` + `catalog.md` |
 | `AGENTS.md` | **152 linhas, 7.031 chars ≈ 1,8k tokens** — carregados em **toda** sessão |
 | Pipelines default | 7 pipelines, 14 módulos, **4.321 linhas** |
 | Verificação automática | gate local (`typecheck` + `test`) **e CI**: `.github/workflows/gate.yml` roda os **9 passos** de `scripts/gate.sh` em todo push/PR; `core.hooksPath` segue opt-in |

@@ -118,6 +118,11 @@ const DEV_ROLE_COPY = {
   reporter: ['web.role.reporter', 'web.role.reporter_hint'],
   judge: ['web.role.judge', 'web.role.judge_hint'],
   integration: ['web.role.integration', 'web.role.integration_hint'],
+  // The `--debate` pair. Rendered like every other role — the panel is the
+  // server's list — so a session that never turns the debate on simply leaves
+  // both fields blank and stamps nothing.
+  advocate: ['web.role.advocate', 'web.role.advocate_hint'],
+  prosecutor: ['web.role.prosecutor', 'web.role.prosecutor_hint'],
 };
 
 const DEV_PRESET_COPY = {

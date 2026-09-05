@@ -228,6 +228,36 @@ describe('parseDevCliArgs — model routing', () => {
     ).toEqual({ worker: { model: 'deepseek/deepseek-r1:free' } });
   });
 
+  // MUTATION KILLED: adding a role to `DevModelRole`, being FORCED to list it
+  // in `DEV_MODEL_ROLE_FLAGS` by the compile lock, and giving it a flag
+  // spelling nothing reads. The record is total; nothing checked that the
+  // string it holds is the string argv is parsed for.
+  it('routes EVERY role through its own flag', () => {
+    for (const role of DEV_MODEL_ROLES) {
+      const flag = DEV_MODEL_ROLE_FLAGS[role];
+      const opts = parseOk(['g', '--model=fallback/one', `--${flag}=vendor/${role}`]);
+      expect(opts.models, role).toEqual({ [role]: { model: `vendor/${role}` } });
+    }
+  });
+
+  // The `--debate` pair, spelled out: it is the flag family a user reaches for
+  // immediately after typing `--debate`, and routing both sides to ONE family
+  // is the single way to get that option wrong with no error to show for it.
+  it('routes the debate pair to two families, endpoints pinned', () => {
+    const opts = parseOk([
+      'g',
+      '--model=fallback/one',
+      '--advocate-model=openrouter:anthropic/claude-opus-5',
+      '--prosecutor-model=openrouter:openai/gpt-5.6-sol',
+      '--debate',
+    ]);
+    expect(opts.models).toEqual({
+      advocate: { model: 'anthropic/claude-opus-5', provider: 'openrouter' },
+      prosecutor: { model: 'openai/gpt-5.6-sol', provider: 'openrouter' },
+    });
+    expect(opts.methodology).toEqual({ debate: true });
+  });
+
   it('drops a preset on a backend it cannot serve, and says so', () => {
     const opts = parseOk(['g', '--models=hetero'], 'stub');
     expect(opts.models).toEqual({});
@@ -401,8 +431,9 @@ describe('formatModelRouting', () => {
     expect(block).toContain('preset hetero');
     for (const role of DEV_MODEL_ROLES) expect(block, role).toContain(role);
     expect(block).toContain('moonshotai/kimi-k2.6');
-    // The two roles that pin an endpoint say so; the five that inherit do not.
-    expect(block.match(/@openrouter/g)).toHaveLength(2);
+    // The roles that pin an endpoint say so; the ones that inherit do not.
+    // `hetero` pins three: planner, critic and the debate's prosecutor.
+    expect(block.match(/@openrouter/g)).toHaveLength(3);
     // The planner id is shown WITH the reason it is exempt from the preflight.
     expect(block).toContain('structured output');
     expect(block).not.toContain('← --model');

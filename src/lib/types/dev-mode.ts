@@ -98,14 +98,27 @@ export type DevModelRole =
    */
   | 'judge'
   /** The merge-conflict resolver → `Pipeline.integrationModelId`. */
-  | 'integration';
-// WHERE THE DEBATE ROLES GO. The roster document names an adversarial pair —
-// `advogado` (defends the work) and `promotor` (attacks it) — that huu has no
-// step for yet: there is no debate node in the epoch template, so a role here
-// would name a job nothing runs. They belong in this union the moment that step
-// exists, next to `critic` (which is today the prosecutor's only home), and
-// `ALL_ROLES` in `dev-model-policy.ts` will refuse to compile until both are
-// listed there too.
+  | 'integration'
+  /**
+   * THE DEBATE PAIR (`methodology.debate`). The roster document names an
+   * adversarial pair — `advogado` (defends the design) and `promotor` (attacks
+   * it) — and the `--debate` methodology is the step that finally runs them:
+   * `Sustentar as escolhas` → `Contestar as escolhas` → `Debate resolvido?`,
+   * compiled between the global recon and the fronts.
+   *
+   * They are two roles, not one, precisely so they can be routed to DIFFERENT
+   * FAMILIES. A debate between two instances of the same model is a monologue
+   * with extra tokens: the measured failure of naive multi-agent debate (it
+   * often fails to beat plain chain-of-thought) is what heterogeneity is the
+   * antidote to, and it is the only property here that cannot be recovered by
+   * a better prompt.
+   *
+   * With NO routing both fall back to `AppConfig.modelId`, which is homogeneous
+   * — say so rather than hide it (`docs/dev-mode.md`), and route them.
+   */
+  | 'advocate'
+  /** See {@link DevModelRole} `'advocate'` — the other half of the pair. */
+  | 'prosecutor';
 
 /**
  * WHERE one role runs: the model, and the provider whose endpoint serves it.
@@ -191,6 +204,12 @@ export const DEV_MODEL_PRESETS = {
     reporter: DS,
     judge: DS,
     integration: DS,
+    // The debate pair reuses the two families this preset ALREADY pays for —
+    // the DeepSeek family that writes the code and the Moonshot family that
+    // already audits it — so `--debate` is cross-family by construction
+    // without adding a vendor, a key or a billing surface to the preset.
+    advocate: DS,
+    prosecutor: 'openrouter:moonshotai/kimi-k2.6',
   },
   /** Same as `hetero`, with the reporter demoted — it is mechanical prose over a diff. */
   thrifty: {
@@ -201,6 +220,12 @@ export const DEV_MODEL_PRESETS = {
     reporter: DS_FLASH,
     judge: DS,
     integration: DS,
+    // NOT demoted, unlike the reporter. Demoting ONE side of a debate buys a
+    // few cents and hands the judge exactly the asymmetry its anonymized
+    // rubric exists to remove: the weaker writer loses on prose rather than on
+    // argument. Thrifty's economy comes from the reporter, not from here.
+    advocate: DS,
+    prosecutor: 'openrouter:moonshotai/kimi-k2.6',
   },
   /**
    * Everything on the worker's model — INCLUDING the critic. This is
@@ -220,6 +245,12 @@ export const DEV_MODEL_PRESETS = {
     reporter: DS,
     judge: DS,
     integration: DS,
+    // Same family on BOTH sides of the debate, deliberately — this preset is
+    // the A/B baseline, and the debate's heterogeneity claim is exactly the
+    // kind of thing that has to be measured against a monoculture arm rather
+    // than assumed. It is the one preset where this is not a defect.
+    advocate: DS,
+    prosecutor: DS,
   },
   /**
    * The heterogeneous ROSTER: one endpoint (OpenRouter), five vendors, each
@@ -245,11 +276,19 @@ export const DEV_MODEL_PRESETS = {
    *                                  workers wrote; same family is an asset for
    *                                  a merge, unlike for an audit.
    *
-   * The roster document also names an adversarial PAIR (advogado = Opus 5,
-   * promotor = GPT-5.6 Sol). huu has no debate step yet, so only the prosecutor
-   * half has a home (`critic`); Opus 5 lands on `judge`, the other place where
-   * being wrong is expensive. When the debate arrives it brings its own roles —
-   * see `DevModelRole` for where they attach.
+   *   advocate    Claude Opus 5    — the adversarial PAIR the roster document
+   *   prosecutor  GPT-5.6 Sol        names (advogado / promotor), which
+   *                                  `--debate` finally has a step for. Two
+   *                                  vendors, no new model: both ids are
+   *                                  already in this roster, so turning the
+   *                                  debate on costs a preset nothing.
+   *
+   * KNOWN OVERLAP, stated rather than hidden: `judge` and `advocate` are both
+   * Opus 5, so the debate's judge shares a family with one debater. With five
+   * models over nine roles some overlap is unavoidable, and this is why the
+   * judge's rubric is ANONYMIZED — it is never told which brief is whose. A
+   * session that wants full independence routes `--judge-model=` to a sixth
+   * family; the compiler stamps whatever the policy names.
    */
   roster: {
     planner: DS,
@@ -259,6 +298,8 @@ export const DEV_MODEL_PRESETS = {
     reporter: 'openrouter:z-ai/glm-5.3-flash',
     judge: 'openrouter:anthropic/claude-opus-5',
     integration: DS,
+    advocate: 'openrouter:anthropic/claude-opus-5',
+    prosecutor: 'openrouter:openai/gpt-5.6-sol',
   },
   /** Every role falls back to `AppConfig.modelId` — today's behavior, byte-identical. */
   uniform: {},
@@ -606,6 +647,25 @@ export interface DevMethodology {
    * becomes a plan nobody downstream can correct.
    */
   chainOfVerification?: boolean;
+  /**
+   * Compile an ADVERSARIAL DEBATE over the epoch's design decisions, between
+   * the global recon and the fronts: one agent writes the decision record, a
+   * second one from ANOTHER model family attacks it, and a judge with an
+   * ANONYMIZED rubric routes on two enumerated outcomes.
+   *
+   * It is a methodology and not a free-running discussion on purpose. The
+   * debate emits PROSE into two files huu named in advance; the graph is the
+   * compiler's, fixed, revalidated by `PipelineSchema` + `validateTopology`;
+   * the judge's verdict is one of two labels with the forward one as
+   * `default: true`. Nothing here lets a model emit `steps`, `dependsOn` or a
+   * path — the MANIFESTO boundary dev mode already lives inside.
+   *
+   * Heterogeneity is the whole mechanism: {@link DevModelRole} gains
+   * `advocate` and `prosecutor` so the two sides can be routed to different
+   * families, and every preset but `monoculture` (the A/B baseline) does.
+   * Two agents of the SAME model agreeing is not evidence of anything.
+   */
+  debate?: boolean;
 }
 
 /** Everything `runDevMode` needs beyond the shared `AppConfig`. */

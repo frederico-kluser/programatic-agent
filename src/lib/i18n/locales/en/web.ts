@@ -438,6 +438,12 @@ export const webEn = {
   'web.dev.method.chainOfVerification.label': 'Claim verification',
   'web.dev.method.chainOfVerification.desc':
     'In the knowledge phase, a second agent re-checks every claim against the repo and demotes what it cannot reproduce — nothing invented reaches the plan.',
+  // The side effect is IN the description on purpose. `--debate` is the only
+  // option that adds no rubric and no gate of its own, so the critic switching
+  // to HOLD is a behaviour the user gets without asking unless it is said here.
+  'web.dev.method.debate.label': 'Adversarial debate',
+  'web.dev.method.debate.desc':
+    "Two agents from different model families argue this epoch's design decisions before any front starts, and an anonymized judge rules — capped at two rounds. Like every option here, it also makes a blocked task wait for a human instead of waiving at the round cap.",
   /* WHO WRITES THE TOPOLOGY. Either the LLM planner decomposes the goal (what
      dev mode has always done), or huu compiles a method the human DREW on the
      canvas. The two are exclusive, and the drawing wins whenever it is set. */
@@ -555,6 +561,12 @@ export const webEn = {
     'Front verification and the epoch gate. Every check has a forward default outcome, so a judge that fails APPROVES SILENTLY — the one place to keep the strong model.',
   'web.role.integration': 'Integration',
   'web.role.integration_hint': 'The merge-conflict resolver.',
+  'web.role.advocate': 'Advocate',
+  'web.role.advocate_hint':
+    "Writes the epoch's decision record when the adversarial debate is on. Used only with the Adversarial debate option — and it must NOT share a family with the prosecutor, or the debate is one model talking to itself.",
+  'web.role.prosecutor': 'Prosecutor',
+  'web.role.prosecutor_hint':
+    'Attacks that record, one verdict per decision. The other half of the debate pair — route it to a different family from the advocate.',
 
   'web.preset.hetero': 'Hetero ★',
   'web.preset.hetero_hint':

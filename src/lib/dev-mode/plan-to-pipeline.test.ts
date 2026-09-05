@@ -1,17 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { compileEpochPipeline, sortFronts } from './plan-to-pipeline.js';
 import { DEV_METHODOLOGIES } from './methodology-registry.js';
 import { DEV_STEP_BOUNDARY, ROUTER_PREFIX } from './dev-protocol.js';
 import { COORDINATOR_RULES } from '../../orchestrator/review-agent.js';
-import { hasDagEdges, computeWave } from '../../orchestrator/wave-scheduler.js';
+import { hasDagEdges, computeWave, descendantsOf } from '../../orchestrator/wave-scheduler.js';
 import { PipelineSchema, validateTopology } from '../pipeline-io.js';
 import {
   DEFAULT_REVIEW_BLOCK_ON,
   DEFAULT_REVIEW_MAX_FINDINGS,
   DEFAULT_REVIEW_MAX_ROUNDS,
+  DEV_MAX_FRONTS,
   isCheckStep,
   isWorkStep,
   type DevFront,
+  type DevMethodology,
   type DevModelPolicy,
   type DevPlan,
   type Pipeline,
@@ -231,9 +233,12 @@ describe('compileEpochPipeline', () => {
 
   it('stays under the node-execution ceiling with the maximum fan-out', () => {
     const { pipeline } = compile([front('a'), front('b'), front('c'), front('d')]);
-    // 1 recon + 4×3 + 3 tail = 16 base visits; rework loops add ~10 more.
+    // 1 recon + 4×3 + 3 tail = 16 steps. How many VISITS the rework loops can
+    // add is not guessed here any more — `compileEpochPipeline — the
+    // node-execution budget` replays `runDagWaves` and measures it, for this
+    // shape and for every methodology combination.
     expect(pipeline.steps.length).toBeLessThanOrEqual(20);
-    expect(pipeline.maxNodeExecutions).toBe(50);
+    expect(pipeline.maxNodeExecutions).toBe(96);
   });
 
   // REGRESSION (dossier finding E1): every swarm agent was told to append to
@@ -299,6 +304,11 @@ const FULL_POLICY: DevModelPolicy = {
   reporter: { model: 'swarm/reporter' },
   judge: { model: 'swarm/judge' },
   integration: { model: 'swarm/integration' },
+  // The debate pair, from two DIFFERENT families on purpose — a policy that
+  // put them on one family would trip the heterogeneity warning and turn the
+  // "compiles clean" assertion below into a lie about a real defect.
+  advocate: { model: 'defence/advocate' },
+  prosecutor: { model: 'attack/prosecutor', provider: 'openrouter' },
 };
 
 function modelOf(pipeline: Pipeline, name: string): string | undefined {
@@ -701,8 +711,13 @@ function expectForwardDefaultsAndBackwardReworks(pipeline: Pipeline) {
     const defaults = check.outcomes.filter((o) => o.default);
     expect(defaults, `check "${check.name}" must have exactly one default`).toHaveLength(1);
     expect(indexByName.get(defaults[0]!.nextStepName)!).toBeGreaterThan(indexByName.get(check.name)!);
-    const rework = check.outcomes.find((o) => o.label === 'rework')!;
-    expect(indexByName.get(rework.nextStepName)!).toBeLessThan(indexByName.get(check.name)!);
+    // The NON-default arm, whatever it is called — `--debate` labels its pair
+    // `convergiu`/`contestado`, and the invariant is about DIRECTION, never
+    // about a word. Matching on the literal "rework" would silently skip any
+    // check that names its loop something else.
+    const back = check.outcomes.find((o) => !o.default)!;
+    expect(back, `check "${check.name}" must have a non-default arm`).toBeDefined();
+    expect(indexByName.get(back.nextStepName)!).toBeLessThan(indexByName.get(check.name)!);
   }
 }
 
@@ -729,6 +744,7 @@ describe('compileEpochPipeline — methodology byte-identity', () => {
           standards: false,
           planReview: false,
           writeSet: false,
+          debate: false,
         },
       },
       [front('a'), front('b')],
@@ -1564,6 +1580,371 @@ describe('compileEpochPipeline — planReview', () => {
   });
 });
 
+// --- The adversarial debate (`--debate`) -------------------------------------
+//
+// The 13th option, and the only one that compiles a BLOCK of steps rather than
+// one. What has to hold: it sits between the recon and the fronts, its gate has
+// exactly one FORWARD default, its output reaches the fronts through the only
+// channel huu has (a committed file, named in their prompts), and the judge is
+// never told whose brief is whose.
+
+describe('compileEpochPipeline — debate', () => {
+  const ADVOCATE = 'Sustentar as escolhas';
+  const PROSECUTOR = 'Contestar as escolhas';
+  const GATE = 'Debate resolvido?';
+  const PAIR: DevModelPolicy = {
+    advocate: { model: 'defence/opus' },
+    prosecutor: { model: 'attack/sol', provider: 'openrouter' },
+    judge: { model: 'bench/judge' },
+    recon: { model: 'swarm/recon' },
+  };
+  const debateOpts = { methodology: { debate: true }, models: PAIR };
+
+  it('compiles the block between the global recon and the fan-out', () => {
+    const { pipeline } = compileWith(debateOpts, [front('a'), front('b')]);
+    expect(pipeline.steps.map((s) => s.name)).toEqual([
+      '0. Recon do objetivo',
+      ADVOCATE,
+      PROSECUTOR,
+      GATE,
+      '1a. Front a — recon',
+      '1b. Front a — implementar',
+      '1c. Front a — verificar',
+      '2a. Front b — recon',
+      '2b. Front b — implementar',
+      '2c. Front b — verificar',
+      '3. Consolidar época 1',
+      '4. Portão de qualidade',
+      '5. Selar época 1',
+    ]);
+    expect(PipelineSchema.safeParse(pipeline).success).toBe(true);
+    expect(validateTopology(pipeline)).toEqual([]);
+  });
+
+  // The pair is SEQUENTIAL, not a wave: the prosecutor reads a file the
+  // advocate wrote, and only a later wave sees a tree where it is merged and
+  // committed. Running them in parallel would give the prosecutor nothing.
+  it('chains recon → advocate → prosecutor → gate, and gates every front recon', () => {
+    const { pipeline } = compileWith(debateOpts, [front('a'), front('b', { dependsOnFronts: ['a'] })]);
+    const by = (name: string) => pipeline.steps.find((s) => s.name === name)!;
+    expect(by(ADVOCATE).dependsOn).toEqual(['0. Recon do objetivo']);
+    expect(by(PROSECUTOR).dependsOn).toEqual([ADVOCATE]);
+    expect(by(GATE).dependsOn).toEqual([PROSECUTOR]);
+    // Every front's recon waits on the GATE — that edge is the delivery
+    // mechanism, not decoration: without it the recon's worktree branches from
+    // a tree where the briefs its prompt cites do not exist yet.
+    expect(by('1a. Front a — recon').dependsOn).toEqual(['0. Recon do objetivo', GATE]);
+    expect(by('2a. Front b — recon').dependsOn).toEqual([
+      '0. Recon do objetivo',
+      GATE,
+      '1c. Front a — verificar',
+    ]);
+  });
+
+  // MUTATION KILLED: aiming the default at the advocate ("let them settle it")
+  // — the default fires on judge failure, on an unknown label AND at the round
+  // cap, so a backward default is an epoch that cannot terminate.
+  it('routes convergiu FORWARD as the default and contestado BACK to the record', () => {
+    const { pipeline } = compileWith(debateOpts, [front('a'), front('b')]);
+    const gate = pipeline.steps.find((s) => s.name === GATE)!;
+    expect(isCheckStep(gate)).toBe(true);
+    if (!isCheckStep(gate)) return;
+    expect(gate.outcomes).toEqual([
+      { label: 'convergiu', nextStepName: '1a. Front a — recon', default: true },
+      { label: 'contestado', nextStepName: ADVOCATE },
+    ]);
+    expect(gate.outcomes.filter((o) => o.default)).toHaveLength(1);
+    // The round cap. It is a CAP, not a target: hitting it takes the forward
+    // default with the record as it stands.
+    expect(gate.maxRuns).toBe(2);
+  });
+
+  // The one channel that exists. `CheckEvaluationResult.reason` never reaches
+  // the next step's prompt, so the debate's whole output has to be files —
+  // written by the pair, named to the fronts by path.
+  it('writes two committed briefs and names both of them to every front recon', () => {
+    const { pipeline } = compileWith(debateOpts, [front('a'), front('b')]);
+    const A = '.huu/dev/epoch-1/debate/A.md';
+    const B = '.huu/dev/epoch-1/debate/B.md';
+    const advocate = pipeline.steps.find((s) => s.name === ADVOCATE)!;
+    const prosecutor = pipeline.steps.find((s) => s.name === PROSECUTOR)!;
+    expect(isWorkStep(advocate) && advocate.prompt).toContain(`WRITE \`${A}\``);
+    expect(isWorkStep(prosecutor) && prosecutor.prompt).toContain(`WRITE \`${B}\``);
+    // The prosecutor READS A and is forbidden from editing it — a debate where
+    // one side rewrites the other's brief has settled nothing.
+    expect(isWorkStep(prosecutor) && prosecutor.prompt).toContain(`Never edit \`${A}\``);
+    for (const name of ['1a. Front a — recon', '2a. Front b — recon']) {
+      const recon = pipeline.steps.find((s) => s.name === name)!;
+      const prompt = isWorkStep(recon) ? recon.prompt : '';
+      expect(prompt, name).toContain(A);
+      expect(prompt, name).toContain(B);
+      expect(prompt, name).toContain('SUSTENTADA');
+      // Degradation is stated, not assumed: the gate can forward with a brief
+      // missing (judge failure, the round cap), and a recon that then invents
+      // a verdict is worse than one that says so.
+      expect(prompt, name).toContain('Never invent a verdict');
+    }
+  });
+
+  // NOT `readOnly`. That flag hands the session a tool allowlist with no
+  // `write`, and these steps exist to write a file — `graph-to-pipeline.ts`
+  // resolves the same contradiction by DROPPING readOnly from a producer.
+  //
+  // What `writes` buys HERE, exactly: a DECLARATION of surface, plus
+  // `validateTopology`'s static disjunction whenever two CONCURRENT steps
+  // declare intersecting globs. These two are not concurrent (the prosecutor
+  // `dependsOn` the advocate), so that check has no pair to compare; the
+  // runtime partition check returns early too, because `files: []` fans each
+  // step out to exactly one task. It is NOT containment — no tool restriction,
+  // no critic, no merge gate — and the prose carries the "change no source"
+  // half. `0. Recon do objetivo` has had the same shape since dev mode
+  // existed; the assertion below pins the declaration, not a sandbox.
+  it('declares the debate directory as its write-set instead of going readOnly', () => {
+    const { pipeline } = compileWith(debateOpts, [front('a')]);
+    for (const name of [ADVOCATE, PROSECUTOR]) {
+      const step = pipeline.steps.find((s) => s.name === name)!;
+      expect(isWorkStep(step) && step.scope, name).toBe('project');
+      expect(isWorkStep(step) && step.writes, name).toEqual(['.huu/dev/epoch-1/debate/**']);
+      expect(isWorkStep(step) && step.readOnly, name).toBeUndefined();
+      expect(isWorkStep(step) && step.prompt, name).toContain('Change no source');
+    }
+  });
+
+  it('namespaces both briefs under the session segment', () => {
+    const { pipeline } = compileWith({ ...debateOpts, sessionId: 'sess-1' }, [front('a')]);
+    const gate = pipeline.steps.find((s) => s.name === GATE)!;
+    expect(isCheckStep(gate) && gate.condition).toContain('.huu/dev/sess-1/epoch-1/debate/A.md');
+    expect(isCheckStep(gate) && gate.condition).toContain('.huu/dev/sess-1/epoch-1/debate/B.md');
+    const recon = pipeline.steps.find((s) => s.name === '1a. Front a — recon')!;
+    expect(isWorkStep(recon) && recon.prompt).toContain('.huu/dev/sess-1/epoch-1/debate/A.md');
+  });
+});
+
+// The property the whole option rests on: the judge cannot map a brief to the
+// MODEL that wrote it, so it cannot prefer a family (its own included — in the
+// `roster` preset the judge and the advocate are both Opus 5).
+describe('compileEpochPipeline — the debate judge is anonymized', () => {
+  const GATE = 'Debate resolvido?';
+  const PAIR: DevModelPolicy = {
+    advocate: { model: 'defence/opus' },
+    prosecutor: { model: 'attack/sol' },
+    judge: { model: 'bench/judge' },
+  };
+  const compiled = () =>
+    compileWith({ methodology: { debate: true }, models: PAIR }, [front('a')]);
+
+  // MUTATION KILLED: "helpfully" interpolating the routed ids into the gate
+  // ("brief A was written by defence/opus"). It reads like provenance and it
+  // is exactly the position/family bias the rubric exists to remove.
+  it('never names either debater’s model in the gate', () => {
+    const gate = compiled().pipeline.steps.find((s) => s.name === GATE)!;
+    const condition = isCheckStep(gate) ? gate.condition : '';
+    expect(condition).not.toContain('defence/opus');
+    expect(condition).not.toContain('attack/sol');
+    expect(condition).toContain('NOT told which agent or which MODEL wrote either one');
+    // …and it does not claim to hide the ROLES, which are structurally
+    // impossible to hide: the very next lines of the gate say A is the
+    // decision record and B is the attack on it. MODEL anonymity is the
+    // property that fights family bias, and it is the one claimed.
+    expect(condition).toContain('Their ROLES are plain from the files themselves');
+  });
+
+  // MUTATION KILLED: naming the files `advogado.md` / `promotor.md`. A
+  // filename is not something a model can be asked to unsee — a prose
+  // instruction afterwards takes nothing back.
+  it('names the briefs with neutral letters that carry no role', () => {
+    const gate = compiled().pipeline.steps.find((s) => s.name === GATE)!;
+    const condition = isCheckStep(gate) ? gate.condition : '';
+    expect(condition).toContain('.huu/dev/epoch-1/debate/A.md');
+    expect(condition).toContain('.huu/dev/epoch-1/debate/B.md');
+    for (const leak of ['advogado.md', 'promotor.md', 'advocate.md', 'prosecutor.md', 'defence.md']) {
+      expect(condition, leak).not.toContain(leak);
+    }
+  });
+
+  // The three biases an LLM judge is measurably prone to, each denied by name.
+  it('denies length, order and confidence as evidence', () => {
+    const gate = compiled().pipeline.steps.find((s) => s.name === GATE)!;
+    const condition = isCheckStep(gate) ? gate.condition : '';
+    for (const rule of ['LENGTH IS NOT EVIDENCE', 'ORDER IS NOT EVIDENCE', 'CONFIDENCE IS NOT EVIDENCE']) {
+      expect(condition, rule).toContain(rule);
+    }
+    // And it is not picking a winner: the verdict is about the RECORD.
+    expect(condition).toContain('You are not picking a winner');
+  });
+
+  // Both writers get the SAME anonymity block, byte for byte. Asymmetric
+  // instructions would let the judge tell them apart by SHAPE without being
+  // told anything.
+  it('forbids self-identification in both briefs, in identical words', () => {
+    const { pipeline } = compiled();
+    const advocate = pipeline.steps.find((s) => s.name === 'Sustentar as escolhas')!;
+    const prosecutor = pipeline.steps.find((s) => s.name === 'Contestar as escolhas')!;
+    const marker = '=== ANONYMITY (non-negotiable — this is the point of the exercise) ===';
+    const blockOf = (p: string) => p.slice(p.indexOf(marker));
+    expect(isWorkStep(advocate) && advocate.prompt).toContain(marker);
+    expect(isWorkStep(prosecutor) && prosecutor.prompt).toContain(marker);
+    expect(blockOf(isWorkStep(advocate) ? advocate.prompt : '')).toBe(
+      blockOf(isWorkStep(prosecutor) ? prosecutor.prompt : ''),
+    );
+    // Neither writer is told the OTHER side's routed model either.
+    for (const step of [advocate, prosecutor]) {
+      expect(isWorkStep(step) && step.prompt).not.toContain('defence/opus');
+      expect(isWorkStep(step) && step.prompt).not.toContain('attack/sol');
+    }
+  });
+
+  // The gate checks anonymity itself — a clause it can settle WITHOUT knowing
+  // the answer, which is what makes it a legitimate check rather than a wish.
+  it('makes the gate itself refuse a brief that signed its author', () => {
+    const gate = compiled().pipeline.steps.find((s) => s.name === GATE)!;
+    const condition = isCheckStep(gate) ? gate.condition : '';
+    expect(condition).toContain('ANONYMITY: neither brief identifies the MODEL that wrote it');
+    // …while leaving a model discussed as SUBJECT MATTER alone, or the option
+    // would loop forever on a repository whose work is about models.
+    expect(condition).toContain('a model discussed as SUBJECT MATTER is fine');
+  });
+});
+
+// Heterogeneity is the mechanism, not a nicety — and the one way to get it
+// wrong produces no error at all. So it produces a WARNING, never a refusal.
+describe('compileEpochPipeline — the debate warns when it is a monologue', () => {
+  const monologue = /monologue|same model|same family|SAME model/;
+
+  it('warns when neither side is routed — both fall back to the run model', () => {
+    const { warnings } = compileWith({ methodology: { debate: true } }, [front('a')]);
+    expect(warnings.some((w) => /both fall back to the run model/.test(w))).toBe(true);
+  });
+
+  it('warns when both sides are routed to the same id', () => {
+    const { warnings } = compileWith(
+      {
+        methodology: { debate: true },
+        models: { advocate: { model: 'one/model' }, prosecutor: { model: 'one/model' } },
+      },
+      [front('a')],
+    );
+    expect(warnings.some((w) => monologue.test(w))).toBe(true);
+  });
+
+  it('warns when the two ids share a family', () => {
+    const { warnings } = compileWith(
+      {
+        methodology: { debate: true },
+        models: { advocate: { model: 'vendor/big' }, prosecutor: { model: 'vendor/small' } },
+      },
+      [front('a')],
+    );
+    expect(warnings.some((w) => /same family/.test(w))).toBe(true);
+  });
+
+  it('is silent when the two sides come from different families', () => {
+    const { warnings } = compileWith(
+      {
+        methodology: { debate: true },
+        models: { advocate: { model: 'defence/opus' }, prosecutor: { model: 'attack/sol' } },
+      },
+      [front('a')],
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  // MUTATION KILLED: emitting the warning unconditionally. A session with the
+  // debate OFF has no debate to be a monologue.
+  it('says nothing at all when the debate is off', () => {
+    const { warnings } = compileWith({ methodology: { tdd: true }, testCommands: ['npm test'] }, [
+      front('a'),
+    ]);
+    expect(warnings.filter((w) => /debate/.test(w))).toEqual([]);
+  });
+});
+
+describe('compileEpochPipeline — debate model stamping and composition', () => {
+  it('stamps each side with its own role and the gate with the judge', () => {
+    const { pipeline } = compileWith(
+      {
+        methodology: { debate: true },
+        models: {
+          advocate: { model: 'defence/opus' },
+          prosecutor: { model: 'attack/sol' },
+          judge: { model: 'bench/judge' },
+        },
+      },
+      [front('a')],
+    );
+    expect(modelOf(pipeline, 'Sustentar as escolhas')).toBe('defence/opus');
+    expect(modelOf(pipeline, 'Contestar as escolhas')).toBe('attack/sol');
+    expect(modelOf(pipeline, 'Debate resolvido?')).toBe('bench/judge');
+  });
+
+  // A role the policy does not name OMITS `modelId`, so `AppConfig.modelId`
+  // stays the single authority — the same contract as every other role.
+  it('omits modelId on both sides when nothing routes them', () => {
+    const { pipeline } = compileWith({ methodology: { debate: true } }, [front('a')]);
+    for (const name of ['Sustentar as escolhas', 'Contestar as escolhas', 'Debate resolvido?']) {
+      expect(pipeline.steps.find((s) => s.name === name)!.modelId, name).toBeUndefined();
+    }
+  });
+
+  // Two options that both insert a block before the fan-out. The debate gates
+  // the RECONS and the plan review gates the WORK, so they nest rather than
+  // fight — and the whole graph still terminates.
+  it('composes with plan-review: debate gates the recons, the plan gate the work', () => {
+    const { pipeline } = compileWith(
+      { methodology: { debate: true, planReview: true } },
+      [front('a'), front('b')],
+    );
+    expect(pipeline.steps.map((s) => s.name)).toEqual([
+      '0. Recon do objetivo',
+      'Sustentar as escolhas',
+      'Contestar as escolhas',
+      'Debate resolvido?',
+      '1a. Front a — recon',
+      '2a. Front b — recon',
+      'Revisar as escolhas',
+      'Plano validado?',
+      '1b. Front a — implementar',
+      '1c. Front a — verificar',
+      '2b. Front b — implementar',
+      '2c. Front b — verificar',
+      '3. Consolidar época 1',
+      '4. Portão de qualidade',
+      '5. Selar época 1',
+    ]);
+    expect(validateTopology(pipeline)).toEqual([]);
+    expect(new Set(walkAll(pipeline))).toEqual(new Set(pipeline.steps.map((s) => s.name)));
+    expectForwardDefaultsAndBackwardReworks(pipeline);
+  });
+
+  // The real wave walk: the debate must schedule as three separate waves, and
+  // a check is always a singleton wave.
+  it('terminates under the real wave scheduler with a check per wave', () => {
+    const { pipeline } = compileWith({ methodology: { debate: true } }, [front('a'), front('b')]);
+    expect(hasDagEdges(pipeline.steps)).toBe(true);
+    const done = new Set<string>();
+    const pending = new Set(pipeline.steps.map((s) => s.name));
+    const waves: string[][] = [];
+    let guard = 0;
+    while (pending.size > 0 && guard++ < 50) {
+      const wave = computeWave(pipeline.steps, done, pending);
+      if (wave.length === 0) break;
+      waves.push(wave.map((s) => s.name));
+      if (wave.some(isCheckStep)) expect(wave).toHaveLength(1);
+      for (const step of wave) {
+        pending.delete(step.name);
+        done.add(step.name);
+      }
+    }
+    expect(pending.size).toBe(0);
+    expect(waves.slice(0, 4)).toEqual([
+      ['0. Recon do objetivo'],
+      ['Sustentar as escolhas'],
+      ['Contestar as escolhas'],
+      ['Debate resolvido?'],
+    ]);
+  });
+});
+
 describe('compileEpochPipeline — all methodologies on', () => {
   // Built FROM the registry, not from a literal: this is the case that has to
   // fail the day an option is added without being exercised here, and a
@@ -1587,6 +1968,9 @@ describe('compileEpochPipeline — all methodologies on', () => {
 
     expect(pipeline.steps.map((s) => s.name)).toEqual([
       '0. Recon do objetivo',
+      'Sustentar as escolhas',
+      'Contestar as escolhas',
+      'Debate resolvido?',
       '1a. Front a — recon',
       '3a. Front c — recon',
       'Revisar as escolhas',
@@ -1726,4 +2110,196 @@ describe('the cacheable prefix of a compiled step prompt', () => {
     }
   });
 
+});
+
+// ─────────────────── the node-execution budget (a REAL replay) ──────────────
+//
+// `EPOCH_MAX_NODE_EXECUTIONS` is not decoration: `runDagWaves` answers a blown
+// ceiling with `recordRunError`, so an epoch that exceeds it is LOST — the
+// sealing step never runs and every agent already paid for is thrown away.
+// The comment on that constant used to carry a hand estimate ("4 fronts + tail
+// + rework loops ≈ 26" against a cap of 50) that had drifted ~20 executions
+// away from what this compiler could actually emit, and nothing noticed
+// because nothing measured.
+//
+// This block measures. It replays the ACTUAL loop of `runDagWaves` — the same
+// `computeWave`, the same `descendantsOf` activation cone, the same
+// `runs > maxRuns` forcing — over EVERY methodology combination, and fails if
+// any of them stops fitting. Enumerated from the registry, so a NEW
+// methodology is covered the day it is declared.
+
+/**
+ * The pessimal outcome strategy: every gate takes its BACKWARD arm until its
+ * own `maxRuns` forces the forward default. It dominates — a backward arm only
+ * ever re-pends nodes, while a forward default aims at a step that is still
+ * pending and is therefore a no-op — and it was checked against 20 000 random
+ * strategies on the worst combination, which never beat it.
+ *
+ * Mirrors `runDagWaves` exactly: work waves cost `ready.length` visits, a
+ * ready check runs as a singleton, and `runsByStep` is cumulative for the
+ * whole run (never reset), which is what bounds every loop.
+ */
+function replayWorstCaseVisits(pipeline: Pipeline): number {
+  const steps = pipeline.steps;
+  const done = new Set<string>();
+  const pending = new Set(steps.map((s) => s.name));
+  const runsByStep = new Map<string, number>();
+  const known = new Set(steps.map((s) => s.name));
+  let visits = 0;
+
+  const activate = (target: string): void => {
+    if (!known.has(target)) return; // the driver warns and ignores
+    for (const name of [target, ...descendantsOf(steps, target)]) {
+      done.delete(name);
+      pending.add(name);
+    }
+  };
+
+  let guard = 0;
+  while (pending.size > 0) {
+    if (++guard > 10_000) throw new Error('replay did not terminate');
+    const ready = computeWave(steps, done, pending);
+    if (ready.length === 0) throw new Error(`deadlock: ${[...pending].join(', ')}`);
+    visits += ready.length;
+    const first = ready[0]!;
+    if (isCheckStep(first)) {
+      const runs = (runsByStep.get(first.name) ?? 0) + 1;
+      runsByStep.set(first.name, runs);
+      pending.delete(first.name);
+      done.add(first.name);
+      const forward = first.outcomes.find((o) => o.default)!;
+      const backward = first.outcomes.find((o) => !o.default);
+      const forced = first.maxRuns !== undefined && runs > first.maxRuns;
+      activate((forced || !backward ? forward : backward).nextStepName);
+      continue;
+    }
+    for (const step of ready) {
+      pending.delete(step.name);
+      done.add(step.name);
+      if (isWorkStep(step) && step.next !== undefined) activate(step.next);
+    }
+  }
+  return visits;
+}
+
+describe('compileEpochPipeline — the node-execution budget', () => {
+  const keys = DEV_METHODOLOGIES.map((m) => m.key);
+  // The compiler can never be handed more than this: `plan-schema` caps the
+  // array and `--fronts` is clamped to it.
+  const maxFronts = Array.from({ length: DEV_MAX_FRONTS }, (_, i) =>
+    front(String.fromCharCode(97 + i)),
+  );
+
+  /** Every subset of the registry, `undefined` for the empty one. */
+  function everyCombination(): Array<{ label: string; methodology?: DevMethodology }> {
+    const out: Array<{ label: string; methodology?: DevMethodology }> = [];
+    for (let mask = 0; mask < 1 << keys.length; mask++) {
+      const methodology: DevMethodology = {};
+      const on: string[] = [];
+      keys.forEach((key, i) => {
+        if (mask & (1 << i)) {
+          methodology[key] = true;
+          on.push(key);
+        }
+      });
+      out.push(
+        on.length === 0 ? { label: '(none)' } : { label: on.join('+'), methodology },
+      );
+    }
+    return out;
+  }
+
+  // 2^13 compiles cost a few seconds, so they run ONCE in beforeAll with an
+  // explicit timeout — long enough for a loaded CI box, and paid once for the
+  // whole block instead of per assertion.
+  let cached: Array<{ label: string; visits: number; cap: number }>;
+  function measureAll(): Array<{ label: string; visits: number; cap: number }> {
+    return everyCombination().map(({ label, methodology }) => {
+      const { pipeline } = compileEpochPipeline({
+        plan: plan(maxFronts),
+        epoch: 1,
+        goal: 'construir a coisa',
+        testCommands: ['npm test'],
+        lintCommands: ['npm run typecheck'],
+        ...(methodology ? { methodology } : {}),
+      });
+      return {
+        label,
+        visits: replayWorstCaseVisits(pipeline),
+        cap: pipeline.maxNodeExecutions!,
+      };
+    });
+  }
+
+  beforeAll(() => {
+    cached = measureAll();
+  }, 120_000);
+
+  const worstCases = (): Array<{ label: string; visits: number; cap: number }> => cached;
+
+  it('fits EVERY methodology combination inside maxNodeExecutions', () => {
+    const rows = worstCases();
+    expect(rows.length).toBe(1 << keys.length);
+    const over = rows.filter((r) => r.visits > r.cap);
+    expect(
+      over.map((r) => `${r.label}: ${r.visits} > ${r.cap}`),
+      'a combination that overflows loses the whole epoch on recordRunError',
+    ).toEqual([]);
+  });
+
+  // PINNED on purpose. The assertion above only says "it fits"; this one says
+  // "and by how much", so a change that quietly eats the headroom shows up in
+  // review as a number to justify instead of passing unnoticed. When it moves:
+  // re-measure, re-state the margin in the comment on
+  // EPOCH_MAX_NODE_EXECUTIONS, and update these numbers in the same commit.
+  it('pins the worst case and which combination produces it', () => {
+    const rows = [...worstCases()].sort((a, b) => b.visits - a.visits);
+    const worst = rows[0]!;
+    expect(worst.visits).toBe(79);
+    expect(worst.label.split('+').sort()).toEqual(
+      ['characterization', 'debate', 'planReview', 'tdd', 'traceability'].sort(),
+    );
+    expect(worst.cap).toBe(96);
+  });
+
+  // The coupling the adversarial review found: `--plan-review`'s rework arm
+  // re-pends its target's whole cone, and with the debate hanging off the
+  // global recon that cone contained the two debaters — so every plan rework
+  // re-argued a design nobody had faulted. Aiming the arm at the debate GATE
+  // (same coverage: every first-wave recon waits on it) keeps the briefs.
+  it('keeps a plan rework from re-arguing the debate', () => {
+    const withBoth = compileEpochPipeline({
+      plan: plan(maxFronts),
+      epoch: 1,
+      goal: 'construir a coisa',
+      methodology: { planReview: true, debate: true },
+    });
+    const planGate = withBoth.pipeline.steps.find((s) => s.name === 'Plano validado?')!;
+    const rework = (planGate as { outcomes: Array<{ label: string; nextStepName: string }> }).outcomes
+      .find((o) => o.label === 'rework')!;
+    expect(rework.nextStepName).toBe('Debate resolvido?');
+    // The cone still covers everything the arm exists to re-pend…
+    const cone = descendantsOf(withBoth.pipeline.steps, rework.nextStepName);
+    expect(cone).toContain('1a. Front a — recon');
+    expect(cone).toContain('Revisar as escolhas');
+    expect(cone).toContain('Plano validado?');
+    // …and no longer the two briefs.
+    expect(cone).not.toContain('Sustentar as escolhas');
+    expect(cone).not.toContain('Contestar as escolhas');
+  });
+
+  // Without the debate the arm must stay exactly where it was: the flag-off
+  // pipeline is byte-for-byte what this file always emitted.
+  it('leaves the plan rework aimed at the global recon when the debate is off', () => {
+    const planOnly = compileEpochPipeline({
+      plan: plan(maxFronts),
+      epoch: 1,
+      goal: 'construir a coisa',
+      methodology: { planReview: true },
+    });
+    const planGate = planOnly.pipeline.steps.find((s) => s.name === 'Plano validado?')!;
+    const rework = (planGate as { outcomes: Array<{ label: string; nextStepName: string }> }).outcomes
+      .find((o) => o.label === 'rework')!;
+    expect(rework.nextStepName).toBe('0. Recon do objetivo');
+  });
 });

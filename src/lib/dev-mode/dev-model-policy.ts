@@ -52,6 +52,8 @@ const ALL_ROLES: Record<DevModelRole, true> = {
   reporter: true,
   judge: true,
   integration: true,
+  advocate: true,
+  prosecutor: true,
 };
 
 /** Every role, in declaration order. */

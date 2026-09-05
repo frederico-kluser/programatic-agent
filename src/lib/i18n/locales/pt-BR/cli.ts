@@ -85,7 +85,7 @@ flags do dev:
                             puro (a-z, 0-9, hífens) é um grafo salvo em .huu/dev/graphs/;
                             qualquer outra coisa é um caminho para um .json. Um desenho é o
                             método COMPLETO, então a sessão é exatamente UMA época e
-                            --epochs > 1 é recusado. As 12 flags de metodologia e as flags
+                            --epochs > 1 é recusado. As 13 flags de metodologia e as flags
                             de modelo por papel NÃO são compiladas num desenho (aviso).
   --epochs <n>              Teto de épocas (padrão 3). Cada época planeja, roda e aterrissa.
   --fronts <n>              Teto de frentes paralelas por época (padrão 4, máx 4)
@@ -97,6 +97,12 @@ flags do dev:
   metodologias (todas desligadas por padrão; rode 'huu dev' sem objetivo para a lista completa):
   --tdd --characterize --lint-gate --fitness --diff-budget --changelog
   --standards --checklist --write-set --plan-review --traceability --verify-claims
+  --debate                  dois agentes de FAMÍLIAS diferentes discutem o design da
+                            época antes das frentes; um juiz anonimizado decide, no
+                            máximo 2 rodadas. Como toda opção daqui, também faz a tarefa
+                            bloqueada ESPERAR por um humano em vez de waive no teto de
+                            rodadas do crítico. Roteie o par com --advocate-model /
+                            --prosecutor-model
 
 subcomandos do graph (o método desenhado — sem navegador):
   list                      Lista os desenhos salvos (id, nós/arestas, válido?)

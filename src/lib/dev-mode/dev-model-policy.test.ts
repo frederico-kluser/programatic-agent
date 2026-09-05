@@ -37,10 +37,12 @@ function shippedCatalog(): ModelEntry[] {
 describe('DEV_MODEL_ROLES', () => {
   it('covers every role exactly once', () => {
     expect([...DEV_MODEL_ROLES].sort()).toEqual([
+      'advocate',
       'critic',
       'integration',
       'judge',
       'planner',
+      'prosecutor',
       'recon',
       'reporter',
       'worker',
@@ -305,6 +307,39 @@ describe('DEV_MODEL_PRESETS — every id is servable by some provider', () => {
     }
   });
 
+  // The same constraint on the OTHER adversarial pair. `--debate` rests
+  // entirely on heterogeneity — two instances of one model arguing is a
+  // monologue with extra tokens — so a preset that routes both sides to one
+  // family has silently turned the option into decoration.
+  //
+  // MUTATION KILLED: adding the debate pair to a preset by copy-pasting one
+  // route into both slots, which compiles, runs, costs two agents and proves
+  // nothing. `monoculture` is the deliberate exception: it is the A/B arm.
+  it('keeps the debate pair cross-family, except in the A/B baseline', () => {
+    for (const name of PRESETS) {
+      const policy = defaultDevModelPolicy('jcode', name);
+      if (!policy.advocate || !policy.prosecutor) continue;
+      const family = (id: string) => id.split('/')[0];
+      const sameFamily = family(policy.advocate.model) === family(policy.prosecutor.model);
+      expect(sameFamily, `preset ${name}: the debate pair shares a family`).toBe(
+        name === 'monoculture',
+      );
+    }
+  });
+
+  // Both halves of the pair, or neither. A preset that routes only one side
+  // leaves the other on `AppConfig.modelId`, which is a debate whose
+  // heterogeneity depends on a flag the user typed somewhere else.
+  it('routes both sides of the debate pair or neither', () => {
+    for (const name of PRESETS) {
+      const policy = defaultDevModelPolicy('jcode', name);
+      expect(
+        Boolean(policy.advocate) === Boolean(policy.prosecutor),
+        `preset ${name}: only one side of the debate pair is routed`,
+      ).toBe(true);
+    }
+  });
+
   // A judge that fails APPROVES SILENTLY — every CheckStep has a forward
   // `default: true` outcome — so no preset may route the judge to something
   // cheaper than the model whose work it is checking.
@@ -337,7 +372,7 @@ describe('DEV_MODEL_PRESETS.roster — the document roster over huu roles', () =
   const index = buildModelProviderIndex(shippedCatalog());
   const policy = defaultDevModelPolicy('jcode', 'roster');
 
-  it('maps all five roster models onto the seven roles', () => {
+  it('maps all five roster models onto the nine roles', () => {
     expect(policy.planner!.model).toBe('deepseek/deepseek-v4-pro');
     expect(policy.recon!.model).toBe('deepseek/deepseek-v4-pro');
     expect(policy.worker!.model).toBe('deepseek/deepseek-v4-flash');
@@ -345,6 +380,10 @@ describe('DEV_MODEL_PRESETS.roster — the document roster over huu roles', () =
     expect(policy.reporter!.model).toBe('z-ai/glm-5.3-flash');
     expect(policy.judge!.model).toBe('anthropic/claude-opus-5');
     expect(policy.integration!.model).toBe('deepseek/deepseek-v4-pro');
+    // The adversarial pair the roster document names, on the two ids the
+    // roster ALREADY carries — the debate costs this preset no new vendor.
+    expect(policy.advocate!.model).toBe('anthropic/claude-opus-5');
+    expect(policy.prosecutor!.model).toBe('openai/gpt-5.6-sol');
   });
 
   it('runs whole on OpenRouter and is REFUSED on DeepSeek, by name', () => {
@@ -352,7 +391,15 @@ describe('DEV_MODEL_PRESETS.roster — the document roster over huu roles', () =
       [],
     );
     const refused = devModelRefusals(checkDevModelPolicy({ policy, provider: 'deepseek', index }));
-    expect(refused.map((r) => r.role).sort()).toEqual(['critic', 'judge', 'reporter']);
+    // The debate pair joins the refusal list because BOTH its ids are
+    // openrouter-only — the same reason the critic and the judge are there.
+    expect(refused.map((r) => r.role).sort()).toEqual([
+      'advocate',
+      'critic',
+      'judge',
+      'prosecutor',
+      'reporter',
+    ]);
   });
 });
 

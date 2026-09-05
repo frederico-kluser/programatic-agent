@@ -85,7 +85,7 @@ dev flags:
                             (a-z, 0-9, dashes) is a graph saved under .huu/dev/graphs/;
                             anything else is a path to a .json file. A drawing is the
                             COMPLETE method, so the session is exactly ONE epoch and
-                            --epochs > 1 is refused. The 12 methodology flags and the
+                            --epochs > 1 is refused. The 13 methodology flags and the
                             per-role model flags are NOT compiled into a drawing (warned).
   --epochs <n>              Ceiling on epochs (default 3). Each epoch plans, runs and lands.
   --fronts <n>              Ceiling on parallel fronts per epoch (default 4, max 4)
@@ -97,6 +97,11 @@ dev flags:
   methodologies (all OFF by default; run 'huu dev' with no goal for the full list):
   --tdd --characterize --lint-gate --fitness --diff-budget --changelog
   --standards --checklist --write-set --plan-review --traceability --verify-claims
+  --debate                  two agents of DIFFERENT families argue the epoch's design
+                            before the fronts; an anonymized judge rules, 2 rounds max.
+                            Like every option here, it also makes a blocked task WAIT
+                            for a human instead of waiving at the critic's round cap.
+                            Route the pair: --advocate-model / --prosecutor-model
 
 graph subcommands (the drawn method — no browser needed):
   list                      List the saved drawings (id, nodes/edges, valid?)

@@ -916,6 +916,8 @@ describe('web server — dev-mode routing contract on /api/bootstrap', () => {
       'reporter',
       'judge',
       'integration',
+      'advocate',
+      'prosecutor',
     ]);
   });
 

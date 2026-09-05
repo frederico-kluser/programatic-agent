@@ -221,6 +221,8 @@ side can see it.
 | `--traceability` | Build a bidirectional requirement ↔ evidence matrix after the fan-out and gate on undeclared orphans. See [Methodology options](#methodology-options). |
 | `--characterize` | Snapshot today's observable behavior before changing anything, then freeze it. See [Methodology options](#methodology-options). |
 | `--verify-claims` | Re-check every knowledge claim against the repo and demote what cannot be reproduced. See [Methodology options](#methodology-options). |
+| `--debate` | Have two agents from different model families argue the epoch's design decisions before the fronts start, judged by an anonymized rubric. See [Methodology options](#methodology-options). |
+| `--advocate-model <id>` / `--prosecutor-model <id>` | Route the two sides of `--debate`. Give them **different families** — see [Adversarial debate](#adversarial-debate---debate). |
 
 ## The two phases
 
@@ -273,30 +275,32 @@ a warning) rather than losing the epoch.
 
 ## Methodology options
 
-Twelve checkboxes in the dev form (the **Methodology** fieldset, right above
-*How it runs*) and twelve matching CLI flags. Each one is the human
+Thirteen checkboxes in the dev form (the **Methodology** fieldset, right above
+*How it runs*) and thirteen matching CLI flags. Each one is the human
 underwriting a piece of the *method*, on top of the goal: the option changes
 the **structure** the epoch compiler emits (a step split, a deterministic
 merge gate, a critic rubric, a validation step before the fan-out), never the
 fields a model can produce — the planner's schemas still carry no `steps`,
 `dependsOn` or file paths.
 
-There are five mechanisms and every option is built from them: a new step
+There are six mechanisms and every option is built from them: a new step
 (`--tdd`, `--characterize`), a new check with a loop-back (`--plan-review`,
 `--traceability`), a rubric appended to the critic (`--standards`,
 `--write-set`, `--diff-budget`, `--fitness`, `--changelog`, `--checklist`), a
 command appended to the deterministic merge gate (`--lint-gate`, `--fitness`,
-`--diff-budget`, `--changelog`), and a clause appended to the front's judge
-(`--tdd`, `--write-set`, `--characterize`). The merge gate and the judge
-clauses ACCUMULATE — several options contribute to each, chained in the order
-they are declared, so no option can silently erase another's.
+`--diff-budget`, `--changelog`), a clause appended to the front's judge
+(`--tdd`, `--write-set`, `--characterize`), and — only `--debate` — a BLOCK of
+steps before the fan-out plus the prompt block that hands its output to the
+fronts. The merge gate and the judge clauses ACCUMULATE — several options
+contribute to each, chained in the order they are declared, so no option can
+silently erase another's.
 
 `--verify-claims` is the only one that touches the KNOWLEDGE phase instead of
 the execution phase: it inserts a verification pass between answering and
 consolidating, and it demotes unreproducible claims into `unknowns` rather
 than failing — every path out of Phase A stays forward.
 
-**All twelve default OFF.** A session that selects none of them compiles exactly
+**All thirteen default OFF.** A session that selects none of them compiles exactly
 the pipeline it compiles today, byte for byte — the same additive contract as
 the per-role model policy. What each one enforces, mechanically:
 
@@ -485,6 +489,128 @@ It **demotes, never fails and never deletes**. Unverified claims move from
 so an agent always has somewhere honest to put one — and `confidence` may only
 go down. That is what keeps every path out of Phase A forward: there is
 deliberately no CheckStep in this phase, and this step is not one.
+
+### Adversarial debate (`--debate`)
+
+The only option whose steps are **agents arguing**. Between the global recon
+and the fronts, the compiler inserts three nodes:
+
+```
+0. Recon do objetivo
+├─ Sustentar as escolhas    writes .huu/dev/<session>/epoch-N/debate/A.md
+├─ Contestar as escolhas    reads A.md, writes B.md
+└─ Debate resolvido?        convergiu ↦ the first front's recon (DEFAULT)
+                            contestado ↦ Sustentar as escolhas (one more round)
+```
+
+**A** is the decision record: at most six decisions, each with the alternative
+it rejects, the reason (pointing at a real path, the atlas or the goal) and the
+observation that would prove it wrong, plus the risks the epoch accepts on
+purpose. **B** attacks it: one verdict per decision id — `SUSTENTADA` or
+`CONTESTADA` — and, behind every contested one, a predicted failure and
+evidence you can point at. Neither side may edit the other's file.
+
+**How the result reaches the fronts.** The only step→step channel huu has is
+the file system of the integration worktree, and only once it is *committed* —
+a judge's verdict text never reaches the next step's prompt. Nothing in huu
+injects a check's `reason` into any prompt, so every gate in this file now says
+so in its own words: a `rework` or `contestado` verdict is the **record** of
+why the step was sent back, read by a human on the check's card and in the run
+log, not a message delivered to the agent that re-runs. (Three gates used to
+claim the opposite — "that text is the only thing the retry agents receive" —
+and that claim was inherited, not introduced by this option.) So each front's
+recon (a) **waits on the debate gate**, which is what puts the two briefs in
+the tree its worktree branches from, and (b) is told to read both by path. A
+decision marked `SUSTENTADA` is settled and the recon implements it; one marked
+`CONTESTADA` is an *accepted risk* that must be named in the affected task
+spec's Context — never a licence to redesign. The recon is where this lands
+because the recon writes the task specs; by the time a worker reads its spec,
+the decision is already inside it.
+
+**The judge's rubric is MODEL-anonymized — and only model-anonymized.** It is
+never told which agent or which **model** wrote either brief, and the gate's
+prompt contains no vendor, family or model string at all. It *is* told which
+file is the record and which is the attack, because the **roles are
+structurally impossible to hide**: the two files answer different questions,
+and the gate's own clauses have to read one as the record and the other as the
+attack in order to compare them. Role anonymity was never on offer here; model
+anonymity is, and it is the property that fights family bias. The files are
+called `A.md` and `B.md` and nothing else, because a filename is not something
+a model can be asked to unsee; both writers get the *same* output skeleton and
+the *same* ban on naming the model behind them (no model, no vendor, no
+signature — plus, as tidiness rather than a claimed property, no role name), so
+they cannot be told apart by shape either; and the rubric denies length, order
+and confidence as evidence by name. The verdict is about the **state of the
+record**, not about a winner: there is no "the advocate wins" outcome to route
+on, because a debate that picked a winner would be an LLM deciding the design.
+The gate's own clauses are set comparisons — every decision has a verdict,
+every contested one has evidence and a resolution — plus one anonymity clause
+it can settle without knowing the answer.
+
+**Heterogeneity is the mechanism, not a nicety.** The two sides are separate
+roles (`advocate`, `prosecutor`) precisely so they can be routed to different
+families: the published result on naive multi-agent debate is that it often
+fails to beat plain chain-of-thought, and cross-family is the lever that
+changes it. Every preset but `monoculture` — which is the deliberate A/B
+baseline — routes them apart; `roster` uses the pair the roster document names
+(Claude Opus 5 and GPT-5.6 Sol, both already in that roster, so the option
+costs it no new vendor). Leave them unrouted and both fall back to the run
+model: huu compiles the debate anyway and **warns** that it is one model
+talking to itself. Stated rather than hidden: in `roster` the judge and the
+advocate are the same model, which is exactly why the rubric is anonymized —
+route `--judge-model` to a third family if you want full independence.
+
+**`writes` here DECLARES a surface; it does not enforce one.** Both debate
+steps carry `writes: ['<epoch>/debate/**']`, and it is worth being exact about
+what that buys. huu uses `writes` in one place: `validateTopology` rejects two
+*concurrent* steps whose globs intersect. The prosecutor `dependsOn` the
+advocate, so they are never concurrent and that check has no pair to compare;
+the runtime partition check returns early too, because each step declares
+`files: []` and so fans out to exactly one task. Neither agent's toolset is
+restricted, neither step declares a critic, and their diffs merge without a
+gate — the same shape `0. Recon do objetivo` has had since dev mode existed, so
+this is not a new hole, but the declaration is documentation of intent, not a
+sandbox. What actually keeps each agent off the other's file is the prompt
+("never edit `A.md`") plus the fact that they run in different waves.
+
+**Rounds are capped at 2**, and the cap forwards. `contestado` re-pends the
+advocate's whole downstream cone, so each extra round costs an epoch's worth of
+node executions; hitting the cap takes the forward default with the record as
+it stands, exactly like every other gate here.
+
+**With `--plan-review`, a plan rework does NOT re-argue the debate.** The two
+options overlap on a loop, and left alone the overlap was fatal rather than
+slow. `Plano validado?` sends `rework` back to a step whose *whole downstream
+cone* gets re-pended; with the debate hanging off the global recon, that cone
+contained the two debaters, so every plan rework paid for the entire argument
+again — and `runDagWaves` answers a blown `maxNodeExecutions` with a run error,
+which means the epoch is **lost** after every agent up to that point has
+already been paid for. So when `--debate` is on, `rework` aims one node lower:
+at the debate **gate**. The coverage is identical (every first-wave front recon
+already waits on that gate, so the specs, the audit and the check itself are
+still re-pended) and the argued briefs survive. That is a scope statement as
+much as a budget one: the plan gate rules on the *specs*, the debate on the
+*design*, and two specs colliding on a file is not a reason to re-open which
+design the epoch rests on. Measured by replaying the real wave loop at four
+fronts, this took the worst case for `tdd+planReview+traceability+
+characterization+debate` from 85 node executions to 79.
+
+**The ceiling itself was re-measured.** `maxNodeExecutions` for a compiled
+epoch is now **96**, not 50. The old number carried a hand estimate ("4 fronts
++ tail + rework loops ≈ 26") that had drifted badly: replaying `runDagWaves`
+over all 2¹³ methodology combinations at the maximum four fronts, with every
+gate taking its backward arm until its own `maxRuns` forces the forward
+default, the worst case is **70 without `--debate` at all** and **79 with it**.
+50 was therefore already ~20 short for combinations that predate the debate.
+A test (`the node-execution budget` in `plan-to-pipeline.test.ts`) now replays
+that loop for every combination and fails if any stops fitting, so a new
+methodology cannot reintroduce the overflow in silence.
+
+**It also turns the critic to HOLD** — see the next section. `--debate` adds no
+critic rubric and no merge gate of its own, so that is the one behavior you get
+from it without asking for it: with `--debate` on, a task whose critic reaches
+its round cap with blocking findings open is parked for a human instead of
+waiving. That is said in the flag's description, in the web checkbox and here.
 
 ### The escape: blocking holds for a human, never a silent waive
 

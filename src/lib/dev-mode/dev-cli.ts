@@ -108,6 +108,12 @@ export const DEV_MODEL_ROLE_FLAGS: Readonly<Record<DevModelRole, string>> = {
   reporter: 'reporter-model',
   judge: 'judge-model',
   integration: 'integration-model',
+  // The `--debate` pair. Reachable even with the methodology off: pinning them
+  // costs nothing when no debate step is compiled (the roles are simply never
+  // stamped), and a user who turns the debate on mid-session should not have
+  // to discover a second flag family at the same time.
+  advocate: 'advocate-model',
+  prosecutor: 'prosecutor-model',
 };
 
 const PRESET_NAMES = Object.keys(DEV_MODEL_PRESETS) as DevModelPreset[];
@@ -604,7 +610,7 @@ export function parseDevCliArgs(args: readonly string[], backend: AgentBackendKi
 
   const methodology = parseMethodologyFlags(args);
 
-  // A drawing expresses method by BEING drawn, so neither the 12 methodology
+  // A drawing expresses method by BEING drawn, so neither the methodology
   // checkboxes nor per-role routing is compiled into it (the driver says the
   // same thing, in its own words, on the `log` channel). WARNED, never refused:
   // both can arrive from a shell alias or a preset while the human's drawing

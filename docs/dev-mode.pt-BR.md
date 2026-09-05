@@ -225,6 +225,8 @@ perceber.
 | `--traceability` | Monta a matriz bidirecional requisito ↔ evidência depois do fan-out e barra órfão não declarado. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--characterize` | Fotografa o comportamento observável de hoje antes de mudar qualquer coisa, e depois o congela. Veja [Opções de metodologia](#opções-de-metodologia). |
 | `--verify-claims` | Re-verifica cada afirmação do conhecimento contra o repositório e rebaixa o que não se reproduz. Veja [Opções de metodologia](#opções-de-metodologia). |
+| `--debate` | Põe dois agentes de famílias de modelo diferentes para discutir as decisões de design da época antes das frentes, julgados por uma rubrica anonimizada. Veja [Opções de metodologia](#opções-de-metodologia). |
+| `--advocate-model <id>` / `--prosecutor-model <id>` | Roteia os dois lados do `--debate`. Ponha-os em **famílias diferentes** — veja [Debate adversarial](#debate-adversarial---debate). |
 
 ## As duas fases
 
@@ -278,31 +280,32 @@ soltando arestas (com aviso) em vez de perder a época.
 
 ## Opções de metodologia
 
-Doze checkboxes no formulário de dev (o fieldset **Methodology**, logo
-acima de *How it runs*) e doze flags equivalentes no CLI. Cada uma é o humano
+Treze checkboxes no formulário de dev (o fieldset **Methodology**, logo
+acima de *How it runs*) e treze flags equivalentes no CLI. Cada uma é o humano
 subscrevendo um pedaço do *método*, além do objetivo: a opção muda a
 **estrutura** que o compilador da época emite (split de passo, portão de merge
 determinístico, rubrica no crítico, passo de validação antes do fan-out),
 nunca os campos que um modelo pode produzir — os schemas do planejador
 continuam sem `steps`, `dependsOn` ou caminhos de arquivo.
 
-São cinco mecanismos e toda opção é montada a partir deles: um passo novo
+São seis mecanismos e toda opção é montada a partir deles: um passo novo
 (`--tdd`, `--characterize`), um check novo com loop-back (`--plan-review`,
 `--traceability`), uma rubrica acrescentada ao crítico (`--standards`,
 `--write-set`, `--diff-budget`, `--fitness`, `--changelog`, `--checklist`), um
 comando acrescentado ao portão de merge determinístico (`--lint-gate`,
-`--fitness`, `--diff-budget`, `--changelog`) e uma cláusula acrescentada ao
-juiz da frente (`--tdd`, `--write-set`, `--characterize`). O portão de merge e
-as cláusulas do juiz ACUMULAM — várias opções contribuem para cada um,
-encadeadas na ordem em que são declaradas, de modo que nenhuma opção apaga a
-outra em silêncio.
+`--fitness`, `--diff-budget`, `--changelog`), uma cláusula acrescentada ao
+juiz da frente (`--tdd`, `--write-set`, `--characterize`) e — só no `--debate`
+— um BLOCO de passos antes do fan-out mais o bloco de prompt que entrega a
+saída dele às frentes. O portão de merge e as cláusulas do juiz ACUMULAM —
+várias opções contribuem para cada um, encadeadas na ordem em que são
+declaradas, de modo que nenhuma opção apaga a outra em silêncio.
 
 `--verify-claims` é a única que mexe na fase de CONHECIMENTO em vez da fase de
 execução: insere um passo de verificação entre responder e consolidar, e
 rebaixa para `unknowns` o que não se reproduz em vez de falhar — todo caminho
 de saída da Fase A continua para a frente.
 
-**As doze ficam OFF por padrão.** Uma sessão sem nenhuma delas compila
+**As treze ficam OFF por padrão.** Uma sessão sem nenhuma delas compila
 exatamente o pipeline de hoje, byte a byte — o mesmo contrato aditivo da
 política de modelos por papel. O que cada uma impõe, mecanicamente:
 
@@ -501,6 +504,135 @@ Ele **rebaixa, nunca falha e nunca apaga**. Afirmações não verificadas saem d
 para que o agente sempre tenha onde ser honesto — e `confidence` só pode
 descer. É isso que mantém todo caminho de saída da Fase A para a frente: não
 existe CheckStep nesta fase de propósito, e este passo não é um.
+
+### Debate adversarial (`--debate`)
+
+A única opção cujos passos são **agentes discutindo**. Entre o recon global e
+as frentes, o compilador insere três nós:
+
+```
+0. Recon do objetivo
+├─ Sustentar as escolhas    escreve .huu/dev/<sessão>/epoch-N/debate/A.md
+├─ Contestar as escolhas    lê A.md, escreve B.md
+└─ Debate resolvido?        convergiu ↦ o recon da primeira frente (DEFAULT)
+                            contestado ↦ Sustentar as escolhas (mais uma rodada)
+```
+
+**A** é o registro de decisões: no máximo seis decisões, cada uma com a
+alternativa que rejeita, o porquê (apontando para um caminho real, o atlas ou o
+objetivo) e a observação que provaria que a escolha está errada, mais os riscos
+que a época aceita de propósito. **B** ataca: um veredito por id de decisão —
+`SUSTENTADA` ou `CONTESTADA` — e, atrás de cada contestada, uma falha prevista
+e evidência que dá para apontar. Nenhum dos lados pode editar o arquivo do
+outro.
+
+**Como o resultado chega nas frentes.** O único canal passo→passo que o huu
+tem é o sistema de arquivos da worktree de integração, e só depois de
+*commitado* — o texto do veredito de um juiz nunca chega ao prompt do passo
+seguinte. Nada no huu injeta a `reason` de um check em prompt nenhum, então
+todo portão deste arquivo agora diz isso com as próprias palavras: um veredito
+`rework` ou `contestado` é o **registro** de por que o passo voltou, lido por
+um humano no card do check e no log da run, não uma mensagem entregue ao agente
+que re-roda. (Três portões afirmavam o contrário — "esse texto é a única coisa
+que os agentes de retry recebem" — e essa afirmação era herdada, não trazida
+por esta opção.) Então o recon de cada frente (a) **espera o portão do debate**, que é
+o que coloca os dois briefs na árvore de onde a worktree dele sai, e (b) é
+instruído a ler os dois pelo caminho. Decisão marcada `SUSTENTADA` está
+resolvida e o recon a implementa; decisão marcada `CONTESTADA` é *risco
+aceito*, que tem de ser nomeado no "Context" do spec afetado — nunca licença
+para redesenhar. É no recon que isso aterrissa porque é o recon que escreve os
+specs; quando um worker lê o spec dele, a decisão já está dentro.
+
+**A rubrica do juiz é anonimizada por MODELO — e só por modelo.** Ele nunca é
+informado de qual agente nem de qual **modelo** escreveu cada brief, e o prompt
+do portão não contém nenhuma string de fornecedor, família ou modelo. Ele *é*
+informado de qual arquivo é o registro e qual é o ataque, porque o **papel é
+estruturalmente impossível de esconder**: os dois arquivos respondem perguntas
+diferentes, e as próprias cláusulas do portão precisam ler um como registro e o
+outro como ataque para poder compará-los. Anonimato de papel nunca esteve em
+oferta aqui; o de modelo está, e é a propriedade que combate o viés de família.
+Os arquivos se chamam `A.md` e
+`B.md` e nada mais, porque um nome de arquivo não é algo que se possa pedir a
+um modelo para desver; os dois escritores recebem o *mesmo* esqueleto de saída
+e a *mesma* proibição de nomear o modelo por trás deles (sem modelo, sem
+fornecedor, sem assinatura — mais, por asseio e não como propriedade alegada,
+sem nome de papel), então também não dá para distingui-los pela forma; e
+a rubrica nega tamanho, ordem e confiança como evidência, nominalmente. O
+veredito é sobre o **estado do registro**, não sobre um vencedor: não existe
+resultado "o advogado ganhou" para rotear, porque um debate que escolhe
+vencedor seria uma IA decidindo o design. As cláusulas do portão são
+comparações de conjunto — toda decisão tem veredito, toda contestada tem
+evidência e resolução — mais uma cláusula de anonimato que ele consegue
+resolver sem saber a resposta.
+
+**Heterogeneidade é o mecanismo, não um detalhe.** Os dois lados são papéis
+separados (`advocate`, `prosecutor`) justamente para poderem ir a famílias
+diferentes: o resultado publicado sobre debate multiagente ingênuo é que ele
+com frequência não supera um chain-of-thought simples, e cross-family é a
+alavanca que muda isso. Todo preset menos o `monoculture` — que é a linha de
+base deliberada do A/B — os separa; o `roster` usa o par que o documento do
+roster nomeia (Claude Opus 5 e GPT-5.6 Sol, ambos já naquele roster, então a
+opção não lhe custa fornecedor novo). Deixe-os sem rota e os dois caem no
+modelo da run: o huu compila o debate assim mesmo e **avisa** que é um modelo
+falando sozinho. Dito, não escondido: no `roster` o juiz e o advogado são o
+mesmo modelo, que é exatamente por que a rubrica é anonimizada — roteie
+`--judge-model` para uma terceira família se quiser independência total.
+
+**`writes` aqui DECLARA uma superfície; não a impõe.** Os dois passos do debate
+levam `writes: ['<epoch>/debate/**']`, e vale ser exato sobre o que isso compra.
+O huu usa `writes` num lugar só: o `validateTopology` rejeita dois passos
+*concorrentes* cujos globs se cruzam. O promotor `dependsOn` o advogado, então
+eles nunca são concorrentes e essa checagem não tem par para comparar; a
+checagem de partição em runtime também retorna cedo, porque cada passo declara
+`files: []` e portanto abre exatamente uma tarefa. Nenhum dos dois agentes tem
+o toolset restrito, nenhum dos passos declara crítico, e os diffs deles
+mergeiam sem portão — a mesma forma que o `0. Recon do objetivo` tem desde que
+o dev mode existe, então não é buraco novo, mas a declaração é documentação de
+intenção, não sandbox. O que de fato mantém cada agente fora do arquivo do
+outro é o prompt ("nunca edite `A.md`") mais o fato de rodarem em ondas
+diferentes.
+
+**O teto é de 2 rodadas**, e o teto segue para a frente. `contestado`
+re-pendura todo o cone a jusante do advogado, então cada rodada extra custa uma
+época inteira de execuções de nó; bater no teto toma o default para a frente
+com o registro como está, igual a todos os outros portões daqui.
+
+**Com `--plan-review`, um rework de plano NÃO re-discute o debate.** As duas
+opções se sobrepõem num loop, e sozinha a sobreposição era fatal, não lenta. O
+`Plano validado?` manda o `rework` de volta para um passo cujo *cone a jusante
+inteiro* é re-pendurado; com o debate pendurado no recon global, esse cone
+continha os dois debatedores, então todo rework de plano pagava a discussão
+inteira de novo — e o `runDagWaves` responde a um teto estourado com erro de
+run, o que significa que a época é **perdida** depois de todo agente até ali já
+ter sido pago. Então, com `--debate` ligado, o `rework` mira um nó abaixo: no
+**portão** do debate. A cobertura é idêntica (todo recon de frente da primeira
+onda já espera esse portão, então os specs, a auditoria e o próprio check
+continuam sendo re-pendurados) e os briefs discutidos sobrevivem. Isso é tanto
+uma declaração de escopo quanto de orçamento: o portão do plano julga os
+*specs*, o debate julga o *design*, e dois specs colidindo num arquivo não é
+motivo para reabrir em que design a época se apoia. Medido replayando o loop de
+ondas real com quatro frentes, isso levou o pior caso de
+`tdd+planReview+traceability+characterization+debate` de 85 execuções de nó
+para 79.
+
+**O próprio teto foi re-medido.** O `maxNodeExecutions` de uma época compilada
+agora é **96**, não 50. O número antigo carregava uma estimativa de cabeça ("4
+frentes + cauda + loops de rework ≈ 26") que tinha desviado feio: replayando o
+`runDagWaves` sobre todas as 2¹³ combinações de metodologia no máximo de quatro
+frentes, com todo portão tomando o braço para trás até o próprio `maxRuns`
+forçar o default para a frente, o pior caso é **70 sem `--debate` nenhum** e
+**79 com ele**. Ou seja, 50 já estava ~20 curto para combinações que existiam
+antes do debate. Um teste (`the node-execution budget`, em
+`plan-to-pipeline.test.ts`) agora replaya esse loop para toda combinação e
+falha se alguma deixar de caber, então uma metodologia nova não consegue
+reintroduzir o estouro em silêncio.
+
+**E ele também põe o crítico em HOLD** — veja a próxima seção. O `--debate` não
+acrescenta rubrica de crítico nem portão de merge próprio, então esse é o único
+comportamento que você ganha dele sem pedir: com `--debate` ligado, a tarefa
+cujo crítico chega ao teto de rodadas com achados bloqueantes abertos é
+estacionada para um humano em vez de sofrer waive. Isso está dito na descrição
+da flag, no checkbox da web e aqui.
 
 ### O escape: bloqueio segura para um humano, nunca waive silencioso
 

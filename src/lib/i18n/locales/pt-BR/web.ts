@@ -444,6 +444,13 @@ export const webPtBR = {
   'web.dev.method.chainOfVerification.label': 'Verificação de afirmações',
   'web.dev.method.chainOfVerification.desc':
     'Na fase de conhecimento, um segundo agente re-checa cada afirmação contra o repositório e rebaixa o que não consegue reproduzir — nada inventado chega ao plano.',
+  // O efeito colateral está DENTRO da descrição de propósito. `--debate` é a
+  // única opção que não acrescenta rubrica nem portão próprio, então o crítico
+  // passar a SEGURAR é um comportamento que o usuário ganha sem pedir se não
+  // estiver dito aqui.
+  'web.dev.method.debate.label': 'Debate adversarial',
+  'web.dev.method.debate.desc':
+    'Dois agentes de famílias de modelo diferentes discutem as decisões de design da época antes de qualquer frente começar, e um juiz de rubrica anonimizada decide — com teto de duas rodadas. Como toda opção daqui, também faz a tarefa bloqueada esperar por um humano em vez de waive no teto de rodadas.',
   /* QUEM ESCREVE A TOPOLOGIA. Ou o planner LLM decompõe o objetivo (o que o
      modo dev sempre fez), ou o huu compila um método que o humano DESENHOU no
      canvas. Os dois são exclusivos, e o desenho vence sempre que estiver posto. */
@@ -562,6 +569,12 @@ export const webPtBR = {
     'Verificação da frente e o portão da época. Toda verificação tem um resultado padrão para a frente, então um juiz que falha APROVA EM SILÊNCIO — o único lugar onde manter o modelo forte.',
   'web.role.integration': 'Integração',
   'web.role.integration_hint': 'O resolvedor de conflitos de merge.',
+  'web.role.advocate': 'Advogado',
+  'web.role.advocate_hint':
+    'Escreve o registro de decisões da época quando o debate adversarial está ligado. Só é usado com a opção Debate adversarial — e NÃO pode ser da mesma família do promotor, senão o debate é um modelo falando sozinho.',
+  'web.role.prosecutor': 'Promotor',
+  'web.role.prosecutor_hint':
+    'Ataca esse registro, um veredito por decisão. A outra metade do par do debate — roteie para uma família diferente da do advogado.',
 
   'web.preset.hetero': 'Hetero ★',
   'web.preset.hetero_hint':

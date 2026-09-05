@@ -933,7 +933,7 @@ export async function runDevMode(args: RunDevModeArgs): Promise<DevModeResult> {
    * NOT acceptable is silence — the flags read as promises, so they are logged
    * AND carried into the approval gate's warnings, where a human signs.
    *
-   * The 12 methodologies are the EPOCH compiler's surface: each one compiles a
+   * The methodologies are the EPOCH compiler's surface: each one compiles a
    * structure (an extra step, a merge gate, a critic rubric) into a graph the
    * PLANNER wrote. `compileGraphPipeline` deliberately refuses to do that —
    * adding steps nobody drew is the exact decision a devgraph takes back from

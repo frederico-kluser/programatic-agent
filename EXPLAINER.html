@@ -1,1235 +1,1163 @@
-<!doctype html>
-<html lang="pt-BR" data-bs-theme="dark">
+<!DOCTYPE html>
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>EXPLAINER — método desenhado (huu-devgraph-v1)</title>
-
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
-      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
-      crossorigin="anonymous">
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      integrity="sha384-CK2SzKma4jA5H/MXDUU7i1TqZlCFaD4T01vtyDFvPlD97JQyS+IsSh1nI2EFbpyk"
-      crossorigin="anonymous">
-<link rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
-      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
-      crossorigin="anonymous">
-
+<title>Modo dev nas interfaces — o que esta execução fez</title>
 <style>
   :root {
-    --do-bg: #1a1a2e;
-    --do-bg-soft: #16213e;
-    --do-card: #1e1e38;
-    --do-accent: #00d4ff;
-    --do-success: #00ff88;
-    --do-warning: #ffaa00;
-    --do-danger: #ff6b6b;
+    color-scheme: light;
+    --bg:       #f7f6f3;
+    --surface:  #ffffff;
+    --surface-2:#f1efe9;
+    --ink:      #17191c;
+    --muted:    #5b6069;
+    --line:     #e0ddd5;
+    --line-2:   #cfcabd;
+    --accent:   #0f6f6b;
+    --accent-bg:#e2f1ef;
+    --warn:     #9a5608;
+    --warn-bg:  #f9efdf;
+    --danger:   #a32020;
+    --danger-bg:#fbeaea;
+    --ok:       #1c6f39;
+    --ok-bg:    #e6f2e9;
+    --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
 
-  [data-bs-theme="dark"] {
-    --bs-body-bg: var(--do-bg);
-    --bs-body-color: #dcdce8;
-    --bs-secondary-color: #8b8ba7;
-    --bs-border-color: #2e2e4a;
-    --bs-body-font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
-                           'Helvetica Neue', Arial, sans-serif;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg:       #131519;
+      --surface:  #1a1d23;
+      --surface-2:#22262e;
+      --ink:      #e7e9ed;
+      --muted:    #a1a8b3;
+      --line:     #2b3038;
+      --line-2:   #3a414c;
+      --accent:   #4fd0c6;
+      --accent-bg:#123330;
+      --warn:     #e3a55c;
+      --warn-bg:  #33280f;
+      --danger:   #f08b8b;
+      --danger-bg:#3a1c1c;
+      --ok:       #6cd18f;
+      --ok-bg:    #16301f;
+    }
   }
 
-  body { background-image: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,212,255,.07), transparent 60%); }
+  * { box-sizing: border-box; }
 
-  [id] { scroll-margin-top: 5rem; }
-
-  a { color: var(--do-accent); }
-  a:hover { color: #4de0ff; }
-
-  .brand-accent, .stat-value { color: var(--do-accent); }
-
-  .navbar { border-bottom: 1px solid rgba(0,212,255,.25); }
-
-  .explainer-hero {
-    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 55%, #0f3460 100%);
-    border: 1px solid var(--bs-border-color);
-    box-shadow: inset 0 0 2.5rem rgba(0,212,255,.05);
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
   }
 
-  .pane-title { position: relative; padding-bottom: .5rem; }
-  .pane-title::after {
-    content: ''; position: absolute; left: 0; bottom: 0;
-    height: 2px; width: 4.5rem; border-radius: 2px;
-    background: linear-gradient(90deg, var(--do-accent), transparent);
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px 110px; }
+
+  /* ---------- topo ---------- */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    padding: 46px 0 34px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: .76rem;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(1.7rem, 4.6vw, 2.5rem);
+    line-height: 1.15;
+    margin: 0 0 22px;
+    letter-spacing: -.018em;
+  }
+  .answer {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-bg);
+    padding: 16px 18px;
+    border-radius: 0 8px 8px 0;
+    font-size: 1.08rem;
+  }
+  .answer strong { font-weight: 650; }
+  .hero-meta {
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: .76rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    padding: 3px 11px;
+    color: var(--muted);
+    white-space: nowrap;
   }
 
-  .card { --bs-card-bg: var(--do-card); --bs-card-border-color: var(--bs-border-color); }
-  .card-header {
-    background: linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,0));
-    border-bottom: 1px solid var(--bs-border-color);
+  /* ---------- estrutura ---------- */
+  h2 {
+    font-size: 1.42rem;
+    letter-spacing: -.012em;
+    margin: 58px 0 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
   }
-  .list-group-item { background-color: var(--do-card); }
-
-  .nav-tabs { border-bottom-color: var(--bs-border-color); }
-  .nav-tabs .nav-link { color: var(--bs-secondary-color); }
-  .nav-tabs .nav-link:hover { color: var(--bs-body-color); border-color: var(--bs-border-color) var(--bs-border-color) transparent; }
-  .nav-tabs .nav-link.active {
-    color: var(--do-accent); font-weight: 600;
-    background-color: transparent;
-    border-color: var(--bs-border-color) var(--bs-border-color) var(--do-accent);
+  h2 .num {
+    font-family: var(--mono);
+    font-size: .82rem;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+    letter-spacing: .08em;
   }
+  h3 { font-size: 1.06rem; margin: 30px 0 6px; letter-spacing: -.006em; }
+  p { margin: 12px 0; }
+  .lede { color: var(--muted); font-size: 1.02rem; margin-top: 8px; }
 
-  .badge-accent  { background: rgba(0,212,255,.14);  color: var(--do-accent);  border: 1px solid rgba(0,212,255,.35); }
-  .badge-ok      { background: rgba(0,255,136,.12);  color: var(--do-success); border: 1px solid rgba(0,255,136,.35); }
-  .badge-warn    { background: rgba(255,170,0,.12);  color: var(--do-warning); border: 1px solid rgba(255,170,0,.35); }
-  .badge-danger  { background: rgba(255,107,107,.12); color: var(--do-danger); border: 1px solid rgba(255,107,107,.35); }
-  .badge-soft    { background: rgba(139,139,167,.12); color: var(--bs-secondary-color); border: 1px solid var(--bs-border-color); }
-
-  .diff-plus  { color: var(--do-success); font-variant-numeric: tabular-nums; }
-  .diff-minus { color: var(--do-danger); font-variant-numeric: tabular-nums; }
-
-  .depara-antes  { border-color: rgba(139,139,167,.45); }
-  .depara-depois { border-color: rgba(0,255,136,.35); }
-
-  .timeline { position: relative; }
-  .timeline-item { position: relative; padding-left: 1.4rem; border-left: 2px solid var(--bs-border-color); }
-  .timeline-item::before {
-    content: ''; position: absolute; left: -.42rem; top: .3rem;
-    width: .7rem; height: .7rem; border-radius: 50%;
-    background: var(--do-accent); box-shadow: 0 0 .6rem rgba(0,212,255,.6);
+  code, kbd {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .07em .34em;
+    overflow-wrap: anywhere;
   }
-  .timeline-item:last-child { border-left-color: transparent; }
+  a { color: var(--accent); }
 
-  pre { position: relative; margin-bottom: 1rem; }
-  pre code.hljs { padding-right: 4rem; border-radius: var(--bs-border-radius); font-size: .875rem; }
-
-  .copy-btn { position: absolute; top: .5rem; right: .5rem; opacity: .4; transition: opacity .15s; }
-  pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
-
-  .tab-pane:focus-visible { outline: 0; box-shadow: 0 0 0 .2rem rgba(var(--bs-emphasis-color-rgb), .15); }
-
-  /* O pedido do usuário, verbatim: precisa ler como citação, não como prosa nossa. */
-  .quote-user {
-    border-left: 3px solid var(--do-accent);
-    background: rgba(0,212,255,.05);
-    padding: 1rem 1.25rem;
-    border-radius: .35rem;
+  blockquote.pedido {
+    margin: 18px 0;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line-2);
+    border-radius: 0 8px 8px 0;
     font-style: italic;
+    color: var(--ink);
   }
-  .quote-user mark {
-    background: rgba(0,212,255,.16); color: inherit;
-    padding: .05em .15em; border-radius: .2rem;
+  blockquote.pedido p { margin: 0; }
+  blockquote.pedido .src {
+    display: block;
+    margin-top: 10px;
+    font-style: normal;
+    font-size: .82rem;
+    color: var(--muted);
+    font-family: var(--mono);
   }
 
-  /* Âncora de "de onde veio esta afirmação" — sempre um arquivo do repo. */
-  .src { font-size: .8125rem; color: var(--bs-secondary-color); }
-  .src code { color: var(--do-accent); }
-
-  @media print {
-    .nav-tabs, .copy-btn, details, .explainer-hero { display: none !important; }
-    .tab-content > .tab-pane { display: block !important; opacity: 1 !important; page-break-inside: avoid; }
-    .tab-pane::before { content: attr(data-print-title); display: block;
-                        font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 .5rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 18px 0;
   }
+  .card h3 { margin-top: 0; }
+
+  .grid3 { display: grid; gap: 14px; grid-template-columns: 1fr; margin: 20px 0; }
+  @media (min-width: 720px) { .grid3 { grid-template-columns: repeat(3, 1fr); } }
+  .grid2 { display: grid; gap: 14px; grid-template-columns: 1fr; margin: 20px 0; }
+  @media (min-width: 720px) { .grid2 { grid-template-columns: repeat(2, 1fr); } }
+
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 17px;
+  }
+  .tile .tag {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 7px;
+  }
+  .tile h4 { margin: 0 0 8px; font-size: 1rem; }
+  .tile p { margin: 0; font-size: .93rem; color: var(--muted); }
+  .tile p + p { margin-top: 9px; }
+
+  .callout {
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 20px 0;
+    border: 1px solid var(--line);
+  }
+  .callout.warn   { background: var(--warn-bg);   border-color: var(--warn);   }
+  .callout.danger { background: var(--danger-bg); border-color: var(--danger); }
+  .callout.ok     { background: var(--ok-bg);     border-color: var(--ok);     }
+  .callout .lbl {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 7px;
+  }
+  .callout.warn   .lbl { color: var(--warn); }
+  .callout.danger .lbl { color: var(--danger); }
+  .callout.ok     .lbl { color: var(--ok); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ---------- figuras ---------- */
+  figure {
+    margin: 30px 0;
+    padding: 0;
+  }
+  .figbox {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 14px;
+    overflow-x: auto;
+  }
+  .figbox svg { display: block; width: 100%; height: auto; min-width: 480px; }
+  figcaption {
+    margin-top: 12px;
+    padding-left: 13px;
+    border-left: 3px solid var(--accent);
+    font-size: .92rem;
+    color: var(--muted);
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+  .fignum {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  /* tokens usados dentro dos SVGs */
+  .s-box   { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 1.4; }
+  .s-box-a { fill: var(--accent-bg); stroke: var(--accent);  stroke-width: 1.6; }
+  .s-box-d { fill: var(--danger-bg); stroke: var(--danger);  stroke-width: 1.6; }
+  .s-box-w { fill: var(--warn-bg);   stroke: var(--warn);    stroke-width: 1.6; }
+  .s-box-o { fill: var(--ok-bg);     stroke: var(--ok);      stroke-width: 1.6; }
+  .s-t     { fill: var(--ink); font-family: var(--sans); font-size: 13px; }
+  .s-t-b   { fill: var(--ink); font-family: var(--sans); font-size: 13px; font-weight: 650; }
+  .s-s     { fill: var(--muted); font-family: var(--sans); font-size: 11.5px; }
+  .s-m     { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+  .s-lbl   { fill: var(--accent); font-family: var(--mono); font-size: 10.5px; }
+  .s-lbl-d { fill: var(--danger); font-family: var(--mono); font-size: 10.5px; }
+  .s-line  { stroke: var(--line-2); stroke-width: 1.5; fill: none; }
+  .s-arrow { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+  .s-arrow-d { stroke: var(--danger); stroke-width: 1.8; fill: none; stroke-dasharray: 5 4; }
+  .s-dash  { stroke: var(--line-2); stroke-width: 1.3; fill: none; stroke-dasharray: 4 4; }
+
+  /* ---------- barras ---------- */
+  .bars { margin: 6px 0 2px; }
+  .bar-row { margin: 16px 0; }
+  .bar-label {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: .9rem;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .bar-label .v { font-family: var(--mono); font-weight: 650; white-space: nowrap; }
+  .bar-track {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    height: 22px;
+    overflow: hidden;
+  }
+  .bar-fill { height: 100%; border-radius: 4px 0 0 4px; }
+  .bar-fill.tiny   { background: var(--ok);     min-width: 3px; }
+  .bar-fill.huge   { background: var(--danger); }
+  .bar-fill.after  { background: var(--accent); min-width: 3px; }
+
+  /* grade de mutantes */
+  .dots { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .dot {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    border: 1px solid var(--line-2);
+    background: var(--surface-2);
+  }
+  .dot.alive { background: var(--danger); border-color: var(--danger); }
+  .dot.dead  { background: var(--ok-bg);  border-color: var(--ok); }
+  .dots-legend { font-size: .84rem; color: var(--muted); font-family: var(--mono); }
+
+  /* ---------- tabelas ---------- */
+  .tw { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: .92rem; background: var(--surface); }
+  th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 650; font-size: .84rem; letter-spacing: .01em; }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { background: none; border: none; padding: 0; }
+  .v-approve { color: var(--ok);     font-family: var(--mono); font-size: .8rem; font-weight: 650; }
+  .v-block   { color: var(--danger); font-family: var(--mono); font-size: .8rem; font-weight: 650; }
+  .v-warn    { color: var(--warn);   font-family: var(--mono); font-size: .8rem; font-weight: 650; }
+
+  ul, ol { padding-left: 22px; }
+  li { margin: 7px 0; }
+  li::marker { color: var(--muted); }
+
+  details {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0;
+    margin: 18px 0;
+  }
+  details > summary {
+    cursor: pointer;
+    padding: 13px 17px;
+    font-weight: 600;
+    font-size: .95rem;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before {
+    content: "▸";
+    color: var(--accent);
+    font-size: .85em;
+    transition: transform .12s ease;
+  }
+  details[open] > summary::before { content: "▾"; }
+  details > summary::after {
+    content: "andaime";
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .details-body { padding: 0 17px 15px; border-top: 1px solid var(--line); }
+  .details-body > :first-child { margin-top: 14px; }
+  .details-body .tw { margin-left: -1px; margin-right: -1px; }
+
+  .stats {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, 1fr);
+    margin: 22px 0;
+  }
+  @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 15px;
+  }
+  .stat .n {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 650;
+    line-height: 1.1;
+    display: block;
+    letter-spacing: -.02em;
+  }
+  .stat .k {
+    font-size: .8rem;
+    color: var(--muted);
+    display: block;
+    margin-top: 6px;
+  }
+
+  footer {
+    margin-top: 66px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: .85rem;
+    color: var(--muted);
+  }
+
+  .criterio {
+    border: 2px solid var(--accent);
+    background: var(--accent-bg);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 26px 0;
+    text-align: center;
+  }
+  .criterio .big {
+    font-size: clamp(1.05rem, 2.6vw, 1.3rem);
+    font-weight: 650;
+    line-height: 1.4;
+    margin: 0;
+  }
+  .criterio .small { font-size: .88rem; color: var(--muted); margin: 10px 0 0; }
 </style>
 </head>
+<body>
 
-<body class="bg-body">
+<header class="hero">
+  <div class="wrap">
+    <p class="kicker">huu · execução do orquestrador · modo dev nas interfaces</p>
+    <h1>O modo dev ganhou olhos: kanban ao vivo no terminal e no navegador, mais um chat que mostra o debate acontecendo</h1>
 
-<nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
-  <div class="container">
-    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>huu <span class="text-body-secondary fw-normal">· método desenhado</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">huu-devgraph-v1 · 2026-08-04</span>
-  </div>
-</nav>
-
-<main class="container py-4" style="max-width: 62rem">
-
-  <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
-    <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
-    <h1 class="display-6 fw-semibold text-white mb-2">O método desenhado</h1>
-    <p class="lead text-white-50 mb-3">Um formato de grafo (<code class="text-white-50">huu-devgraph-v1</code>) em que o <strong>humano desenha a topologia</strong> — quais blocos rodam, em que ordem, onde ramifica, onde os ramos se juntam — e um compilador puro a transforma num <code class="text-white-50">huu-pipeline-v2</code> comum, rodado pelo escalonador de ondas, pelo leque de memória e pelo merge determinístico que já existiam. Com um desenho em mãos, <strong>o planner LLM não é chamado</strong>.</p>
-    <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">huu 1.0.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-04</span>
-      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
-      <span class="badge badge-soft"><i class="bi bi-git-commit me-1"></i>26d093b1..34eeb738</span>
+    <div class="answer">
+      <strong>Em uma frase:</strong> quem roda o modo dev do huu antes só via um borrão de log e um JSON no fim;
+      agora vê um <em>kanban</em> se preenchendo em tempo real — no terminal com <code>huu dev --cli</code> e no navegador
+      em <code>/dev</code> — e pode abrir um chat que mostra os dois lados do debate <em>enquanto eles escrevem</em>.
     </div>
-  </header>
 
-  <ul class="nav nav-tabs flex-wrap" id="doc-tabs" role="tablist">
-    <li class="nav-item" role="presentation">
-      <button class="nav-link active" id="tab-pedido" data-bs-toggle="tab" data-bs-target="#pane-pedido"
-              type="button" role="tab" aria-controls="pane-pedido" aria-selected="true">
-        <i class="bi bi-chat-quote me-1"></i>O pedido
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-depara" data-bs-toggle="tab" data-bs-target="#pane-depara"
-              type="button" role="tab" aria-controls="pane-depara" aria-selected="false">
-        <i class="bi bi-arrow-left-right me-1"></i>De-Para
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-decisoes" data-bs-toggle="tab" data-bs-target="#pane-decisoes"
-              type="button" role="tab" aria-controls="pane-decisoes" aria-selected="false">
-        <i class="bi bi-lightbulb me-1"></i>Decisões
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-bugs" data-bs-toggle="tab" data-bs-target="#pane-bugs"
-              type="button" role="tab" aria-controls="pane-bugs" aria-selected="false">
-        <i class="bi bi-bug me-1"></i>Bugs achados
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-limites" data-bs-toggle="tab" data-bs-target="#pane-limites"
-              type="button" role="tab" aria-controls="pane-limites" aria-selected="false">
-        <i class="bi bi-exclamation-triangle me-1"></i>Limites
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-uso" data-bs-toggle="tab" data-bs-target="#pane-uso"
-              type="button" role="tab" aria-controls="pane-uso" aria-selected="false">
-        <i class="bi bi-terminal me-1"></i>Como usar
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-ondas" data-bs-toggle="tab" data-bs-target="#pane-ondas"
-              type="button" role="tab" aria-controls="pane-ondas" aria-selected="false">
-        <i class="bi bi-layers me-1"></i>Ondas
-      </button>
-    </li>
+    <div class="hero-meta">
+      <span class="chip">4 ondas</span>
+      <span class="chip">8 sub-tarefas</span>
+      <span class="chip">4 revisões adversariais</span>
+      <span class="chip">4 defeitos reais achados</span>
+      <span class="chip">4.221 testes</span>
+      <span class="chip">gate 11/11 PASS</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <p class="lede">
+    Esta página explica uma execução do orquestrador do <strong>huu</strong> — uma TUI/web em TypeScript que roda
+    pipelines de agentes LLM dentro de <em>worktrees</em> git isoladas. Você não precisa conhecer o projeto:
+    todo jargão é glosado na primeira aparição e recapitulado numa tabela no fim.
+    Nada aqui é estimativa: todos os números vêm da execução.
+  </p>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">01</span>O pedido, na letra</h2>
+
+  <blockquote class="pedido">
+    <p>"quero o modo dev na interface tambem e no caso do CLI podendo ver o kanvan terminal rodar e ver as coisas,
+    a interface web para o modo dev, quero ver o kanban passando as atividades conforme elas sejam criadas porque
+    nessa caso eh mais dinamico, e quero pode ver o debate em um botao de chat que teremos para esse modo onde vejo
+    os lados falando (que eh preenchido conforme atualizamos o arquivo json)"</p>
+    <span class="src">pedido do usuário, verbatim · prefixo <code>no-stop</code> (teto de ondas removido, válvula anti-loop mantida)</span>
+  </blockquote>
+
+  <p>
+    Traduzindo: <em>"eu quero ver o modo dev acontecendo"</em>. Três superfícies, uma frase.
+    O <strong>modo dev</strong> (<code>huu dev</code>) é o único fluxo do huu cujo grafo de passos é escrito
+    <em>em tempo de execução</em> por um planner LLM — ou seja, as atividades não existem antes de a sessão começar,
+    elas nascem durante. É exatamente por isso que o usuário quis ver o kanban se preenchendo: nesse modo,
+    a lista de tarefas <em>é</em> o resultado parcial.
+  </p>
+
+  <h3>O que a análise achou antes de escrever uma linha de código</h3>
+  <p>
+    Três exploradores em paralelo leram o código antes de qualquer implementação. O mapa que voltou dividiu o pedido
+    em duas metades muito diferentes:
+  </p>
+
+  <div class="grid2">
+    <div class="tile">
+      <span class="tag">já existia</span>
+      <h4>Metade do pedido já estava pronta</h4>
+      <p>O board da web já era dinâmico <em>por construção</em>: ele é remontado a cada snapshot que chega, e o
+      orquestrador aloca identificadores de agente novos em pleno voo — cartão novo aparece sozinho.</p>
+      <p>A rota <code>/dev</code> já tinha formulário e painel de sessão; as épocas já viajavam nos mesmos quadros
+      de dados; o componente de kanban já era puramente visual e reusável.</p>
+    </div>
+    <div class="tile">
+      <span class="tag">não existia</span>
+      <h4>A outra metade não existia mesmo</h4>
+      <p>Nenhuma TUI para o modo dev — <code>huu dev</code> era log em <code>stderr</code> mais um JSON no
+      <code>stdout</code>, e nada mais.</p>
+      <p>Nenhum JSON de debate. E nenhum evento semântico de <em>"tarefa criada"</em> — a UI descobria as tarefas por
+      diferença entre fotos do estado, não por aviso.</p>
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">02</span>As três entregas</h2>
+
+  <div class="grid3">
+    <div class="tile">
+      <span class="tag">terminal</span>
+      <h4>Kanban ao vivo em <code>huu dev --cli</code></h4>
+      <p>Um dashboard desenhado com Ink (React para terminal) que mostra as atividades entrando conforme o planner
+      as cria. Commit <code>067199d</code>.</p>
+    </div>
+    <div class="tile">
+      <span class="tag">navegador</span>
+      <h4>A superfície web de <code>/dev</code></h4>
+      <p>O kanban dinâmico já funcionava; o que faltava era o resto da tela. Entrou o chat e foi consertada a
+      navegação. Commit <code>f8bdd27</code>.</p>
+    </div>
+    <div class="tile">
+      <span class="tag">navegador</span>
+      <h4>O chat do debate</h4>
+      <p>Um botão abre o painel onde os dois lados do debate aparecem falando — alimentado pelo <em>firehose</em>,
+      não por arquivo. É a seção 03.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <span class="lbl">a restrição que decidiu o desenho da TUI</span>
+    <p>
+      <code>dev-cli.ts</code> escreve <strong>um bloco JSON no <code>stdout</code></strong> como resultado da sessão.
+      Isso é um <em>contrato de máquina</em>: existem scripts lá fora que leem esse canal e esperam JSON puro.
+      Montar a interface Ink no <code>stdout</code> quebraria todos eles. Solução adotada:
+      <strong>o Ink pinta em <code>stderr</code></strong>, o JSON continua sozinho no <code>stdout</code>.
+      Guarde essa frase — ela volta na seção 04 como o segundo defeito encontrado.
+    </p>
+  </div>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">03</span>A parte honesta: o JSON que o usuário pediu não existe</h2>
+
+  <p>
+    O pedido termina com um parêntese muito específico: o chat <em>"eh preenchido conforme atualizamos o arquivo json"</em>.
+    Essa frase descreve um mecanismo — <em>observe um arquivo, redesenhe a tela a cada mudança</em> — e o mecanismo
+    <strong>não era implementável</strong>. Por duas razões independentes, ambas descobertas na análise:
+  </p>
+
+  <ol>
+    <li><strong>Não existe JSON de debate.</strong> O debate é escrito como dois documentos (<code>A.md</code> e
+    <code>B.md</code>), não como um JSON que alguém atualiza incrementalmente.</li>
+    <li><strong>E, mesmo que existisse, ninguém de fora conseguiria vê-lo encher.</strong> Esses documentos são
+    escritos <em>dentro da worktree isolada do agente</em> — uma cópia de trabalho própria do repositório, com
+    diretório próprio — e só chegam ao caminho canônico do projeto <em>depois do merge da onda</em>.</li>
+  </ol>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="f1t f1d">
+        <title id="f1t">Caminho do brief: worktree isolada, merge, caminho canônico</title>
+        <desc id="f1d">O brief é escrito dentro da worktree do agente e só aparece no repositório depois do merge, de uma vez.</desc>
+
+        <!-- lane 1: agente -->
+        <text class="s-t-b" x="10" y="26">worktree isolada do agente</text>
+        <text class="s-s"   x="10" y="43">cópia de trabalho própria, invisível para o resto do projeto</text>
+        <rect class="s-box" x="10" y="54" width="470" height="58" rx="8"/>
+        <text class="s-m" x="24" y="79">A.md  ▓▓▓░░░░░</text>
+        <text class="s-m" x="24" y="98">B.md  ▓▓▓▓░░░░</text>
+        <text class="s-s" x="270" y="79">os dois lados escrevem</text>
+        <text class="s-s" x="270" y="98">durante a rodada inteira</text>
+
+        <!-- merge gate -->
+        <rect class="s-box-a" x="512" y="54" width="106" height="58" rx="8"/>
+        <text class="s-t-b" x="529" y="80">merge da</text>
+        <text class="s-t-b" x="529" y="98">onda</text>
+
+        <path class="s-arrow" d="M482 83 H508" marker-end="url(#a1)"/>
+        <path class="s-arrow" d="M620 83 H700" marker-end="url(#a1)"/>
+        <text class="s-lbl" x="486" y="74">só aqui</text>
+        <text class="s-lbl" x="624" y="74">de uma vez</text>
+
+        <rect class="s-box-o" x="700" y="54" width="52" height="58" rx="8"/>
+        <text class="s-m" x="712" y="88">repo</text>
+
+        <!-- linha do tempo -->
+        <line class="s-dash" x1="10" y1="150" x2="752" y2="150"/>
+        <text class="s-m" x="10" y="142">t0</text>
+        <text class="s-m" x="520" y="142">t-merge</text>
+
+        <!-- lane 2: observador de arquivo -->
+        <text class="s-t-b" x="10" y="186">o que uma UI que observa o arquivo enxergaria</text>
+        <rect class="s-box-d" x="10" y="198" width="500" height="52" rx="8"/>
+        <text class="s-t" x="26" y="222">nada</text>
+        <text class="s-t" x="110" y="222">nada</text>
+        <text class="s-t" x="194" y="222">nada</text>
+        <text class="s-t" x="278" y="222">nada</text>
+        <text class="s-t" x="362" y="222">nada</text>
+        <text class="s-s" x="26" y="240">0 bytes visíveis durante toda a rodada</text>
+
+        <rect class="s-box-d" x="524" y="198" width="228" height="52" rx="8"/>
+        <text class="s-t-b" x="540" y="222">o arquivo INTEIRO, pronto</text>
+        <text class="s-s"   x="540" y="240">nenhum estado intermediário</text>
+
+        <path class="s-arrow-d" d="M512 224 H520" marker-end="url(#a2)"/>
+
+        <text class="s-lbl-d" x="10" y="274">consequência: "preencher conforme o arquivo atualiza" observaria</text>
+        <text class="s-lbl-d" x="10" y="290">um arquivo que nunca atualiza — ele nasce completo</text>
+
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor" style="fill: var(--accent)"/>
+          </marker>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--danger)"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+    <figcaption>
+      <span class="fignum">Figura 1</span>
+      <b>O brief só existe no repositório depois do merge — e aí ele aparece pronto.</b>
+      Uma interface que ficasse observando o arquivo não veria nada, nada, nada e então o texto completo:
+      exatamente o oposto do "ver os lados falando". O mecanismo pedido foi descartado por impossibilidade
+      física do fluxo, não por preguiça.
+    </figcaption>
+  </figure>
+
+  <p>
+    Havia ainda um terceiro impedimento para qualquer superfície baseada em <em>polling</em> (ficar perguntando
+    "mudou? mudou? mudou?" de fora do processo): <strong>não existe lockfile nem pidfile de sessão</strong>.
+    De fora, é impossível saber se a sessão ainda está viva. Uma UI que dependesse de leitura periódica de arquivo
+    não teria como distinguir "o agente está pensando" de "o processo morreu".
+  </p>
+
+  <h3>O que foi entregue no lugar — e por que atende melhor a intenção</h3>
+
+  <p>
+    O huu já transmitia dois tipos de quadro por <strong>SSE</strong> (<em>Server-Sent Events</em>: um cano HTTP que
+    fica aberto e pelo qual o servidor empurra mensagens para o navegador). Um deles é a foto periódica do estado do
+    run, que é <em>throttled</em> — limitada de propósito, para não inundar a tela. O outro é o
+    <strong>firehose</strong> (<em>mangueira de incêndio</em>): a saída bruta do agente, quadro por quadro,
+    <strong>sem throttle</strong>. O chat do debate foi pendurado nesse segundo canal.
+  </p>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 760 268" role="img" aria-labelledby="f2t f2d">
+        <title id="f2t">Os dois canais SSE e qual deles alimenta o chat</title>
+        <desc id="f2d">O snapshot do run é throttled; o agent-stream não é, e é ele que alimenta o chat do debate.</desc>
+
+        <rect class="s-box" x="10" y="60" width="150" height="110" rx="9"/>
+        <text class="s-t-b" x="26" y="92">agentes do</text>
+        <text class="s-t-b" x="26" y="110">debate</text>
+        <text class="s-s"   x="26" y="132">lado A e lado B,</text>
+        <text class="s-s"   x="26" y="148">escrevendo agora</text>
+
+        <!-- canal 1 -->
+        <path class="s-arrow" d="M162 96 H300" marker-end="url(#b1)"/>
+        <text class="s-lbl" x="176" y="86">foto do estado do run</text>
+        <rect class="s-box" x="302" y="60" width="196" height="52" rx="9"/>
+        <text class="s-m"   x="318" y="82">{type:'run'}</text>
+        <text class="s-s"   x="318" y="100">THROTTLED — de propósito</text>
+
+        <!-- canal 2 -->
+        <path class="s-arrow" d="M162 142 H300" marker-end="url(#b1)"/>
+        <text class="s-lbl" x="176" y="134">saída bruta, token a token</text>
+        <rect class="s-box-a" x="302" y="118" width="196" height="52" rx="9"/>
+        <text class="s-m"   x="318" y="140">{type:'agent-stream'}</text>
+        <text class="s-s"   x="318" y="158">SEM throttle — o firehose</text>
+
+        <!-- destinos -->
+        <path class="s-arrow" d="M500 86 H600" marker-end="url(#b1)"/>
+        <text class="s-lbl" x="512" y="78">cartões do kanban</text>
+        <rect class="s-box" x="602" y="60" width="148" height="52" rx="9"/>
+        <text class="s-t-b" x="618" y="84">kanban</text>
+        <text class="s-s"   x="618" y="102">atividades e status</text>
+
+        <path class="s-arrow" d="M500 144 H600" marker-end="url(#b1)"/>
+        <text class="s-lbl" x="512" y="136">falas, enquanto saem</text>
+        <rect class="s-box-a" x="602" y="118" width="148" height="52" rx="9"/>
+        <text class="s-t-b" x="618" y="142">chat do debate</text>
+        <text class="s-s"   x="618" y="160">os dois lados ao vivo</text>
+
+        <line class="s-dash" x1="10" y1="196" x2="750" y2="196"/>
+        <text class="s-s" x="10" y="222">O caminho descartado, para comparação:</text>
+        <text class="s-lbl-d" x="10" y="244">agente → worktree isolada → (silêncio) → merge → arquivo pronto → UI. Chega tarde e chega inteiro.</text>
+
+        <defs>
+          <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--accent)"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+    <figcaption>
+      <span class="fignum">Figura 2</span>
+      <b>O chat foi pendurado no canal que NÃO é limitado — por isso ele mostra os lados falando, e não um resumo atrasado.</b>
+      A intenção do pedido ("ver o debate acontecendo") só é atendida por um canal sem throttle e sem espera de merge.
+      O mecanismo pedido foi trocado; o resultado pedido foi entregue com mais fidelidade do que o mecanismo permitiria.
+    </figcaption>
+  </figure>
+
+  <p>
+    E o <strong>arquivo</strong> não foi abandonado: a onda 1 entregou tipos, um <em>parser</em> tolerante a formato
+    imperfeito e um localizador para os documentos do debate (commit <code>3f832ed</code>), além de tornar
+    <strong>atômica</strong> a escrita do manifesto da sessão (<code>b42e2fa</code>). Esse segundo ponto merece uma
+    nota, porque é um bug real que estava lá antes do pedido: <code>.huu/manifest-&lt;runId&gt;.json</code> era escrito
+    com uma gravação direta, sem a técnica de <em>escrever num temporário e renomear por cima</em>, e é reescrito a
+    cada fronteira de estágio. Um leitor que chegasse no instante errado pegaria o arquivo <strong>truncado</strong>.
+  </p>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">04</span>O achado que mais vale contar: o teste vácuo</h2>
+
+  <p>
+    Cada sub-tarefa passou por uma <strong>revisão adversarial</strong>: um segundo agente cuja tarefa não é aprovar,
+    e sim <em>tentar derrubar</em> o trabalho do primeiro. Foram quatro revisões nesta execução.
+    <strong>As quatro acharam defeito real.</strong>
+  </p>
+
+  <p>
+    E, das quatro, saiu um padrão que se repetiu <strong>cinco vezes</strong> na sessão. Sempre a mesma forma:
+  </p>
+
+  <div class="criterio">
+    <p class="big">Um teste passou com a implementação que ele deveria proteger completamente quebrada.</p>
+    <p class="small">Em nenhum dos cinco casos o código entregue estava errado. Errada estava a <em>rede</em>.</p>
+  </div>
+
+  <p>
+    Chamamos isso de <strong>teste vácuo</strong>: um teste que roda, fica verde, e não toca no comportamento que
+    diz proteger. Ele custa tempo de CI e compra confiança falsa. Dois casos desta execução mostram por que isso
+    importa — e ambos são de arrepiar.
+  </p>
+
+  <h3>Caso 1 — O teste chamado "Prova contra backtracking catastrófico" passava em 3 ms, com o defeito presente</h3>
+
+  <p>
+    O parser do debate tinha quatro expressões regulares na forma <code>X+$</code> sem âncora de início.
+    Essa forma sofre de <strong>ReDoS</strong> (<em>Regular expression Denial of Service</em>): quando a entrada
+    não casa, o motor de regex tenta um número explosivo de combinações antes de desistir — o tempo cresce ao
+    quadrado do tamanho do texto, e a thread fica presa. Não é um bug teórico: JavaScript é single-thread, então
+    <em>a interface inteira congela</em>.
+  </p>
+
+  <div class="callout danger">
+    <span class="lbl">o que a revisão mediu</span>
+    <p>
+      <strong>5,4 s</strong> para 100 KB de entrada. <strong>35,7 s</strong> no limite de tamanho do módulo —
+      e <strong>~71 s</strong> para parsear os dois lados do debate. Tudo isso numa superfície cuja
+      <em>razão de existir</em> é renderizar ao vivo. O chat que deveria mostrar a conversa acontecendo ficaria
+      mais de um minuto sem responder.
+    </p>
+    <p>
+      Enquanto isso, o teste chamado <em>"Prova contra backtracking catastrófico"</em> — o teste escrito
+      especificamente para pegar isso — passava em <strong>3 ms</strong>, com o defeito inteiro no lugar.
+    </p>
+  </div>
+
+  <figure>
+    <div class="figbox" style="min-width:0; overflow-x:visible">
+      <div class="bars">
+        <div class="bar-row">
+          <div class="bar-label">
+            <span>O que o teste "Prova contra backtracking catastrófico" mediu</span>
+            <span class="v">3 ms · PASS</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill tiny" style="width:0.01%"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">
+            <span>O que o event loop realmente travava, com o mesmo defeito</span>
+            <span class="v">35 700 ms</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill huge" style="width:100%"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label">
+            <span>Depois da correção — no cenário que a revisão cronometrou em 5 502 ms</span>
+            <span class="v">2 ms</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill after" style="width:0.04%"></div></div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      <span class="fignum">Figura 3</span>
+      <b>O teste mediu 3 ms e ficou verde; o usuário levaria 35,7 s de interface congelada.</b>
+      A distância entre as duas barras é a definição operacional de teste vácuo — e a razão de o critério de
+      aceitação ter mudado no meio desta execução.
+    </figcaption>
+  </figure>
+
+  <p>
+    A revisão do módulo do debate saiu com veredito <span class="v-block">BLOCK</span> e três defeitos, não um:
+  </p>
+
+  <ul>
+    <li><strong>(a) o ReDoS</strong> acima;</li>
+    <li><strong>(b) uma corrupção silenciosa de texto:</strong> a função que remove ênfase tirava a marcação de
+    abertura e mantinha a de fechamento, corrompendo caminhos entre crases — que é justamente a forma que os dois
+    prompts <em>mandam</em> os agentes usarem. E fazia isso reportando sucesso: <code>parsed:true</code>, zero avisos;</li>
+    <li><strong>(c) descarte silencioso:</strong> qualquer valor com 4 000 caracteres ou mais era jogado fora sem
+    nenhum aviso — contrariando a documentação do próprio módulo.</li>
   </ul>
 
-  <div class="tab-content border border-top-0 rounded-bottom p-4" id="doc-tabs-content">
+  <p>
+    A revisão então mediu a qualidade da suíte com <strong>teste de mutação</strong>: sabotar o código de propósito,
+    uma sabotagem por vez, e ver se algum teste morre. Sabotagem que <em>sobrevive</em> é buraco na rede.
+  </p>
 
-    <!-- ══════════════ ABA 1 · O PEDIDO ══════════════ -->
-    <div class="tab-pane fade show active" id="pane-pedido" role="tabpanel"
-         aria-labelledby="tab-pedido" tabindex="0" data-print-title="O pedido">
-
-      <h2 class="h4 pane-title">O pedido, verbatim</h2>
-      <p class="text-body-secondary">Isto foi o insumo. Cada trecho marcado tem uma linha na tabela abaixo dizendo onde ele virou código.</p>
-
-      <blockquote class="quote-user mb-4">
-        "quero modificar o modo dev na web <mark>(terminal e tui ajuste tambem para ter a feature como achar melhor)</mark>; basicamente vamos criar um <mark>pipeline de ações que se desenham como o n8n faz</mark>, (o reactflowcanvas usa isso pode usar esse pacote); vamos ir adicionando items por exemplo o primeiro é o item <mark>'Entrada do prompt'</mark> -&gt; ; e então eu <mark>clico na bolinha dele e aparece as opções que temos</mark>, onde eu adiciono uma delas ex: tdd, posso <mark>definir quando rodam em paralelo simplimente adicionando mais de uma do mesmo ponto de partida</mark>, e posso <mark>definir o que esperamos com join ou nao</mark>, exemplo se o primeiro lança o : tdd, test-segurança, test-performance (exemplo); e <mark>apenas do teste de performance condinuarmos, não precisamos esperar os demais para prosseguir</mark>; teremos o <mark>bloco de pesquisar na internet onde definiremos o que será pesquisado e podemos usar o contexto para isso</mark> e isso volta como uma <mark>condicionar que configuramos</mark>, se for uma perquisa para definir uma afirmação então selecionamos que é <mark>booleana e conseguimos cadastrar comportamentos de sim e nao na saida dela</mark>, se for uma de <mark>multipla escolha podemos definir comportamentos para a saida</mark>, se for <mark>informativo nao definimos nada e ela entra como contexto na proxima etapa</mark>; <mark>nao me peça nada faça até o fim</mark>"
-      </blockquote>
-
-      <div class="row g-3 mb-4">
-        <div class="col-6 col-lg-3">
-          <div class="card h-100 text-center">
-            <div class="card-body py-3">
-              <div class="display-6 fw-bold stat-value">7</div>
-              <div class="text-body-secondary small">ondas de sub-agentes</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-3">
-          <div class="card h-100 text-center">
-            <div class="card-body py-3">
-              <div class="display-6 fw-bold stat-value">21</div>
-              <div class="text-body-secondary small">commits (squash)</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-3">
-          <div class="card h-100 text-center">
-            <div class="card-body py-3">
-              <div class="display-6 fw-bold stat-value">94</div>
-              <div class="text-body-secondary small">arquivos tocados</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-3">
-          <div class="card h-100 text-center">
-            <div class="card-body py-3">
-              <div class="display-6 fw-bold"><span class="diff-plus">+38.336</span></div>
-              <div class="text-body-secondary small"><span class="diff-minus">−151</span> linhas</div>
-            </div>
-          </div>
-        </div>
+  <figure>
+    <div class="figbox" style="min-width:0; overflow-x:visible">
+      <p style="margin:0 0 4px; font-size:.9rem; font-weight:600">Antes da correção — 20 mutantes</p>
+      <div class="dots" aria-label="9 de 20 mutantes sobreviveram">
+        <span class="dot alive"></span><span class="dot alive"></span><span class="dot alive"></span>
+        <span class="dot alive"></span><span class="dot alive"></span><span class="dot alive"></span>
+        <span class="dot alive"></span><span class="dot alive"></span><span class="dot alive"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span>
       </div>
+      <p class="dots-legend">9 sobreviveram (vermelho) · 11 mortos pela suíte</p>
 
-      <div class="alert alert-secondary d-flex gap-2 small" role="alert">
-        <i class="bi bi-rulers flex-shrink-0 mt-1"></i>
-        <div>
-          <strong>Números re-medidos neste HEAD (<code>34eeb73</code>), não copiados do relatório de onda:</strong>
-          <code>npx vitest run</code> → <strong>3.780 passando · 1 skipped · 3.781 no total, em 169 arquivos, 0 falhas</strong>.
-          <code>bash scripts/gate.sh</code> → <strong>9 PASS</strong>, exit 0.
-          <code>git diff --shortstat 26d093b1..HEAD</code> → <strong>94 arquivos, +38.336 / −151</strong>.
-          A linha de base de 2.224 testes vem do relatório do orquestrador e <em>não</em> foi re-medida aqui (exigiria checkout do commit anterior).
-        </div>
+      <p style="margin:22px 0 4px; font-size:.9rem; font-weight:600">Depois da correção — mesmos 20 mutantes</p>
+      <div class="dots" aria-label="0 de 20 mutantes sobreviveram">
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span><span class="dot dead"></span>
+        <span class="dot dead"></span><span class="dot dead"></span>
       </div>
+      <p class="dots-legend">0 sobreviventes · suíte de 36 → 52 testes · ReDoS de 5 502 ms → 2 ms</p>
+    </div>
+    <figcaption>
+      <span class="fignum">Figura 4</span>
+      <b>Nove das vinte sabotagens passavam despercebidas pela suíte original; depois do fix, nenhuma passou.</b>
+      Contagem de testes mede volume; sobreviventes de mutação medem se a rede tem furos — e só o segundo número
+      teria pego este caso.
+    </figcaption>
+  </figure>
 
-      <h2 class="h4 pane-title mt-5">Frase a frase: onde cada pedido virou código</h2>
+  <h3>Caso 2 — Typecheck 0, 86 de 86 testes verdes, smoke verde… e 651 580 bytes vazando no canal de máquina</h3>
 
-      <div class="table-responsive">
-        <table class="table table-hover align-middle">
+  <p>
+    O segundo caso é ainda mais desconfortável, porque aqui o <em>código estava certo</em>. Lembra da regra da
+    seção 02: o Ink pinta em <code>stderr</code> porque o <code>stdout</code> é contrato de máquina.
+    A revisão testou a única coisa que importava: <strong>e se alguém trocar <code>stderr</code> por
+    <code>stdout</code>?</strong>
+  </p>
+
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Sinal de qualidade</th><th>Com a sabotagem aplicada</th><th>Deveria ter dito</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Type-check</td><td><span class="v-approve">0 erros</span></td><td>—</td></tr>
+        <tr><td>Suíte de testes</td><td><span class="v-approve">86 / 86 PASS</span></td><td>falhar</td></tr>
+        <tr><td>Smoke test</td><td><span class="v-approve">PASS</span></td><td>falhar</td></tr>
+        <tr><td>Realidade do canal <code>stdout</code></td><td><span class="v-block">651 580 bytes de ANSI</span></td><td>JSON puro</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <em>ANSI</em> aqui são os códigos de escape que o terminal interpreta como cor, posição de cursor e limpeza de
+    tela. Para um humano, isso vira uma interface bonita. Para o script que faz <code>huu dev --cli | jq</code>,
+    isso é 651 KB de lixo binário no lugar do JSON esperado. E os três sinais de qualidade do projeto
+    diziam que estava tudo bem.
+  </p>
+
+  <p>
+    Investigando, a revisão achou a causa: <code>createDevDashboardPresenter</code> tinha <strong>zero cobertura</strong>
+    de testes, e o smoke test existia mas <strong>não estava ligado a nada</strong> — ninguém o executava.
+    O veredito foi <span class="v-warn">WARNING</span> com uma frase que resume a execução inteira:
+    <em>o código estava certo; a rede não existia</em>.
+  </p>
+
+  <div class="callout ok">
+    <span class="lbl">depois do fix</span>
+    <p>
+      Três testes que <strong>morrem</strong> quando a sabotagem é aplicada. O smoke test virou o
+      <strong>11.º passo do <code>gate.sh</code></strong> — o script que roda a bateria completa de validação —
+      então agora ele é executado em toda integração. E, de brinde, o board deixou de ser montado antes do parse:
+      um quadro vazio que custava <strong>6 778 bytes</strong> antes de uma recusa passou a custar
+      <strong>391 bytes</strong>.
+    </p>
+  </div>
+
+  <details>
+    <summary>As quatro revisões adversariais, com veredito e defeito</summary>
+    <div class="details-body">
+      <div class="tw">
+        <table>
           <thead>
-            <tr>
-              <th scope="col" style="width:34%">O que foi pedido</th>
-              <th scope="col">Onde virou código</th>
-            </tr>
+            <tr><th>Sub-tarefa</th><th>Veredito</th><th>O que a revisão provou</th></tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>"modificar o modo dev na web (terminal e tui ajuste também)"</strong></td>
-              <td><strong>Três superfícies, não uma.</strong>
-                <ul class="mb-0 ps-3">
-                  <li>Navegador: rota <code>/graph</code> + <code>/api/graphs/*</code> — <code>src/web/graph-api.ts</code>, <code>src/web/client/modules/graph/</code></li>
-                  <li>Terminal: <code>huu graph list|show|validate|compile|new|rm</code> — <code>src/lib/graph-cli.ts</code> (694 linhas)</li>
-                  <li>TUI: tecla <code>[G]</code> na Welcome — <code>src/ui/components/GraphScreen.tsx</code>, <code>src/lib/graph-render.ts</code></li>
-                  <li>E o que executa: <code>huu dev "&lt;objetivo&gt;" --graph=&lt;id&gt;</code> — <code>src/lib/dev-mode/dev-driver.ts</code></li>
-                </ul>
-              </td>
+              <td><code>manifest-atomic</code></td>
+              <td><span class="v-approve">APPROVE</span></td>
+              <td>Provou que o teste central <strong>não</strong> é vácuo: revertendo a correção, os testes de inode e
+              de descritor-já-aberto <em>falham</em>. Aprovação com prova, não com leitura.</td>
             </tr>
             <tr>
-              <td><strong>"pipeline de ações que se desenham como o n8n faz (o reactflowcanvas usa isso pode usar esse pacote)"</strong></td>
-              <td><strong>React Flow, sim — mas vendorizado.</strong> <code>@xyflow/react</code> 12.11.2 + React 18.3.1 + react-dom 18.3.1, pré-bundlados por <code>scripts/vendor-reactflow.sh</code> num único ESM commitado (<code>src/web/client/vendor/reactflow.js</code>, 327 KB) mais o CSS upstream verbatim. O cliente web do huu não tem bundler nem CDN: <strong>o arquivo vendorizado É a dependência</strong> e o <code>package.json</code> não ganha React. O React viaja junto porque o canvas é escrito em <code>React.createElement</code> puro, sem JSX — e uma segunda cópia de React quebraria hooks e context.</td>
+              <td><code>debate-model</code></td>
+              <td><span class="v-block">BLOCK</span></td>
+              <td>(a) ReDoS quadrático em 4 regexes <code>X+$</code> sem âncora — 5,4 s para 100 KB, 35,7 s no teto do
+              módulo, ~71 s para os dois lados; o teste "Prova contra backtracking catastrófico" passava em 3 ms com o
+              defeito. (b) <code>stripValueEmphasis</code> removia a ênfase de abertura e mantinha a de fechamento,
+              corrompendo caminhos entre crases com <code>parsed:true</code> e zero warnings. (c) valor ≥ 4 000 chars
+              descartado em silêncio, contra a doc do próprio módulo. Mutação: 9 de 20 sobreviviam. Depois do fix:
+              0 sobreviventes, 36 → 52 testes, ReDoS de 5 502 ms para 2 ms.</td>
             </tr>
             <tr>
-              <td><strong>"o primeiro é o item 'Entrada do prompt'"</strong></td>
-              <td>O nó <code>prompt</code> (<code>PromptNode</code> em <code>src/lib/dev-graph/graph-types.ts</code>): <strong>exatamente um por grafo</strong>, é a raiz da qual todo o método pende, é o único que pode não ter aresta de entrada, e <strong>compila para NADA</strong> — é o objetivo, não um passo. Os nós pendurados nele viram as raízes do pipeline (<code>dependsOn: []</code>). O texto dele é injetado em todo template de bloco pelo token <code>$goal</code>. Nas amostras o rótulo é literalmente <em>"Entrada do prompt"</em>.</td>
+              <td><code>tui-dev-dashboard</code></td>
+              <td><span class="v-warn">WARNING</span></td>
+              <td>O código estava certo; a rede não existia. Trocando <code>process.stderr</code> por
+              <code>process.stdout</code>: typecheck 0, 86/86 PASS, smoke PASS — e <code>huu dev --cli</code> despejava
+              651 580 bytes de ANSI no canal que scripts consomem. <code>createDevDashboardPresenter</code> tinha zero
+              cobertura e o smoke não estava ligado a nada. Depois do fix: 3 testes que morrem com a sabotagem, smoke
+              virou o 11.º passo do <code>gate.sh</code>, e o board deixou de montar antes do parse (6 778 bytes de
+              quadro vazio antes de uma recusa viraram 391).</td>
             </tr>
             <tr>
-              <td><strong>"clico na bolinha dele e aparece as opções que temos"</strong></td>
-              <td>A <strong>linha de braço</strong> na borda direita do card do nó (<code>src/web/client/modules/graph/node-views.js</code>): nome do braço, um <code>+</code> e a bolinha (<code>Handle</code> do React Flow). O <code>mousedown</code> da bolinha <strong>pertence ao React Flow</strong> — é assim que se arrasta uma ligação — então o clique borbulha para a linha, que é um <code>role="button"</code> com <code>tabIndex=0</code>, e abre a paleta. Teclado: <code>Enter</code>/<code>Space</code> abre, <code>↑</code>/<code>↓</code> anda, <code>Enter</code> escolhe, <code>Escape</code> fecha.</td>
-            </tr>
-            <tr>
-              <td><strong>"onde eu adiciono uma delas ex: tdd"</strong></td>
-              <td>O <strong>catálogo de 15 blocos</strong> (<code>src/lib/dev-graph/node-catalog.ts</code>), <code>tdd</code> entre eles, mais os dois outros tipos desenháveis (<code>research</code>, <code>gate</code>). A paleta agrupa por <strong>campos do bloco</strong>, nunca por lista de ids: <code>produces</code> → "Achados e listas", senão <code>readOnly</code> → "Auditar (não altera código)", senão "Escrever código". Escolher uma entrada cria o nó <strong>e</strong> a aresta num movimento só, e é atômico: se a conexão for recusada, nenhum nó órfão fica para trás (<code>applyPaletteChoice</code> devolve o grafo original).</td>
-            </tr>
-            <tr>
-              <td><strong>"definir quando rodam em paralelo simplesmente adicionando mais de uma do mesmo ponto de partida"</strong></td>
-              <td><code>canConnect</code> (<code>graph-model.js</code>) permite <strong>N arestas saindo de um nó que não ramifica</strong> — é exatamente o paralelismo pedido — e recusa a 2ª aresta de <em>um mesmo braço</em> de um nó que ramifica, com uma mensagem que ensina o contorno. No canvas os três blocos do mesmo ponto viram três arestas paralelas em raias distintas, sem toast de erro. No pipeline compilado viram três <code>WorkStep</code> com o mesmo <code>dependsOn</code>, que é o que o escalonador de ondas lê como "mesma onda".</td>
-            </tr>
-            <tr>
-              <td><strong>"definir o que esperamos com join ou não"</strong></td>
-              <td><code>JoinPolicy</code> — <code>{ mode: 'all' }</code> (todo predecessor direto é dependência) ou <code>{ mode: 'subset', of: [...] }</code> (só os listados). Todo nó exceto o <code>prompt</code> carrega um. Compila direto para <code>dependsOn</code>.</td>
-            </tr>
-            <tr>
-              <td><strong>"se o primeiro lança tdd, test-segurança, test-performance … apenas do teste de performance continuarmos, não precisamos esperar os demais"</strong></td>
-              <td>É a amostra <code>tdd-seguranca-performance</code>, que modela o pedido <strong>literalmente</strong>. Verificado rodando <code>huu graph compile</code>: o nó consolidador sai com <code>dependsOn: ["3. Revisão de performance [performance]"]</code> — <strong>só ele</strong>. Com <code>join all</code> sairiam os três. Vem com um aviso honesto (<code>join-subset-drops-barrier</code>): relaxar o join tira a <em>dependência</em>, não a barreira de merge da onda BSP. Veja a aba <a href="#pane-decisoes">Decisões</a>.</td>
-            </tr>
-            <tr>
-              <td><strong>"bloco de pesquisar na internet onde definiremos o que será pesquisado"</strong></td>
-              <td>O nó <code>research</code> com o campo <code>query</code>, e o contrato <code>huu-research-v1</code> em <code>src/lib/dev-graph/research-contract.ts</code> (1.024 linhas). Um agente <code>pi</code> tem sete ferramentas — <code>bash edit find grep ls read write</code> — e <strong>nenhuma é web</strong>, então o prompt descreve <em>comandos de shell</em> e nomeia os binários exatos que a imagem instala, numa escada A (busca com chave) → B (busca keyless) → C (<code>curl</code> + <code>jq</code>).</td>
-            </tr>
-            <tr>
-              <td><strong>"podemos usar o contexto para isso"</strong></td>
-              <td><code>ResearchNode.useContext: boolean</code> — diz se a resposta tem de estar ancorada <em>neste</em> repositório (o agente lê o código) ou se é respondida pelo modelo e pela web sozinhos.</td>
-            </tr>
-            <tr>
-              <td><strong>"isso volta como uma condicional que configuramos"</strong></td>
-              <td>Uma pesquisa que ramifica compila para <strong>um par</strong>: um <code>WorkStep</code> (a pesquisa, que escreve <code>research.json</code> + <code>research.md</code> commitados) e um <code>CheckStep</code> que <strong>transcreve</strong> o veredito do artefato para uma rota. O juiz é deliberadamente mecânico: não re-pesquisa e não julga o mérito da pesquisa — lê um campo de um arquivo e o copia no enum.</td>
-            </tr>
-            <tr>
-              <td><strong>"booleana … cadastrar comportamentos de sim e não na saída dela"</strong></td>
-              <td><code>outputKind: 'boolean'</code> — braços com ids fixos <code>yes</code> e <code>no</code>. O inspector mostra, para cada braço, <strong>qual nó ele aciona hoje</strong>, ou "sem comportamento cadastrado" com um botão que abre a paleta <em>naquele braço</em>. Compilado: um <code>CheckStep</code> com <code>outcomes[].nextStepName</code> por braço e exatamente um <code>default: true</code>.</td>
-            </tr>
-            <tr>
-              <td><strong>"múltipla escolha … definir comportamentos para a saída"</strong></td>
-              <td><code>outputKind: 'choice'</code> com <code>choices[]</code> (mínimo 2). Editor de opções com id derivado do rótulo por slug; id duplicado é recusado <strong>nomeando o ocupante</strong>; remover é bloqueado enquanto restam 2, então o erro <code>choice-needs-two</code> nunca chega a acontecer pela tela. Teto de 12 braços (<code>DEVGRAPH_MAX_BRANCHES</code>).</td>
-            </tr>
-            <tr>
-              <td><strong>"informativo não definimos nada e ela entra como contexto na próxima etapa"</strong></td>
-              <td><code>outputKind: 'info'</code> — compila para <strong>um</strong> <code>WorkStep</code>, sem <code>CheckStep</code>. A UI diz que não há saída para rotear. As arestas que saem dele <strong>não podem</strong> nomear braço (<code>edge-outcome-forbidden</code>), mas ele pode alimentar vários sucessores, e cada um é instruído a ler o artefato. O contexto viaja pelo <strong>fecho transitivo das dependências efetivas</strong> — citar um arquivo de um ramo que o join largou entregaria um caminho que talvez nem exista.</td>
-            </tr>
-            <tr>
-              <td><strong>"não me peça nada faça até o fim"</strong></td>
-              <td>7 ondas de sub-agentes em worktrees isoladas, revisão adversarial entre ondas, squash-merge um a um com gate entre merges. Zero perguntas. A aba <a href="#pane-ondas">Ondas</a> lista o quê em cada uma.</td>
+              <td><code>web-dev-surface</code></td>
+              <td><span class="v-warn">WARNING</span></td>
+              <td>A segurança segurou: XSS resistiu a 5 vetores com parser e renderizador <em>reais</em> (com teste de
+              controle provando que o detector dispara quando não há escape); a rota resistiu a 18 casos de fuzzing;
+              o quadro dev ficou em 200 bytes. Mas a UI <strong>mentia em três pontos</strong>: um agente que
+              <em>crashou</em> era reportado como "brief mergeado"; a rodada 1 dizia "não escreveu nada" quando o estado
+              real era "narração não recuperável"; e a guarda de navegação estava presa à <em>sessão</em>, então uma
+              pipeline normal lançada no meio da sessão herdava o comportamento do modo dev.</td>
             </tr>
           </tbody>
         </table>
       </div>
-
-      <h2 class="h4 pane-title mt-5">O que veio junto, sem ter sido pedido</h2>
-      <p>Três coisas que o pedido não nomeia mas que o desenho exigia para ser um método completo:</p>
-      <div class="row g-3">
-        <div class="col-md-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-arrow-counterclockwise fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">A aresta que volta</h3>
-              <p class="small text-body-secondary mb-0">"Portão de qualidade: se reprovou, volte e conserte" é o motivo mais comum de existir um portão — e não era desenhável (o braço para trás era recusado como <code>cycle</code>). <code>GraphEdge.rework: true</code> resolve, sem virar ciclo.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-diagram-2 fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">A família <code>-findings</code></h3>
-              <p class="small text-body-secondary mb-0">"Auditar → gerar lista de problemas → um agente por problema" era inexprimível: o único canal passo→passo do huu é o filesystem commitado, e um bloco <code>readOnly</code> é um beco sem saída de <em>dados</em>. Três blocos novos (<code>security-</code>, <code>performance-</code>, <code>review-findings</code>) destravam o leque.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-shield-check fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">O nó <code>gate</code></h3>
-              <p class="small text-body-secondary mb-0">Uma checagem que <em>você</em> escreve: um juiz LLM avalia a sua <code>condition</code> no worktree de integração, depois do merge, e escolhe uma das saídas que você declarou. Compila para um <code>CheckStep</code>.</p>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
+  </details>
 
-    <!-- ══════════════ ABA 2 · DE-PARA ══════════════ -->
-    <div class="tab-pane fade" id="pane-depara" role="tabpanel"
-         aria-labelledby="tab-depara" tabindex="0" data-print-title="De-Para">
-
-      <h2 class="h4 pane-title">De-Para por subsistema</h2>
-      <p class="text-body-secondary">94 arquivos agrupados pelo que mudou <em>conceitualmente</em>. Números de linha são <code>git diff --shortstat 26d093b1..HEAD -- &lt;caminho&gt;</code>.</p>
-
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary small mb-2">O modo dev era o <em>único</em> fluxo do huu cuja topologia era escrita em <strong>tempo de execução</strong>, por um planner LLM.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2 small">
-                <li><i class="bi bi-cpu me-2 text-body-secondary"></i>Fase A (conhecimento) e Fase B (plano) rodavam sempre; um modelo decidia quantas frentes, o que cada uma faz e onde se juntam</li>
-                <li><i class="bi bi-arrow-repeat me-2 text-body-secondary"></i>N épocas até o objetivo (ou o teto), com replanejamento a cada época</li>
-                <li><i class="bi bi-window me-2 text-body-secondary"></i>Web: um formulário <code>/dev</code>; nenhum canvas em lugar nenhum</li>
-                <li><i class="bi bi-exclamation-octagon me-2 text-body-secondary"></i>MANIFESTO §diferencial-2 ("zero planner LLM em runtime") carregava uma <strong>exceção explícita</strong> para o modo dev</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary small mb-2">Com um desenho, a exceção deixa de ser necessária: a <strong>topologia é o desenho</strong>.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2 small">
-                <li><i class="bi bi-check2-circle me-2" style="color:var(--do-success)"></i>Fases A e B <strong>não acontecem</strong> — não "são puladas para economizar": a Fase B escreve um plano que já existe e a Fase A existe para briefar quem escreve o plano</li>
-                <li><i class="bi bi-1-circle me-2" style="color:var(--do-success)"></i><strong>Exatamente uma época</strong>; <code>--epochs &gt; 1</code> com <code>--graph</code> é recusado (<code>graph-conflict</code>), nunca rebaixado em silêncio</li>
-                <li><i class="bi bi-check2-circle me-2" style="color:var(--do-success)"></i>Canvas em <code>/graph</code>, CLI <code>huu graph</code>, tela <code>[G]</code> na TUI</li>
-                <li><i class="bi bi-check2-circle me-2" style="color:var(--do-success)"></i>Um espião nos testes ponta-a-ponta <strong>conta e lança</strong> se o planner for chamado numa sessão desenhada. Ficou em zero.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4">1 · Formato, validador e compilador <span class="badge badge-ok ms-1">novo</span></h3>
-      <p class="src"><code>src/lib/dev-graph/</code> — 18 arquivos, <span class="diff-plus">+13.838</span></p>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle">
+  <details>
+    <summary>A prova por mutação feita pelo próprio orquestrador (depois que um agente caiu por rate limit)</summary>
+    <div class="details-body">
+      <p>
+        Um agente de correção morreu por limite de sessão (HTTP 429) <em>depois</em> de commitar o trabalho —
+        antes de rodar a prova de mutação. O orquestrador assumiu a verificação restante: sabotou o código
+        <strong>já integrado</strong>, uma sabotagem por vez, restaurando e conferindo a restauração por
+        <code>sha256</code> a cada rodada.
+      </p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Sabotagem aplicada</th><th>Testes que morreram</th></tr></thead>
           <tbody>
-            <tr><th scope="row" style="width:30%"><code>graph-types.ts</code></th><td>Só tipos, puro. 4 tipos de nó, <code>JoinPolicy</code>, <code>GraphEdge.rework</code>, os tetos (40 nós, 80 arestas, 12 braços, 400 arquivos, 80 chars de label, 4.000 de goal/prompt) e <strong>46 códigos de erro + 4 avisos</strong>, cada um com o comentário de por que existe.</td></tr>
-            <tr><th scope="row"><code>graph-schema.ts</code></th><td>O zod. Dono da <strong>forma</strong> e de tetos anti-DoS bem acima dos de produto (500 nós, 1000 arestas, 20.000 chars). <code>parseDevGraph</code>.</td></tr>
-            <tr><th scope="row"><code>graph-validate.ts</code></th><td>Dono de todo <strong>limite de produto</strong> e de toda regra que um humano deve <em>ver</em>. <code>validateGraph</code> <strong>nunca lança</strong>, nem sobre um <code>null</code> dentro da lista de nós. Também exporta o maquinário topológico: <code>topoOrder</code>, <code>ancestorsOf</code>, <code>effectiveDependencies</code>, <code>outboundEdges</code>.</td></tr>
-            <tr><th scope="row"><code>node-catalog.ts</code></th><td>15 blocos em ordem de paleta (a ordem é contrato: novos vão no fim). Cada um com <code>promptTemplate</code>, <code>defaultScope</code>, <code>produces</code>, <code>readOnly</code>, <code>review</code> e um <code>judgeClause</code> mecanicamente checável.</td></tr>
-            <tr><th scope="row"><code>graph-to-pipeline.ts</code></th><td>1.266 linhas, puro, mecânico. <code>prompt</code>→nada · <code>action</code>→1 <code>WorkStep</code> · <code>research info</code>→1 <code>WorkStep</code> · <code>research boolean|choice</code>→<code>WorkStep</code>+<code>CheckStep</code> · <code>gate</code>→1 <code>CheckStep</code>. Portão de saída obrigatório: <code>PipelineSchema.safeParse</code> em toda saída.</td></tr>
-            <tr><th scope="row"><code>research-contract.ts</code></th><td>1.024 linhas. Saída estruturada <code>huu-research-v1</code>, parser tolerante (sobrevive a 30 ataques sem lançar), três construtores de prompt e a escada A/B/C. <code>nodeId</code>/<code>graphRoot</code> são <strong>sanitizados</strong>, não escapados: eles são interpolados em <code>mkdir -p</code>, <code>git add</code> e <code>cat</code>.</td></tr>
-            <tr><th scope="row"><code>graph-store.ts</code></th><td>CRUD atômico em <code>.huu/dev/graphs/&lt;id&gt;.json</code> (tmp+rename no <strong>mesmo</strong> diretório). Falha sempre como <strong>dado</strong>, com prefixo estável: <code>invalid-id:</code> <code>not-found:</code> <code>invalid-json:</code> <code>invalid-schema:</code> <code>id-mismatch:</code> <code>read-failed:</code> <code>write-failed:</code> <code>delete-failed:</code>.</td></tr>
-            <tr><th scope="row"><code>graph-samples.ts</code></th><td>6 amostras, todas <code>validateGraph ok:true</code>, todas salvas como <strong>seu</strong> grafo (nada é carregado por baixo dos panos).</td></tr>
+            <tr><td>renomear um id de elemento do debate</td><td>7 falham</td></tr>
+            <tr><td>tirar <code>hidden</code> do markup</td><td>1 falha</td></tr>
+            <tr><td>remover <code>onDevRunFrame(run)</code></td><td>1 falha</td></tr>
+            <tr><td>inverter a guarda <code>devHold</code></td><td>3 falham</td></tr>
           </tbody>
         </table>
       </div>
-
-      <h3 class="h5 mt-4">2 · API HTTP <span class="badge badge-ok ms-1">novo</span></h3>
-      <p class="src"><code>src/web/graph-api.ts</code> (+612) · <code>src/web/server.ts</code> (<span class="diff-plus">+140</span>/<span class="diff-minus">−6</span>) · testes +1.364</p>
-      <p><strong>Antes:</strong> nada. <strong>Depois:</strong> toda a gramática é <code>(method, path, query, body) → {status, body}</code> <strong>pura</strong> em <code>graph-api.ts</code>; o <code>server.ts</code> só reconhece o prefixo e parseia o corpo. É o que torna o mapa de status testável sem abrir socket.</p>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle">
-          <thead><tr><th>Rota</th><th>Verbo</th><th>O que faz</th></tr></thead>
-          <tbody>
-            <tr><td><code>/api/graphs</code></td><td>GET</td><td>lista os desenhos salvos (<code>?dir=</code> escolhe o repositório)</td></tr>
-            <tr><td><code>/api/graphs/catalog</code></td><td>GET</td><td>a paleta: blocos, tipos de nó, metodologias, amostras</td></tr>
-            <tr><td><code>/api/graphs/validate</code></td><td>POST</td><td><strong>sempre 200</strong> — grafo cheio de erro é uma resposta, não uma falha de transporte</td></tr>
-            <tr><td><code>/api/graphs/compile</code></td><td>POST</td><td>compila; <strong>nunca 500</strong>, o 400 carrega <code>errors[]</code> para o canvas pintar os nós culpados sem um segundo round-trip</td></tr>
-            <tr><td><code>/api/graphs/from-sample</code></td><td>POST</td><td>salva uma amostra como grafo seu; nunca sobrescreve — colide, sufixa (<code>-2</code>…<code>-99</code>), devolve o que chegou ao disco</td></tr>
-            <tr><td><code>/api/graphs/&lt;id&gt;</code></td><td>GET · PUT · DELETE</td><td>ler · salvar · apagar. O PUT trata a <strong>URL como autoridade</strong>: <code>graph.id</code> divergente é 400, nunca reescrita silenciosa</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="small text-body-secondary mb-0">Dois detalhes de contrato: o corpo é <strong>sempre</strong> o envelope <code>{ graph }</code>, nunca o devgraph cru; e <code>dir</code> viaja como <strong>query</strong> em GET/DELETE mas como <strong>campo de corpo</strong> em PUT/POST. <code>catalog</code>, <code>compile</code>, <code>validate</code> e <code>from-sample</code> são slugs <em>legais</em> — recusados na <strong>escrita</strong> (400), não sumidos na leitura.</p>
-
-      <h3 class="h5 mt-4">3 · Canvas web <span class="badge badge-ok ms-1">novo</span></h3>
-      <p class="src"><code>src/web/client/modules/graph/</code> — 12 arquivos, <span class="diff-plus">+8.371</span> · <code>vendor/</code> <span class="diff-plus">+1.266</span> · <code>graph.css</code> +1.034 · <code>index.html</code> +66</p>
-      <p><strong>Antes:</strong> o cliente web tinha <code>launch.js</code>, <code>dev.js</code>, <code>state.js</code> e nenhum grafo. <strong>Depois:</strong> uma SPA em <code>/graph</code> (rota bookmarkável de verdade, servida acima do portão de token, como <code>/</code> e <code>/dev</code>), com o corte deliberado entre <strong>lógica pura</strong> e <strong>componente</strong>:</p>
-      <ul>
-        <li><strong><code>graph-model.js</code></strong> (1.012 linhas) · <strong><code>palette-model.js</code></strong> · <strong><code>graph-api-client.js</code></strong> — vanilla-ESM sem DOM, sem <code>fetch</code>, sem <code>window</code>. O corte existe porque <code>vitest.config.ts</code> não declara <code>environment</code>: todo <code>*.test.js</code> de cliente roda em Node sem <code>document</code>, então <em>lógica dentro do componente é lógica intestável</em>. Mutações puras que devolvem a <strong>mesma referência</strong> quando nada muda.</li>
-        <li><strong><code>canvas.js</code></strong> · <strong><code>node-views.js</code></strong> · <strong><code>palette.js</code></strong> · <strong><code>inspector.js</code></strong> (1.580 linhas) — o DevGraph é a verdade; o componente só desenha. <code>toFlow</code> deriva o que o React Flow renderiza e toda mutação passa pelos modelos puros. <strong>Zero regra de grafo reimplementada no componente.</strong></li>
-      </ul>
-      <p>A validação roda <strong>ao vivo</strong>, debounce de 400 ms, a cada mudança: problemas agrupados por âncora, nós e arestas ganham estilo de erro/aviso com badge de contagem, e o que <em>não tem âncora</em> (um payload que não é um devgraph) cai numa lista global — um canvas que só soubesse destacar nó mostraria verde para um grafo que o store recusaria salvar. Um <strong>aviso não é defeito</strong>: <code>join-subset-drops-barrier</code> é a resposta esperada para o grafo que essa tela existe para desenhar, então é contado à parte e nunca deixa o status vermelho.</p>
-
-      <h3 class="h5 mt-4">4 · Driver do modo dev <span class="badge badge-accent ms-1">modificado</span></h3>
-      <p class="src"><code>src/lib/dev-mode/</code> — 4 arquivos, <span class="diff-plus">+2.992</span>/<span class="diff-minus">−51</span> · <code>src/lib/types/dev-mode.ts</code> +77</p>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle">
-          <thead><tr><th style="width:30%">Antes</th><th>Depois</th></tr></thead>
-          <tbody>
-            <tr><td>Fase A → Fase B → execução, toda época</td><td>Com grafo: <strong>só execução</strong>. Fases A e B não acontecem. Provado ponta a ponta com repositório git real, <code>Orchestrator</code> real, worktrees e merges reais, backend stub — e um espião que conta e lança se o planner for chamado. Zero nas duas sessões.</td></tr>
-            <tr><td><code>maxEpochs ?? 3</code></td><td><code>drawnMethod ? 1 : (maxEpochs ?? 3)</code>. <code>--epochs &gt; 1</code> com <code>--graph</code> é recusado <strong>no parser puro</strong>, antes de qualquer I/O.</td></tr>
-            <tr><td>Resume sem os argumentos originais → degradava para o planner</td><td><strong>Recusa</strong> (<code>graph-missing-on-resume</code>). Não é arquivo faltando, é <em>argumento</em> faltando. E um resume com grafo <em>diferente</em> é <code>graph-conflict</code>.</td></tr>
-            <tr><td>Namespace por sessão</td><td>Namespace cobre a <strong>execução</strong>: <code>devGraphRoot(sessionId, epoch)</code> e <code>devGraphFanOutNamespace</code> → <code>.huu/findings/&lt;sessão&gt;-e&lt;época&gt;/&lt;nó&gt;.json</code>. Duas épocas do mesmo desenho não compartilham mais a lista de leque.</td></tr>
-            <tr><td>Portão de aprovação mostrava <code>até 1 agente(s)</code></td><td><code>maxTasks</code> sai dos <strong>steps compilados</strong>, espelhando <code>Orchestrator.buildTasks</code>. Sub-relatar o raio de alcance num portão de consentimento é falha de consentimento.</td></tr>
-            <tr><td><code>DevEvent</code> com variantes exaustivas</td><td><code>planned</code> ganha um campo <strong>opcional</strong> <code>graph</code>, não uma variante nova — <code>describeEvent</code> é um <code>switch</code> exaustivo que retorna valor, e uma variante nova quebraria a compilação de toda superfície até ela aprender o caso.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h3 class="h5 mt-4">5 · Lançar pelo navegador <span class="badge badge-accent ms-1">modificado</span></h3>
-      <p class="src"><code>src/web/dev-manager.ts</code> (<span class="diff-plus">+212</span>/<span class="diff-minus">−9</span>) · <code>src/web/client/modules/dev.js</code> (<span class="diff-plus">+565</span>/<span class="diff-minus">−43</span>) · testes +1.505</p>
-      <p><strong>Antes:</strong> <code>dev-manager.ts</code> era o único caminho web → <code>runDevMode</code> e não sabia nada de grafo. <strong>Depois</strong>, em duas etapas:</p>
-      <ul>
-        <li><strong>Onda 4</strong> — <code>POST /api/dev</code> passa a aceitar <code>graphId</code> e <code>graph</code>. <code>resolveDevGraph</code> roda <strong>na borda</strong>, antes da chave de API, antes do config, antes de <code>this.session</code> existir: recusa vira 400 sem custar worktree nenhuma (provado: zero diretórios criados nas 5 recusas). O grafo resolvido vai ao driver <strong>por valor</strong> — uma leitura, sem TOCTOU.</li>
-        <li><strong>Onda 7</strong> — o cliente finalmente <em>envia</em>. Botão "Rodar este método" no canvas, seletor <em>planner LLM | método desenhado</em> no formulário <code>/dev</code>, e <code>devGraphPayload()</code> injetando <code>graphId</code> no corpo. Na trilha do planner o spread é vazio: o corpo continua <strong>byte-idêntico</strong> ao de antes.</li>
-      </ul>
-
-      <h3 class="h5 mt-4">6 · CLI <span class="badge badge-ok ms-1">novo</span></h3>
-      <p class="src"><code>src/lib/graph-cli.ts</code> +694 · <code>graph-cli.test.ts</code> +515 · <code>src/cli.tsx</code> +17</p>
-      <p>Seis subcomandos. Tudo até "tocar o disco" é o <code>parseGraphCliArgs</code> <strong>puro</strong>: argv entra, sai ou uma recusa ou um comando totalmente resolvido. <strong>Disciplina de saída:</strong> <em>stdout</em> carrega só o payload (a listagem, a topologia, o relatório, o pipeline quando não há <code>--out</code>); <em>stderr</em> carrega progresso, confirmações e recusas. Então <code>huu graph compile &lt;id&gt; &gt; pipeline.json</code> escreve um pipeline e nada mais.</p>
-      <p>Duas decisões de despacho em <code>cli.tsx</code>: <code>graph</code> entra em <code>NON_TUI_SUBCOMMANDS</code> (um <code>huu graph list</code> não deve criar <code>.huu/debug-*.log</code> só para imprimir uma listagem) mas <strong>não</strong> em <code>NATIVE_ONLY_SUBCOMMANDS</code>, então roda no container como o <code>dev</code>; e o despacho acontece <strong>antes</strong> de <code>ensureGitRepoOrExit</code>, porque ler um desenho é operação de arquivo.</p>
-
-      <h3 class="h5 mt-4">7 · TUI <span class="badge badge-ok ms-1">novo</span></h3>
-      <p class="src"><code>src/ui/components/GraphScreen.tsx</code> +592 · <code>src/lib/graph-render.ts</code> +288 · <code>src/lib/screen-fsm.ts</code> +74 · <code>src/app.tsx</code> +35</p>
-      <p>A tela é um <strong>picker, não um canvas</strong> — desenhar precisa de mouse, e isso mora no navegador. Aqui você lista, lê em voz alta (diagrama ASCII), confere e roda. O texto todo vem de <code>graph-render.ts</code>, que é um <code>DevGraph → string[]</code> <strong>puro</strong>: sem fs, sem Ink, sem cor. Um diagrama é a única coisa que uma tela de TUI não pode ser testada através — a asserção teria de atravessar um frame renderizado, uma largura, um wrap e um escape de cor.</p>
-      <p>Lançar entrega o <strong>pipeline compilado</strong> à cadeia de lançamento que já existia. Zero máquina de run nova, nenhum paralelo com as 697 linhas do <code>dev-manager</code>. E <strong>não</strong> passa pelo pipeline-editor de propósito: editar à mão o pipeline emitido o dessincronizaria do grafo que ele diz ser.</p>
-
-      <h3 class="h5 mt-4">8 · i18n, docs e skills</h3>
-      <p class="src"><code>src/lib/i18n/</code> 6 arquivos <span class="diff-plus">+586</span> · <code>docs/</code> 6 arquivos <span class="diff-plus">+1.355</span> · <code>.agents/</code> 10 arquivos <span class="diff-plus">+198</span></p>
-      <ul>
-        <li><strong>i18n</strong> — 224 linhas em <code>web.ts</code>, 43 em <code>tui.ts</code>, 25 em <code>cli.ts</code>, en + pt-BR em paridade (o <code>t()</code> deste repo <em>lança</em> em chave ausente de qualquer locale). Mas os <strong>46 códigos do validador não viraram chave</strong> — veja <a href="#pane-decisoes">Decisões</a>.</li>
-        <li><strong>docs</strong> — <code>docs/dev-graph.md</code> (620 linhas) + gêmeo pt-BR (629), 11 headers em paridade; seção nova em <code>docs/dev-mode*.md</code>; <code>docs/KEYBOARD.md</code> com o <code>[G]</code> e as teclas <em>reais</em> lidas do <code>GraphScreen.tsx</code>; README + README.en; CHANGELOG.</li>
-        <li><strong>skills</strong> — 16 aprendizados em probation distribuídos por domínio, mais uma skill nova <code>authoring-dev-graphs</code> (160 linhas, ~2.573 tokens): 6 dos aprendizados eram fatos de dev-graph que só cabiam nos donos vizinhos por falta de casa própria.</li>
-        <li><strong>METODO.md</strong> — §1/§3 re-medidos, <code>check-metodo</code> volta a passar. Descoberta registrada: o histórico foi reiniciado em <code>26d093b</code> (<em>v1.0.0 — clean start</em>), então <code>git log</code> não alcança mais os números de idade/autoria/churn. Marcados como <strong>registro histórico pré-clean-start</strong> em vez de inventar substitutos.</li>
-      </ul>
+      <p>
+        Baseline e código restaurado: <code>exit 0</code>. <code>sha256</code> idêntico ao original,
+        <code>git status</code> limpo. Nenhuma sabotagem sobreviveu.
+      </p>
     </div>
+  </details>
 
-    <!-- ══════════════ ABA 3 · DECISÕES ══════════════ -->
-    <div class="tab-pane fade" id="pane-decisoes" role="tabpanel"
-         aria-labelledby="tab-decisoes" tabindex="0" data-print-title="Decisões">
-
-      <h2 class="h4 pane-title">As decisões, e os porquês</h2>
-      <p class="text-body-secondary">A parte que não está no diff. Cada uma vem do comentário no código ou da mensagem de commit que a introduziu.</p>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-1-circle me-1"></i><strong><code>join subset</code> tira a DEPENDÊNCIA, não a barreira de merge</strong></div>
-        <div class="card-body">
-          <p>O pedido era "apenas do teste de performance continuarmos, não precisamos esperar os demais". A tentação é ler isso como "pule a barreira". <strong>O huu não tem essa semântica, e o formato não a inventou.</strong></p>
-          <p class="mb-2">O huu executa em ondas BSP sobre git: ao fim de <em>todo</em> estágio, <em>todo</em> ramo é mesclado no worktree de integração antes do próximo começar. Relaxar um join remove a <strong>dependência</strong> — de dado e de sucesso — entre os ramos: o nó deixa de esperar os predecessores largados e deixa de falhar quando eles falham. <strong>Não</strong> remove a barreira de merge da onda, e não faz o nó começar antes em tempo de relógio se os ramos largados já estão na mesma onda.</p>
-          <p class="mb-2">A honestidade é enforçada em quatro lugares: no docstring do tipo, no cabeçalho do compilador, no aviso <code>join-subset-drops-barrier</code> (redigido exatamente assim) e na doc. O aviso <code>join-subset-single-inbound</code> cobre o caso em que o <code>subset</code> não muda nada.</p>
-          <p class="mb-0 small text-body-secondary"><strong>Consequência prática:</strong> "upstream", para o contexto de pesquisa, é o fecho transitivo das dependências <em>efetivas</em>, não das arestas desenhadas. Um nó que largou uma aresta de entrada nunca é mandado ler o <code>research.md</code> daquele ramo — nada garante que o arquivo já exista, e largar a aresta foi você dizendo "não quero esse insumo".</p>
-          <p class="src mt-2 mb-0">Fonte: <code>src/lib/dev-graph/graph-types.ts</code> (JoinPolicy) · <code>graph-to-pipeline.ts</code> (cabeçalho) · commit <code>fef6248c</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-2-circle me-1"></i><strong>O zod é guarda de FORMA; o validador é dono dos LIMITES</strong></div>
-        <div class="card-body">
-          <p>O schema zod (<code>parseDevGraph</code>) cuida da <strong>forma</strong> e de tetos anti-DoS bem <em>acima</em> dos de produto — 500 nós, 1000 arestas, 20.000 caracteres. O validador cuida dos tetos de verdade (40 nós, 80 arestas, 400 arquivos) e de toda regra que um humano deveria <em>ver</em>.</p>
-          <p class="mb-2"><strong>Por quê:</strong> um erro de parse é um canvas em branco e um desenho perdido. Uma issue é um to-do que você conserta na tela. Um grafo com nó demais, label longo ou aresta pendurada <strong>abre no editor</strong> e mostra o problema.</p>
-          <p class="mb-0">A mesma regra ordena os ids: uma <strong>declaração</strong> (id de grafo, de escolha, de saída) é estrita no zod; uma <strong>referência</strong> (id de nó, source/target de aresta, <code>fanOutFrom</code>, entrada de subset) é permissiva lá e checada pelo validador — onde o problema pode ser mostrado <em>contra a caixa que o carrega</em>.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>docs/dev-graph.md</code> §"How a graph compiles" · commit <code>fef6248c</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-3-circle me-1"></i><strong><code>validateGraph</code> NUNCA lança; <code>compileGraphPipeline</code> SEMPRE lança</strong></div>
-        <div class="card-body">
-          <p>Dois portões sobre o mesmo desenho, assimétricos de propósito.</p>
-          <ul class="mb-2">
-            <li><strong><code>validateGraph</code> nunca lança</strong> — o editor valida a cada tecla de um grafo meio desenhado, e um throw ali é um canvas em branco. Nem sobre um buraco <code>null</code> dentro da lista de nós.</li>
-            <li><strong>O compilador lança no primeiro grafo inválido</strong> — um compilador que "conserta" um método quebrado em silêncio roda um método que ninguém subscreveu. E lança <em>uma segunda vez</em> se a própria saída falhar no <code>PipelineSchema</code>: isso é bug do huu, não desenho ruim, e a mensagem diz isso.</li>
-          </ul>
-          <p class="mb-0">Tudo que ele <em>pode</em> reparar (número clampado, lista de arquivos largada, escopo rebaixado) volta em <code>warnings</code>, que toda superfície deve <strong>mostrar</strong>. É por isso que a tecla <code>R</code> da TUI e a rota <code>/compile</code> validam <em>antes</em> de compilar.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>graph-to-pipeline.ts</code> (cabeçalho, "THE ENTRY GATE IS ASYMMETRIC WITH THE EDITOR, ON PURPOSE")</p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-4-circle me-1"></i><strong>As 12 metodologias NÃO são compiladas num desenho</strong></div>
-        <div class="card-body">
-          <p>Cada flag de metodologia compila uma <strong>estrutura</strong> dentro de um grafo que o <em>planner</em> escreveu. Um devgraph expressa método <strong>desenhando</strong>: quem quer test-first solta o bloco <code>tdd</code> na tela; quem quer portão de qualidade desenha um nó <code>gate</code>. <strong>Acrescentar passos que ninguém desenhou é exatamente a decisão que este formato tira da máquina.</strong></p>
-          <p class="mb-2">Então elas são validadas, carregadas como <strong>metadado</strong> e <strong>avisadas</strong> — no compilador e de novo no início da sessão, nos três lugares onde o humano assina. Nunca compiladas em silêncio.</p>
-          <p class="mb-2">O roteamento de modelo por papel (<code>--worker-model</code> e companhia) é ignorado pelo <strong>mesmo</strong> motivo: um desenho tem <em>caixas</em>, não <em>papéis</em>. Roteie pelo <code>meta.modelId</code> do grafo ou por um <code>modelId</code> de nó.</p>
-          <p class="mb-0">Na web (onda 7) as 12 caixas <strong>continuam na tela</strong>, com banner de aviso — escondê-las ensinaria o oposto, que a escolha não existe, e descartaria em silêncio uma seleção que o humano ainda quer.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>graph-to-pipeline.ts</code> · <code>dev-driver.ts</code> (<code>graphSessionWarnings</code>) · commits <code>9b91d3d7</code>, <code>34eeb738</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-5-circle me-1"></i><strong>A aresta de retrabalho é explícita, e nunca inferida</strong></div>
-        <div class="card-body">
-          <p>Um braço para trás sem a flag continua sendo erro de <code>cycle</code>, porque <strong>um laço que o humano não subscreveu é um laço que ninguém assinou</strong>. Também não existe <code>rework: false</code>: o estado desligado é a <em>ausência</em> do campo, porque um booleano com dois significados convida a ler <code>false</code> como "uma aresta de retrabalho que está desabilitada", e isso não existe aqui. Efeito colateral bom: todo grafo desenhado antes do campo existir compila byte-idêntico.</p>
-          <p class="mb-2">A limitação era do <strong>formato</strong>, nunca do runtime. O <code>huu-pipeline-v2</code> já modela laço como aresta de <em>ativação</em> — o <code>validateTopology</code> diz literalmente <em>"loops belong to next/outcomes"</em> — e é assim que o juiz de front do próprio modo dev faz rework.</p>
-          <p class="mb-2">A mecânica são <strong>duas camadas sobre um desenho só</strong>:</p>
-<pre><code class="language-text">DEPENDÊNCIA   toda aresta SEM `rework`. Vira `dependsOn`, ordena o topo,
-              define "ancestral" — e é a ÚNICA camada onde se procura ciclo.
-ATIVAÇÃO      toda aresta, retrabalho incluído. Roteia (`outcomes[].nextStepName`)
-              e define alcançabilidade.</code></pre>
-          <p class="mb-2">Quatro códigos estáveis policiam: <code>rework-edge-not-from-branch</code> (a origem só tem uma saída), <code>rework-edge-needs-outcome</code> (uma rota de retrabalho ainda é um <em>braço</em>), <code>rework-edge-not-backward</code> (aresta para frente vestida de laço) e <code>default-outcome-is-rework</code>.</p>
-          <p class="mb-0">O que limita um laço legítimo é o <code>maxRuns</code> do próprio portão, e o <code>maxNodeExecutions</code> do pipeline é o backstop — o compilador <strong>orça as repetições</strong> para o backstop não cortar um laço que você desenhou de propósito.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>graph-types.ts</code> (<code>isReworkEdge</code>) · commit <code>e1bd822d</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-6-circle me-1"></i><strong>O default de um branch nunca pode ser o laço</strong></div>
-        <div class="card-body">
-          <p>A regra do forward-default do huu: o outcome marcado <code>default: true</code> dispara em <strong>toda</strong> falha — juiz que quebra, timeout, arquivo faltando, JSON corrompido, um rótulo fora do enum. Logo ele tem de ser a rota <strong>segura para frente</strong>.</p>
-          <p class="mb-2">Um default que volta transforma um juiz quebrado numa run que gira até o orçamento de execução matá-la. É o código <code>default-outcome-is-rework</code>, e é a regra a lembrar deste conjunto. Entre os candidatos, o compilador prefere o <em>último braço que vai para frente</em>.</p>
-          <p class="mb-2">A mesma lógica explica por que o <code>defaultOutcome</code> é <strong>sua</strong> decisão e não do modelo: para <em>"existe CVE conhecida nessa biblioteca?"</em>, <code>no</code> significa "adote a biblioteca" — um juiz que falhasse e respondesse <code>no</code> em silêncio leria como "a biblioteca é segura", a resposta mais destrutiva disponível. Qual lado é o cauteloso depende de qual ramo é caro tomar por engano, e só você sabe isso.</p>
-          <p class="mb-0"><strong>Verificado na prática:</strong></p>
-<pre><code class="language-text">$ huu graph validate bad
-huu graph validate "bad": 1 erro(s), 0 aviso(s).
-  ERRO  [default-outcome-is-rework] nó portao: defaultOutcome "rejected" of "portao"
-        is a rework arm - the default fires when the judge FAILS, so it must be the
-        safe route FORWARD, never the loop</code></pre>
-          <p class="src mb-0">Fonte: <code>graph-validate.ts</code> · <code>docs/dev-graph.md</code> §"defaultOutcome is your decision"</p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-7-circle me-1"></i><strong>A lista de fan-out mora em <code>.huu/findings/</code>, e não sob o <code>graphRoot</code></strong></div>
-        <div class="card-body">
-          <p>Esta é a única decisão de caminho do compilador que vale discutir, porque a alternativa <em>arrumadinha</em> estava errada.</p>
-          <p class="mb-2">Os blocos produtores (<code>-findings</code>) instruem o agente que, num repositório cujo <code>.gitignore</code> carrega <code>.huu/</code>, ele pode reescrever aquela linha para <code>.huu/*</code> e acrescentar <code>!.huu/findings/</code> — <strong>"a única edição permitida"</strong>. Esse remédio re-inclui <code>.huu/findings/**</code> e <strong>nada mais</strong>.</p>
-          <p class="mb-2">Então uma lista escrita em <code>&lt;graphRoot&gt;/findings/&lt;nó&gt;.json</code> — que seria mais organizado, já que tudo o mais que o módulo escreve mora ali — ficaria <strong>ignorada, não commitada e invisível</strong> para o <code>resolveMemoryFiles</code>, que lê o worktree de <em>integração</em> e só faz <code>existsSync</code>. O leque despacharia zero agentes, em silêncio, exatamente nos repositórios que precisam do remédio. <em>O caminho arrumado trocaria um bug de zero-silencioso por outro.</em></p>
-          <p class="mb-0">O namespace (<code>&lt;sessão&gt;-e&lt;época&gt;</code>) resolve o segundo perigo: ontem um recon achou 30 alvos e <strong>commitou</strong> a lista; hoje o mesmo grafo roda para outro objetivo e o recon dele falha — sem namespace, o leque despacharia 27 agentes sobre os alvos de ontem, com as dicas de ontem. Worktrees reais, custo real, trabalho que ninguém pediu. Com namespace, uma sessão cujo produtor não escreveu nada não acha lista, resolve zero tarefas e o estágio termina vazio — <strong>o resultado honesto</strong>.</p>
-          <p class="mb-0 mt-2"><strong>Verificado:</strong> compilando a amostra <code>recon-fanout</code>, o <code>filesFrom</code> sai como <code>.huu/findings/graph-cli-fanout/mapear-alvos.json</code> — fora do <code>graphRoot</code>, que naquela compilação é <code>.huu/dev/graph-cli/fanout/</code>.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>graph-to-pipeline.ts</code> (<code>DEVGRAPH_FINDINGS_DIR</code>, <code>fanOutPath</code>) · commits <code>e1bd822d</code>, <code>745c6bcb</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-8-circle me-1"></i><strong>Num campo cujo fallback é o planner LLM, descartar lixo é pior que recusar</strong></div>
-        <div class="card-body">
-          <p>A regra de coerção do <code>POST /api/dev</code> foi <strong>invertida de propósito</strong> para os dois campos novos.</p>
-          <p class="mb-2">Roteamento, preset e metodologia malformados continuam sendo <strong>descartados</strong> — descartá-los deixa o chamador no default que ele teria de qualquer jeito. <strong>Um desenho não tem esse default:</strong> o fallback de "não consegui ler o seu método" é o <em>planner LLM</em>, ou seja, trocar em silêncio a topologia do humano pela de um modelo — a única coisa que o <code>dev-driver.ts</code> se recusa a fazer em toda outra camada.</p>
-          <p class="mb-2">Então <code>graph</code> ou <code>graphId</code> <strong>presente e inutilizável</strong> é 400, nunca um dar de ombros. Com duas exceções que são "sem desenho" de verdade: <code>null</code>, e um <code>graphId</code> em branco — que é o que um cliente limpando o seletor manda.</p>
-          <p class="mb-0">O mesmo princípio, na mesma família: um <em>resume</em> sem o desenho re-fornecido <strong>recusa</strong> (<code>graph-missing-on-resume</code>) em vez de degradar; e o driver refuta o planner em todas as camadas onde ele poderia voltar por acidente.</p>
-          <p class="src mt-2 mb-0">Fonte: <code>src/web/server.ts</code> (comentário "THE DRAWN METHOD") · commit <code>bde3f460</code></p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-5">As demais, em uma linha cada</h3>
-      <div class="list-group list-group-flush">
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-translate fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Os 46 códigos do validador NÃO viraram chave i18n.</strong> Os identificadores (id de nó, id de braço, <code>kind</code>, id de bloco, o <code>GraphIssueCode</code>) são a superfície <em>estável</em> do formato: é o que o humano digita no editor e o que um bug report pode ser buscado por. Traduzi-los faria o desenho discordar do arquivo de onde veio. O <code>GraphIssue.message</code> também não é traduzido, e essa é a chamada honesta e não a preguiçosa: o validador o escreve com os <em>específicos</em> da instância (qual nó, qual limite, qual contagem), então uma frase estática de catálogo por código seria estritamente <em>menos</em> informativa. No canvas, o mesmo: <code>canConnect</code> e o servidor já devolvem a frase pronta, e uma segunda cópia no catálogo seria uma segunda autoridade na primeira vez que um lado fosse editado.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-hand-index fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong><code>aria-disabled</code>, nunca o atributo <code>disabled</code>.</strong> Uma entrada de paleta que as regras proíbem fica <strong>cinza mas visível e clicável</strong>, com a frase que ensina o contorno — um <code>disabled</code> de verdade engoliria o clique, e quem clica numa linha cinza merece ouvir a recusa em voz alta. Os outros braços do mesmo nó seguem abertos. (Os outros quatro botões do canvas — salvar, compilar, amostra, rodar — usam o <code>disabled</code> de verdade.)</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-send fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>O canvas NÃO faz POST.</strong> Ele nomeia o método e o submit do <code>/dev</code> inicia. Assim há um único caminho de submit e um único teste do corpo. O handoff é um <code>CustomEvent</code> no <code>document</code> em vez de um import, porque <code>launch.js</code> já importa o canvas e importar <code>dev.js</code> de dentro dele fecharia um ciclo ESM.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-clipboard-check fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>"Salvo" é igualdade por REFERÊNCIA.</strong> O botão "Rodar este método" fica desabilitado com a razão <em>visível</em> enquanto o desenho não está salvo e válido. Toda mutação do modelo devolve objeto novo, então <code>savedDoc === graph</code> é exatamente "inalterado desde que o servidor viu". Erra para o lado de "não salvo", que é o lado inofensivo, porque <code>huu dev --graph</code> lê o <strong>arquivo</strong>.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-signpost-split fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Trocar o <code>outputKind</code> não deixa o grafo virar lixo em silêncio.</strong> Se a troca não custa aresta nenhuma, aplica na hora. Se custa, lista cada aresta que será removida (braço → destino), só aplica no confirmar — e os nós que elas alcançavam <strong>permanecem</strong>: <em>aresta órfã não é trabalho órfão</em>.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-file-earmark-lock fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong><code>writeGraph</code> salva grafo INVÁLIDO de propósito</strong> (valida só o schema): o editor valida a cada tecla e um store que recusasse rascunho perderia o desenho. Já <code>graphPath</code> <strong>lança</strong> em id não-slug — o retorno é <code>string</code>, e devolver um path com <code>../</code> transformaria todo chamador na vulnerabilidade.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-fingerprint fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Nome de step carrega três trabalhos numa string:</strong> <code>&lt;posição&gt;. &lt;label&gt; [&lt;node.id&gt;]</code>. A posição é o lugar 1-based na ordem topológica (um kanban e um log leem na ordem de execução); o label é o que você escreveu no chip; o <code>[id]</code> é a identidade durável que mapeia um card de volta à caixa. A unicidade é <strong>estrutural</strong> — um nó, uma posição — provada contra label repetido, label vazio e <code>[id]</code> forjado dentro do label.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-shield-lock fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Texto que VIAJA é neutralizado; texto que FICA não é.</strong> O objetivo e a <code>condition</code> de um portão são colados em prompts cujos marcadores <code>=== SEÇÃO ===</code>, enums fechados e blocos de veredito JSON são o <em>maquinário</em> do huu — passam por <code>neutralizePromptText</code>. O <code>prompt</code> próprio de um nó <strong>não</strong> é neutralizado: ele <em>é</em> a instrução daquele nó, suas cercas são você escrevendo um prompt, e não há fronteira a cruzar. As <code>notes</code> nunca chegam a agente nenhum. É regra de coerência, não fronteira de segurança — quem desenha subscreve a run. O que se ganha: colar uma spec com <code>=== HARD RULES ===</code> no objetivo produz um prompt que ainda significa o que diz.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-1-square fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Um defeito, um código.</strong> Não existe <code>orphan-node</code> de propósito: um nó sem aresta de entrada que não seja a raiz já é, por construção, inalcançável — e reportar o mesmo defeito sob dois códigos faria a UI mostrá-lo duas vezes. Um nó enrolado num ciclo é reportado <strong>só</strong> como <code>cycle</code> (a causa, não a consequência). E uma aresta que falha numa regra <code>rework-*</code> não é <em>também</em> reportada na família genérica <code>edge-outcome-*</code>.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-arrows-collapse fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Exatamente uma aresta por braço.</strong> Zero é <code>branch-outcome-missing-edge</code>, duas é <code>branch-outcome-multiple-edges</code> — porque um <code>CheckStep</code> roteia para <em>um</em> <code>nextStepName</code> por outcome. Para paralelizar <em>depois</em> de uma decisão, aponte o braço para um único nó de ação e deixe <strong>aquele</strong> nó abrir o leque.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-box-arrow-up-right fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong><code>huu graph compile</code> usa uma raiz derivada só do id do grafo</strong>, não a <code>devGraphRoot()</code> namespaceada por sessão. É de propósito: <code>graph compile</code> não tem sessão — produz um <strong>artefato portátil</strong> que você roda com <code>huu auto</code>, e um caminho com id de sessão aleatório dentro não seria nem portátil nem reprodutível. Duas compilações do mesmo desenho saem byte-idênticas.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-diagram-3 fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>A escada de pesquisa degrada por FALHA, não só por ausência.</strong> <code>command -v</code> prova que um binário está <em>instalado</em>; não prova que ele tem chave, cota ou rede. A imagem instala a CLI de busca em build time independentemente de qualquer chave, e a materialização de chaves do huu é explicitamente não-fatal — "instalado e sem chave" é um estado comum. Então o prompt conta como <em>falha de camada</em> (e desce): exit não-zero, saída vazia, qualquer menção a credencial faltando (<code>401</code>, <code>403</code>, <code>unauthorized</code>), qualquer menção a cota (<code>quota</code>, <code>429</code>) e qualquer erro de rede (<code>timeout</code>, <code>ENOTFOUND</code>). O método <code>direct-fetch</code> distingue evidência real obtida por <code>curl</code> de <code>none</code> (nenhuma evidência), que o passo seguinte trata como não-respondido.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══════════════ ABA 4 · BUGS ══════════════ -->
-    <div class="tab-pane fade" id="pane-bugs" role="tabpanel"
-         aria-labelledby="tab-bugs" tabindex="0" data-print-title="Bugs achados">
-
-      <h2 class="h4 pane-title">Bugs achados no caminho</h2>
-      <p class="text-body-secondary">Nenhum destes fazia parte do pedido. Todos foram encontrados por sub-agentes construindo ou revisando adversarialmente o que os anteriores fizeram.</p>
-
-      <div class="card mb-3" style="border-color: rgba(255,107,107,.45)">
-        <div class="card-header"><span class="badge badge-danger me-2">crítico</span><strong>A UI web estava MORTA no load, em todas as rotas</strong></div>
-        <div class="card-body">
-          <p><code>src/web/client/modules/launch.js</code> chamava <code>t()</code> em <strong>nível de módulo</strong>, dentro de um literal de objeto:</p>
-<pre><code class="language-js">// ANTES — avaliado no IMPORT, com o catálogo ainda {}
-  placeholder: t('web.config.resolver_placeholder_value'),
-  emptyHint:   t('web.config.resolver_hint'),
-
-// DEPOIS — thunks; os consumidores desembrulham e ainda aceitam string
-  placeholder: () =&gt; t('web.config.resolver_placeholder_value'),
-  emptyHint:   () =&gt; t('web.config.resolver_hint'),</code></pre>
-          <p class="mb-2">O <code>t()</code> do navegador <strong>lança</strong> em chave ausente — deliberadamente: uma string não traduzida nunca deve chegar à tela. Em tempo de avaliação do módulo o catálogo ainda é <code>{}</code>, porque o <code>boot()</code> só faz <code>initI18n()</code> <em>depois</em> de todo o grafo de módulos ser avaliado. O throw matava o <code>&lt;script type="module"&gt;</code> antes de qualquer render.</p>
-          <p class="mb-0"><strong>Por que o gate estava verde:</strong> nenhum teste importava <code>app.js</code> ou <code>launch.js</code>. Agora <code>dev.test.js</code> importa a entrada de verdade, então uma recaída derruba a suíte. A regra ficou escrita no arquivo: <em>mantenha todo <code>t()</code> deste arquivo dentro de uma função</em> — <code>editorNavHints()</code> no <code>PipelineEditor.tsx</code> é a mesma correção do lado Ink.</p>
-          <p class="src mt-2 mb-0">Commit <code>34eeb738</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3" style="border-color: rgba(255,170,0,.45)">
-        <div class="card-header"><span class="badge badge-warn me-2">infra</span><strong><code>node_modules/</code> com barra não casa com symlink</strong></div>
-        <div class="card-body">
-          <p>Linha 1 do <code>.gitignore</code>. Uma barra final casa <strong>diretório</strong>, e toda worktree deste fluxo de agentes paralelos recebe <code>node_modules</code> como <strong>symlink</strong> para o checkout principal. Com <code>node_modules/</code> o symlink ficava <em>untracked e não-ignorado</em>, e um <code>git add -A</code> gravaria o caminho absoluto da máquina do autor dentro do branch.</p>
-<pre><code class="language-diff">-node_modules/
-+node_modules</code></pre>
-          <p class="mb-0">Provado com <code>git check-ignore</code> antes e depois.</p>
-          <p class="src mt-2 mb-0">Commit <code>cc18b1cb</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3" style="border-color: rgba(255,170,0,.45)">
-        <div class="card-header"><span class="badge badge-warn me-2">teste tautológico</span><strong>O teste do bundle vendorizado passava contra recheio</strong></div>
-        <div class="card-body">
-          <p>A revisão anterior do <code>reactflow.test.js</code> afirmava que o bundle não podia ser importado sob o ambiente <code>node</code> do vitest e por isso <strong>só aferia bytes</strong> — tamanho, banner, ausência de <code>require</code>. O teste de tamanho é <code>source.length &gt; 100 * 1024</code>: <strong>qualquer arquivo de texto de recheio acima de 100 KB com a cláusula <code>export{}</code> certa satisfazia todas as asserções.</strong></p>
-          <p class="mb-2">Verificado empiricamente que a premissa era falsa: <code>node -e "import('./reactflow.js')"</code> resolve com os 30 exports, sem jsdom e sem shim de <code>document</code>. A suíte passou a <strong>importar o bundle</strong> e aferir comportamento — uma única instância de React compartilhada, os enums do React Flow, <code>getBezierPath</code>, <code>addEdge</code>, <code>applyNodeChanges</code>/<code>applyEdgeChanges</code>, o <code>createRoot</code> de produção de verdade.</p>
-          <p class="mb-0"><strong>Prova anti-tautologia:</strong> a suíte nova falha <strong>28 de 42</strong> contra um stub de lixo.</p>
-          <p class="src mt-2 mb-0">Commit <code>88d19754</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3" style="border-color: rgba(255,170,0,.45)">
-        <div class="card-header"><span class="badge badge-warn me-2">licença</span><strong>17 pacotes redistribuídos, não 3</strong></div>
-        <div class="card-body">
-          <p>O <code>reactflow.js</code> não é um pacote upstream: é um bundle esbuild que inlina <strong>17 pacotes npm</strong> sob três licenças — <strong>9 MIT</strong> (<code>@xyflow/react</code>, <code>@xyflow/system</code>, <code>react</code>, <code>react-dom</code>, <code>scheduler</code>, <code>use-sync-external-store</code>, <code>zustand</code>, <code>classcat</code>…), <strong>7 ISC</strong> (os módulos <code>d3-*</code>) e <strong>1 BSD-3-Clause</strong> (<code>d3-ease</code>).</p>
-          <p class="mb-2">O huu é redistribuído (tarball npm + imagem GHCR), então esses avisos viajam junto: a ISC exige o aviso de copyright em todas as cópias e a BSD-3-Clause exige que ele seja reproduzido em distribuições binárias. O <code>LICENSE.md</code> passou a carregar o inventário honesto por pacote com os textos verbatim agrupados por família, <strong>gerado do metafile do esbuild</strong> por <code>scripts/vendor-reactflow.sh</code>, que avisa quando a tabela fica velha. O bundle é construído com <code>--legal-comments=eof</code>, então os banners de copyright upstream ficam dentro do próprio artefato.</p>
-          <p class="mb-0">O esbuild ficou fixado em <strong>0.28.1</strong>: a saída do minificador depende da versão, então os bytes commitados só reproduzem contra ela exatamente — e o teste falha se o banner e o <code>README.md</code> divergirem.</p>
-          <p class="src mt-2 mb-0">Commit <code>88d19754</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3" style="border-color: rgba(255,170,0,.45)">
-        <div class="card-header"><span class="badge badge-warn me-2">falso negativo</span><strong>A sonda de <code>.gitignore</code> perguntava sobre o PAI</strong></div>
-        <div class="card-body">
-          <p>Os blocos <code>-findings</code> mandam o agente sondar se o diretório de entrega está ignorado antes de escrever nele. A sonda original era <code>git check-ignore -q .huu</code> — e sob um <code>.gitignore</code> que carrega <code>.huu/**</code> <strong>o próprio <code>.huu</code> não fica ignorado</strong>. Perguntar sobre o pai respondia OK enquanto todo arquivo de tarefa escrito era descartado pelo <code>git add</code>.</p>
-<pre><code class="language-text">Probe the DELIVERABLE directory, never its parent: `git check-ignore -q .huu/findings`.
-A `.gitignore` carrying `.huu/**` leaves `.huu` itself un-ignored, so asking about the
-parent answers OK while every task file you wrote is dropped by `git add`.</code></pre>
-          <p class="mb-0">Provado nas <strong>4 formas</strong> que um projeto real escreve (<code>.huu/</code>, <code>.huu</code>, <code>/.huu/</code>, <code>.huu/**</code>) com repositórios git de verdade em <code>mkdtemp</code>.</p>
-          <p class="src mt-2 mb-0">Commit <code>6e844a6f</code></p>
-        </div>
-      </div>
-
-      <div class="card mb-3" style="border-color: rgba(255,107,107,.45)">
-        <div class="card-header"><span class="badge badge-danger me-2">crítico</span><strong>O default do próprio huu mataria a feature na largada</strong></div>
-        <div class="card-body">
-          <p><code>dev-cli.ts</code> mandava sempre <code>maxEpochs ?? DEV_DEFAULT_MAX_EPOCHS</code> (= <strong>3</strong>). E <code>maxEpochs &gt; 1</code> com grafo é <strong>recusa</strong> (<code>graph-conflict</code>). Ou seja: <strong>todo <code>huu dev --graph=x</code> sem <code>--epochs</code> teria morrido antes do primeiro agente começar.</strong></p>
-<pre><code class="language-ts">// depois
-maxEpochs: graphRef ? (maxEpochs ?? 1) : (maxEpochs ?? DEV_DEFAULT_MAX_EPOCHS)</code></pre>
-          <p class="mb-0">Fechado no parser puro, com recusa explícita de <code>--epochs &gt; 1</code> antes de qualquer I/O — assim o usuário ouve sobre a flag que <em>digitou</em>, não sobre um stop reason de dentro do driver.</p>
-          <p class="src mt-2 mb-0">Commit <code>fd9a37f2</code></p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4">Achados pela revisão adversarial do store</h3>
-      <div class="alert alert-warning d-flex gap-2" role="alert">
-        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
-        <div>A revisão adversarial <strong>apagou o mecanismo de escrita atômica inteiro</strong> — e os 2.792 testes continuaram verdes. Cada correção abaixo veio com prova por mutação.</div>
-      </div>
-      <ul>
-        <li><strong>Atomicidade sem teste.</strong> 3 testes que observam a <em>consequência</em> do rename: o inode muda entre saves, um leitor com fd antigo vê a versão anterior <strong>inteira</strong>, e o <code>fs.watch</code> prova o <code>.tmp</code> no <strong>mesmo</strong> diretório. Mutante → 3 falhas.</li>
-        <li><strong>Um FIFO travava <code>listGraphs</code> para sempre</strong> — e congelaria o event loop do servidor. Corrigido com <code>lstat().isFile()</code> antes de abrir. Mutante → <code>EXIT=124</code>, com guarda de 244 ms.</li>
-        <li><strong><code>now</code> não validado envenenava a ordenação</strong> — a string <code>'undefined'</code> ordena acima de qualquer ISO. <code>stampedAt()</code> valida e cai no relógio.</li>
-        <li><strong>Sobreposição de posição só pegava colisão exata</strong> → AABB de 260×100.</li>
-        <li><strong>O pareamento <code>readOnly</code> ↔ <code>-findings</code> tinha falso negativo real</strong>, fechado. Hoje há teste de pareamento: todo bloco <code>readOnly</code> tem gêmeo <code>-findings</code> produtor, e o invariante <code>produces === true ⇒ readOnly === false</code> vale para os 15 blocos.</li>
-        <li><strong>O portão de ENTRADA não cobria o que o de SAÍDA assumia:</strong> ids de outcome fora do slug e <code>NaN</code> em <code>maxRuns</code>/<code>maxFiles</code> eram aprovados e depois estouravam no <code>PipelineSchema</code> como <em>"isto é bug do huu"</em> — uma mensagem que culpa o huu por um valor que o desenho carregava. Viraram <code>invalid-outcome-id</code> e <code>invalid-number</code>.</li>
-        <li><strong>A cobertura de códigos virou ESTRUTURAL:</strong> uma tabela <code>Record&lt;GraphErrorCode, repro&gt;</code>. Acrescentar um código sem reprodução é <em>erro de compilação</em>.</li>
-      </ul>
-
-      <h3 class="h5 mt-4">Pontas fechadas por auditorias posteriores</h3>
-      <ul>
-        <li><strong>O portão de aprovação mostrava raio de alcance FALSO</strong> — <em>"até 1 agente(s)"</em> para um step que compilava com <code>maxFiles=40</code>, e <em>"400"</em> para um step que o compilador clampava em 100. Sub-relatar o raio num portão de consentimento é falha de consentimento.</li>
-        <li><strong>O resume trocava o desenho pelo planner em silêncio.</strong> Virou <code>graph-missing-on-resume</code>. E o <code>DevResumeOffer</code> ganhou <code>drawnMethod</code> mais um log de aviso, para o humano não clicar em "Retomar" e só então descobrir que precisava re-selecionar o mesmo grafo.</li>
-        <li><strong>JSON malformado virava 500 em cinco rotas.</strong> <code>readJsonBodyOr400</code> aplicado nas <strong>cinco</strong> rotas de <code>/api/dev</code> que leem corpo (a auditoria achou o buraco em todas as quatro citadas) — corpo malformado é erro do <em>cliente</em>, 400. O <code>/api/graphs</code> migrou para o mesmo helper para o comentário "uma implementação só" não virar mentira.</li>
-        <li><strong><code>planWarnings</code> sumia justamente onde importa</strong> — renderizava só quando <code>session.plan</code> era truthy. Passou a renderizar independente.</li>
-        <li><strong>Fato errado no corpo de uma skill.</strong> <code>building-web-ui</code> afirmava que o cliente <em>não</em> é typechecado; existe <code>tsconfig.client.json</code> com <code>allowJs</code> e <code>checkJs</code>. O fato errado já tinha custado tempo a um agente desta onda. Corrigido (0.8.0 → 0.8.1).</li>
-      </ul>
-    </div>
-
-    <!-- ══════════════ ABA 5 · LIMITES ══════════════ -->
-    <div class="tab-pane fade" id="pane-limites" role="tabpanel"
-         aria-labelledby="tab-limites" tabindex="0" data-print-title="Limites conhecidos">
-
-      <h2 class="h4 pane-title">Limites conhecidos</h2>
-      <p class="text-body-secondary">Reproduzido de <code>docs/dev-graph.md</code> §"Known limits" / <code>docs/dev-graph.pt-BR.md</code> §"Limites conhecidos". Cada item foi verificado no código quando escrito.</p>
-
-      <div class="alert alert-warning d-flex gap-2" role="alert">
-        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
-        <div>
-          <strong>Um item da lista publicada já está desatualizado.</strong> Os dois arquivos (en + pt-BR) ainda dizem <em>"o navegador não consegue lançar um desenho"</em> — mas a <strong>onda 7</strong> (<code>34eeb738</code>) fechou exatamente esse buraco, e <code>docs/dev-graph.md</code> / <code>docs/dev-graph.pt-BR.md</code> <strong>não foram atualizados no mesmo commit</strong>. Verificado: <code>devGraphPayload()</code> em <code>src/web/client/modules/dev.js:372</code> injeta <code>graphId</code> no corpo do <code>POST /api/dev</code>. O item está reproduzido abaixo <em>riscado</em>, com o que hoje é verdade ao lado.
-        </div>
-      </div>
-
-      <div class="list-group list-group-flush mb-4">
-        <div class="list-group-item">
-          <strong>Uma sessão de grafo é EXATAMENTE UMA época.</strong> <code>--epochs</code> maior que 1 combinado com <code>--graph</code> é <strong>recusado</strong> (<code>graph-conflict</code>), não rebaixado em silêncio: um devgraph é o método completo, e rodar o mesmo desenho de novo não é uma segunda época. Rodar o mesmo objetivo de novo é oferecido como <em>resume</em>, que continua a numeração de épocas dentro da mesma sessão.
-        </div>
-        <div class="list-group-item">
-          <strong>A Fase 0 continua rodando.</strong> Só A e B sumiram. Num repositório sem agent-skills e sem <code>--skip-knowledge</code>, uma sessão de grafo faz o bootstrap do sistema de skills primeiro — um agente pi de verdade escrevendo arquivos de verdade, commitados antes de uma única caixa compilar — e uma falha ali para a sessão com <code>bootstrap-failed</code> antes de o grafo ser tocado. É deliberado: os prompts dos nós só ganham o prefixo do project-router quando a sonda de knowledge diz que ele está lá.
-        </div>
-        <div class="list-group-item">
-          <strong><code>reportExcerpt</code> fica vazio numa época desenhada.</strong> O huu lê o relatório de consolidação de um caminho que <em>ele</em> compilou no caminho do planner; o bloco <code>consolidate</code> de um devgraph não nomeia arquivo de saída nenhum, então não há caminho para ler. O resultado vazio é o huu se recusando a adivinhar, não o huu procurando no lugar errado. Nada a jusante é prejudicado — o trecho só alimentava o prompt do planner da <em>próxima</em> época, e uma sessão desenhada nunca chega a um planner.
-        </div>
-        <div class="list-group-item">
-          <strong>O scan de reconciliação de partição declarada não acha nada numa época desenhada.</strong> Ele varre o diretório da época, e os arquivos de tarefa de um desenho moram em <code>.huu/findings/&lt;eixo&gt;/</code> por construção. Apontá-lo para o quadro-negro do grafo não acharia nada (ou casaria com um heading em formato de posse dentro de um relatório de pesquisa); apontá-lo para <code>.huu/findings/</code> seria <em>pior</em>, porque essa árvore é namespaceada por eixo e suas specs são commitadas, então um desenho retomado releria os arquivos de tarefa da época anterior. <strong>Nada fica realmente sem medição</strong>: o check autoritativo é o próprio run, que colide posse declarada antes de todo leque <code>memory</code> e ao longo de todos os passos até ali — e esse check está vivo no caminho desenhado também.
-        </div>
-        <div class="list-group-item">
-          <strong>As 12 flags de metodologia NÃO são compiladas por um desenho.</strong> Elas são validadas, carregadas como metadado e <strong>avisadas</strong>, no compilador e de novo no início da sessão. Cada flag compila uma <em>estrutura</em> dentro de um grafo que o planner escreveu; um devgraph expressa método desenhando (largue o bloco <code>tdd</code>, desenhe um nó de gate), e acrescentar passos que ninguém desenhou é exatamente a decisão que este formato tira da máquina. O roteamento de modelo por papel (<code>--worker-model</code> e companhia) é ignorado pelo mesmo motivo — um desenho tem caixas, não papéis. Roteie pelo <code>meta.modelId</code> do grafo ou por um <code>modelId</code> de nó.
-        </div>
-        <div class="list-group-item">
-          <s class="text-body-secondary"><strong>O navegador não consegue lançar um desenho.</strong> O <code>POST /api/dev</code> já aceita um método desenhado — <code>graphId</code> (um id salvo) ou um <code>graph</code> inline — e recusa com 400 um que esteja presente mas inutilizável, em vez de cair no planner. Só que <strong>nenhum controle do cliente envia esses campos</strong> […]</s>
-          <div class="mt-2"><span class="badge badge-ok me-2">superado pela onda 7</span> Hoje o canvas tem botão <em>"Rodar este método"</em> (desabilitado com a razão visível enquanto o desenho não está salvo e válido), o formulário <code>/dev</code> tem seletor <em>planner LLM | método desenhado</em>, e <code>devGraphPayload()</code> injeta <code>graphId</code> no corpo. <strong>A doc é que não acompanhou.</strong></div>
-        </div>
-        <div class="list-group-item">
-          <strong>Não existe primitiva de rename.</strong> A store indexa um grafo pelo id e deriva o nome do arquivo dele, e a superfície HTTP não tem rota de rename. O rename do navegador é portanto um <strong>dois-passos destrutivo</strong> — apaga o id antigo, salva no novo — atrás de um aviso explícito e uma confirmação; se o apagar falhar, o salvar prossegue mesmo assim e você é avisado de que os dois agora existem. Pela CLI é <code>huu graph new &lt;novo-id&gt; …</code> mais <code>huu graph rm &lt;id-antigo&gt;</code>.
-        </div>
-        <div class="list-group-item">
-          <strong>O <code>meta</code> do grafo não tem editor no navegador.</strong> <code>meta.methodology</code>, <code>meta.maxNodeExecutions</code> e <code>meta.modelId</code> são lidos e honrados pelo compilador (e mostrados pelo <code>huu graph show</code>), mas nada no canvas ou no inspector os escreve — só o <code>modelId</code> <strong>por nó</strong> é editável. Ajuste-os editando o JSON.
-        </div>
-        <div class="list-group-item">
-          <strong><code>.huu/dev/graphs/*.json</code> fica gitignorado na maioria dos repositórios</strong> — inclusive neste, cujo <code>.gitignore</code> carrega <code>.huu/</code>. Um desenho salvo <em>não</em> é versionado a menos que você o designore, e "meu método sumiu quando clonei em outro lugar" é um resultado real. A store não toca em git nenhum; ela lê e escreve a árvore de trabalho direto.
-        </div>
-        <div class="list-group-item">
-          <strong>Retomar uma sessão desenhada exige re-fornecer o desenho.</strong> Um resume reabre uma sessão, não os argumentos com que ela começou. Sem o grafo, o huu <strong>recusa</strong> (<code>graph-missing-on-resume</code>) em vez de cair no planner LLM — trocar o seu desenho pelo plano de um modelo, em silêncio, dentro de uma sessão que você abriu como desenho, é exatamente a falha que este recurso existe para deletar. Um resume carregando um grafo <em>diferente</em> também é recusado (<code>graph-conflict</code>).
-        </div>
-        <div class="list-group-item">
-          <strong>A geometria do canvas não é coberta por teste automatizado, e as próprias suítes dizem isso.</strong> <code>canvas.test.js</code> e <code>inspector.test.js</code> montam a árvore React Flow de verdade no jsdom — que <strong>não tem layout</strong>, então todo elemento mede 0×0, o React Flow nunca mede os nós e nenhum path de aresta é calculado. O que fica provado é o <em>grafo</em>: quais nós existem, a que braço uma bolinha pertence, que classe CSS uma aresta carrega, o que o modelo faz com um evento de arrasto. O que <strong>não</strong> fica provado é coordenada de bolinha, roteamento de aresta, a transformação de pan/zoom, o <code>fitView</code>, nem se a paleta aparece ao lado da bolinha a que pertence (o helper que limita a posição do popover não tem teste nenhum). A aritmética de posição do modelo <em>é</em> testada. <strong>Qualquer mudança na superfície de desenho em si precisa de olho humano num navegador de verdade.</strong>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4">Observações de medição deste explainer</h3>
-      <ul>
-        <li><strong>A falha de timeout do <code>requeue.test.ts</code> não reproduziu.</strong> Ela é reportada como pré-existente e flaky. Uma execução completa de <code>npx vitest run</code> neste HEAD saiu com <strong>169 arquivos, 3.780 passando, 1 skipped, 0 falhas</strong>, em 34,6 s. Ou seja: o problema existe no relato, mas <em>não</em> foi observado aqui — e um teste sensível a tempo que passa numa máquina e falha em outra continua sendo um risco.</li>
-        <li><strong><code>bash scripts/gate.sh</code> → 9 PASS, exit 0</strong>, com um <code>WARN</code> não-fatal: o cabeçalho do <code>METODO.md</code> diz que foi medido no commit <code>f9a0d81</code> enquanto o HEAD é <code>34eeb73</code>. O próprio verificador trata isso como aviso e nunca como erro, porque um arquivo não pode conter o próprio hash.</li>
-        <li><strong>Uma prosa com número velho:</strong> o cabeçalho de <code>src/lib/graph-render.ts</code> argumenta contra traduzir "49 frases copiadas à mão". A contagem real hoje é <strong>50</strong> (46 erros + 4 avisos). É discrepância de texto, não de comportamento.</li>
-        <li><strong>O que este explainer NÃO verificou:</strong> a linha de base de 2.224 testes (exigiria checkout do commit anterior e <code>npm ci</code>), e o canvas rodando num navegador de verdade — pelo motivo declarado acima, nenhum teste automatizado cobre a geometria.</li>
-      </ul>
-    </div>
-
-    <!-- ══════════════ ABA 6 · COMO USAR ══════════════ -->
-    <div class="tab-pane fade" id="pane-uso" role="tabpanel"
-         aria-labelledby="tab-uso" tabindex="0" data-print-title="Como usar">
-
-      <h2 class="h4 pane-title">Como usar</h2>
-      <p class="text-body-secondary">Três superfícies sobre o mesmo arquivo em <code>.huu/dev/graphs/&lt;id&gt;.json</code>. Toda saída abaixo é <strong>real</strong>, capturada rodando os comandos neste repositório.</p>
-
-      <h3 class="h5 mt-4"><i class="bi bi-globe2 me-1"></i>1 · Navegador — <code>/graph</code></h3>
-      <p>É onde você <strong>desenha</strong>, e a única superfície que cria um nó com o mouse. Rota bookmarkável de verdade, servida acima do portão de token (como <code>/</code> e <code>/dev</code>).</p>
-      <ul>
-        <li>Clique em qualquer ponto da <strong>linha de braço</strong> na borda direita de um card (a bolinha inclusa) → abre a paleta com todos os blocos do catálogo, agrupados por <em>o que o bloco faz</em>, mais os tipos <code>research</code> e <code>gate</code>. Escolher cria o nó <strong>e</strong> a aresta.</li>
-        <li>Teclado: <code>Enter</code>/<code>Space</code> abre a paleta, <code>↑</code>/<code>↓</code> anda, <code>Enter</code> escolhe, <code>Escape</code> fecha.</li>
-        <li>O <strong>inspector</strong> na lateral edita o nó selecionado: rótulo, o campo de texto próprio do tipo (<code>goal</code>/<code>prompt</code>/<code>query</code>/<code>condition</code>), política de join, <code>notes</code>, <code>modelId</code> por nó, e o que for específico do tipo. O <code>promptTemplate</code> do bloco aparece <strong>somente leitura</strong>; limpar o override de <code>prompt</code> restaura o template.</li>
-        <li>Braço de <strong>retrabalho</strong> tem construtor próprio, porque arrastar um é recusado como <code>cycle</code> — correto e inútil.</li>
-        <li><strong>Salvar é explícito</strong> (o botão, não autosave) e não há undo/redo. Escolher uma amostra <strong>grava em disco na hora</strong> como um grafo seu, com sufixo numérico se o id estiver tomado.</li>
-        <li>O botão <strong>"Rodar este método"</strong> nomeia o desenho e o submit do <code>/dev</code> inicia. Fica desabilitado, com a razão visível, enquanto o desenho não estiver salvo <em>e</em> válido.</li>
-      </ul>
-
-      <h3 class="h5 mt-4"><i class="bi bi-terminal me-1"></i>2 · Terminal — <code>huu graph</code></h3>
-<pre><code class="language-bash">huu graph list                        # os desenhos salvos
-huu graph show &lt;id&gt;                   # a topologia em texto, na ordem de execução
-huu graph validate &lt;id&gt;               # as regras; sai != 0 em qualquer erro
-huu graph compile &lt;id&gt; --out p.json   # um huu-pipeline-v2 PORTÁTIL
-huu graph new &lt;id&gt; [--from &lt;amostra&gt;] [--name &lt;n&gt;] [--force]
-huu graph rm &lt;id&gt;</code></pre>
-
-      <p class="mt-4"><strong>Criando a partir de uma amostra:</strong></p>
-<pre><code class="language-text">$ huu graph new demo --from tdd-seguranca-performance
-huu graph new: "demo" criado em /…/.huu/dev/graphs/demo.json — 5 nó(s), 6 aresta(s), válido.
-  veja com `huu graph show demo` · rode com `huu dev "&lt;objetivo&gt;" --graph=demo`</code></pre>
-
-      <p class="mt-4"><strong>A saída real de <code>huu graph show</code></strong> — o pedido do usuário desenhado (três frentes em paralelo, consolidação seguindo só pela performance):</p>
-<pre><code class="language-text">$ huu graph show demo
-── grafo "demo" ──────────────────────────────────────────────────────────────
-  nome:      TDD, segurança e performance em paralelo
-  descrição: Um objetivo dispara TRÊS frentes em paralelo — TDD, revisão de
-             segurança e revisão de performance — e a consolidação depende só da revisão de
-             performance: o join dela está em modo "subset". Seja honesto sobre o que isso
-             faz: relaxar o join tira a DEPENDÊNCIA (o nó deixa de esperar as outras duas
-             frentes e deixa de falhar quando elas falham) e NÃO a barreira de merge da
-             onda — o huu continua mesclando todos os ramos da onda no worktree de
-             integração antes do próximo estágio, então isto não faz o nó começar antes.
-  nós: 5 · arestas: 6 · válido: sim · 1 aviso(s)
-  criado em 2026-08-04T11:28:25.446Z · atualizado em 2026-08-04T11:28:25.446Z
-  meta: metodologia declarada: tdd
-
-  topologia (na ordem em que o método roda):
-
-  ├─ entrada · prompt · "Entrada do prompt"
-  │  objetivo: Troque este texto pelo objetivo real deste trabalho, em uma ou duas
-  │            frases. Ele é injetado em cada nó pelo token $goal — três frentes vão
-  │            trabalhar a partir dele ao mesmo tempo.
-  │  espera: nada — é a raiz do método
-  │  → tdd
-  │  → seguranca
-  │  → performance
-  │
-  ├─ tdd · action · bloco tdd · escopo project (do bloco) · "TDD"
-  │  espera: todos (entrada)
-  │  → consolidar
-  │
-  ├─ seguranca · action · bloco security-review · escopo project · "Revisão de segurança"
-  │  espera: todos (entrada)
-  │  → consolidar
-  │
-  ├─ performance · action · bloco performance-review · escopo project (do bloco) · "Revisão de performance"
-  │  espera: todos (entrada)
-  │  → consolidar
-  │
-  └─ consolidar · action · bloco consolidate · escopo project (do bloco) · "Consolidar (segue só pela performance)"
-     espera: apenas performance  [entram no desenho: tdd, seguranca, performance]
-     (nó terminal — nada sai daqui)
-
-  retrabalho: nenhuma aresta de retrabalho — o método só anda para frente.</code></pre>
-
-      <p class="mt-4"><strong>E o que isso compila</strong> (recortado — <code>huu graph compile demo</code>). Repare no <code>dependsOn</code> do consolidador: <strong>só a performance</strong>, exatamente o que foi pedido:</p>
-<pre><code class="language-json">{ "name": "1. TDD [tdd]",                        "dependsOn": [], "scope": "project", "review": { … } }
-{ "name": "2. Revisão de segurança [seguranca]", "dependsOn": [], "scope": "project", "readOnly": true }
-{ "name": "3. Revisão de performance [performance]", "dependsOn": [], "scope": "project", "readOnly": true }
-{ "name": "4. Consolidar (segue só pela performance) [consolidar]",
-  "dependsOn": ["3. Revisão de performance [performance]"],
-  "scope": "project" }</code></pre>
-
-      <p class="mt-4"><strong><code>validate</code> mostra o aviso honesto</strong> — e sai 0, porque aviso não é defeito:</p>
-<pre><code class="language-text">$ huu graph validate demo ; echo "exit=$?"
-huu graph validate "demo": o desenho compila — 0 erro(s), 1 aviso(s).
-  aviso [join-subset-drops-barrier] nó consolidar: "consolidar" stops depending on some of
-  its inputs: it will no longer wait for them, nor fail when they fail. huu still merges
-  every branch of the wave before the next stage, so this relaxes the DEPENDENCY, not the
-  merge barrier
-exit=0</code></pre>
-
-      <p class="mt-4"><strong>Uma pesquisa booleana</strong> vira um <strong>par</strong> — o passo de trabalho e o juiz que transcreve o veredito numa rota, com exatamente um <code>default: true</code>:</p>
-<pre><code class="language-json">{ "name": "1a. Já existe rede de testes? [ha-testes]", "type": "work",  "dependsOn": [] }
-{ "name": "1b. Já existe rede de testes? — decisão [ha-testes]", "type": "check",
-  "dependsOn": ["1a. Já existe rede de testes? [ha-testes]"], "maxRuns": 2,
-  "outcomes": [
-    { "label": "yes", "nextStepName": "2. Implementar sobre a rede existente [implementar]" },
-    { "label": "no",  "nextStepName": "3. Construir a rede primeiro (TDD) [tdd]", "default": true }
-  ] }</code></pre>
-
-      <p class="mt-4"><strong>Um leque</strong> (<code>recon-fanout</code>) — <code>scope: memory</code> + <code>filesFrom</code> apontando para a lista que o produtor escreveu, <em>fora</em> do <code>graphRoot</code>:</p>
-<pre><code class="language-json">{ "name": "1. Mapear os alvos [mapear-alvos]", "dependsOn": [], "scope": "project" }
-{ "name": "2. Gerar testes (um agente por alvo) [gerar-testes]",
-  "dependsOn": ["1. Mapear os alvos [mapear-alvos]"],
-  "scope": "memory",
-  "filesFrom": ".huu/findings/graph-cli-fanout/mapear-alvos.json",
-  "maxFiles": 8 }
-{ "name": "3. Consolidar o que o leque produziu [consolidar]",
-  "dependsOn": ["2. Gerar testes (um agente por alvo) [gerar-testes]"], "scope": "project" }</code></pre>
-
-      <p class="mt-4"><strong>Uma aresta de retrabalho</strong> aparece com <code>↺</code> no lugar da seta, e ganha um rodapé próprio — e o pipeline emitido roteia para trás por <code>outcomes[].nextStepName</code>, <strong>nunca</strong> por <code>dependsOn</code>:</p>
-<pre><code class="language-text">  ├─ portao · gate · default "approved" · maxRuns 3 · "Build, typecheck e testes passam?"
-  │  espera: todos (implementar)
-  │  braços:
-  │    ├ approved  "Aprovado"  → documentar  (default — a rota segura quando o juiz falha)
-  │    └ rejected  "Reprovado"  ↺ implementar  (RETRABALHO)
-
-  retrabalho (1): portao --[rejected]--&gt; implementar</code></pre>
-<pre><code class="language-json">{ "name": "2. Build, typecheck e testes passam? [portao]", "type": "check",
-  "dependsOn": ["1. Implementar [implementar]"], "maxRuns": 3,
-  "outcomes": [
-    { "label": "approved", "nextStepName": "3. Documentar o que mudou [documentar]", "default": true },
-    { "label": "rejected", "nextStepName": "1. Implementar [implementar]" }
-  ] }</code></pre>
-
-      <h3 class="h5 mt-4"><i class="bi bi-window-sidebar me-1"></i>3 · TUI — <code>[G]</code> na tela inicial</h3>
-      <p>Um <strong>picker</strong>, não um canvas. Lista os desenhos, lê um em voz alta como diagrama ASCII, mostra todo problema que o validador achou, e entrega o <strong>pipeline compilado</strong> à cadeia de lançamento que a TUI já tinha (backend → modelo → timeout → resolver → dashboard).</p>
-      <div class="row g-3">
-        <div class="col-md-6">
-          <div class="card h-100">
-            <div class="card-header"><strong>Lista</strong></div>
-            <div class="card-body small">
-              <ul class="mb-0 ps-3">
-                <li><code>↑↓</code> destaca um desenho · <code>ENTER</code> inspeciona</li>
-                <li><code>R</code> compila e roda. Um grafo marcado <em>needs fixing</em> <strong>recusa aqui</strong> e diz quantos bloqueios tem — o compilador lança em grafo inválido, então a afordância de rodar nunca chega nele</li>
-                <li><code>S</code> abre os exemplos prontos; o exemplo é salvo como <strong>seu</strong> grafo (sufixado <code>-2</code>, <code>-3</code>… se o id estiver tomado)</li>
-                <li><code>ESC</code> volta</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6">
-          <div class="card h-100">
-            <div class="card-header"><strong>Detalhe (um desenho)</strong></div>
-            <div class="card-body small">
-              <ul class="mb-0 ps-3">
-                <li><code>↑↓</code> rola o painel ativo uma linha por vez</li>
-                <li><code>V</code> troca de painel (diagrama ↔ problemas)</li>
-                <li><code>R</code> compila e roda este desenho</li>
-                <li><code>L</code> recarrega do disco (pega uma edição feita no navegador)</li>
-                <li><code>ESC</code> volta à lista</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="small text-body-secondary mt-2">Cada lançamento cunha uma <strong>sessão nova</strong> (<code>graph-&lt;runId&gt;</code>), para dois runs do mesmo desenho não aterrissarem no mesmo quadro-negro. Com pastas de projeto marcadas, vira leque no run-queue (uma vez por pasta); sem marcas, vai direto.</p>
-
-      <h3 class="h5 mt-4"><i class="bi bi-play-circle me-1"></i>4 · Rodando</h3>
-<pre><code class="language-bash"># um grafo salvo em .huu/dev/graphs/
-huu dev "&lt;o objetivo&gt;" --graph=&lt;id&gt;
-
-# ou um arquivo
-huu dev "&lt;o objetivo&gt;" --graph=./drafts/auditoria.json</code></pre>
-      <p>Um slug puro é um <strong>id</strong>; qualquer coisa contendo <code>/</code> ou <code>.</code> é um <strong>caminho</strong> — e como um slug não pode conter nenhum dos dois, os dois nunca se confundem, e a classificação não precisa tocar o disco (é o que mantém o parser puro).</p>
-      <p>Com um grafo em mãos, <strong>as Fases A e B da época não acontecem</strong>. O planner LLM nunca é chamado. O que sobrevive intacto é tudo o que vem <em>depois</em> da run: o merge de aterrissagem, a evidência da época, o commit do quadro-negro. O portão de aprovação continua gatilhando: <code>--approve-each</code> mostra o desenho projetado no painel de plano — uma frente por nó, com a largura de leque <strong>compilada</strong> como o raio de alcance que você está assinando — e, sem ninguém ligado para responder, ele significa <em>não</em>.</p>
-      <p class="mb-0">Um pipeline gravado com <code>--out</code> é um artefato genuinamente <strong>portátil</strong>: rode-o com <code>huu auto pipeline.json --config &lt;config.json&gt;</code>, em qualquer repositório, sem modo dev nenhum. Esse caminho foi aprovado pelo <code>scripts/validate-graph.ts</code>, que é o próprio passo do gate.</p>
-    </div>
-
-    <!-- ══════════════ ABA 7 · ONDAS ══════════════ -->
-    <div class="tab-pane fade" id="pane-ondas" role="tabpanel"
-         aria-labelledby="tab-ondas" tabindex="0" data-print-title="Ondas">
-
-      <h2 class="h4 pane-title">As 7 ondas</h2>
-      <p class="text-body-secondary">Cada sub-agente numa worktree isolada; barreira ao fim da onda; revisão adversarial entre ondas; squash-merge um a um com gate entre merges.</p>
-
-      <ol class="timeline list-unstyled mb-4">
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 1</span><strong>Os alicerces, em paralelo</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>88d19754</code> vendoriza React Flow como bundle ESM auto-contido ·
-            <code>b67bc09f</code> o contrato do nó de pesquisa (<code>huu-research-v1</code>, 196 testes, parser sobrevive a 30 ataques) ·
-            <code>fef6248c</code> o formato <code>huu-devgraph-v1</code> — tipos, schema, validador, catálogo (204 testes, 40 códigos + 4 avisos, <em>uncovered: 0</em>).
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 2</span><strong>Store, compilador e o que destrava o leque</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>d83d5031</code> PREP: jsdom como devDependency, para provar o canvas ·
-            <code>1d50acd0</code> a família <code>-findings</code> (append puro: 1 hunk, 244 inserções, 0 deleções) ·
-            <code>2c8fc04c</code> persistência atômica + 6 amostras ·
-            <code>9b91d3d7</code> o compilador <code>huu-devgraph-v1</code> → <code>huu-pipeline-v2</code>, com o <code>join subset</code> verificado independentemente por revisão adversarial que reconstruiu o grafo <em>sem usar os testes do autor</em>.
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-warn">Onda 2b</span><strong>Dentes nos invariantes</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>6e844a6f</code> endurecimento do store — a revisão adversarial apagou o mecanismo de escrita atômica inteiro e 2.792 testes continuaram verdes ·
-            <code>e1bd822d</code> o braço que volta: retrabalho desenhável, com as duas camadas sobre o mesmo desenho.
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 3</span><strong>HTTP, modelo puro do editor, e o driver</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>c60fefe7</code> <code>/api/graphs</code> + a SPA em <code>/graph</code> ·
-            <code>6a076ef4</code> a lógica pura do editor (3 módulos, 145 testes em Node, sem DOM) ·
-            <code>745c6bcb</code> <strong>o desenho do humano substitui o planner LLM</strong> — provado ponta a ponta com git real, Orchestrator real, worktrees e merges reais, e um espião que conta e lança se o planner for chamado.
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 4</span><strong>As superfícies, em paralelo</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>bde3f460</code> o navegador passa a EXECUTAR (39 casos) ·
-            <code>40ca2e4d</code> a TUI lista, inspeciona e lança (85 casos) ·
-            <code>cd9fa8a4</code> a tela <code>/graph</code> — o canvas (21 testes, com a tela montada em jsdom e dirigida por eventos) ·
-            <code>fd9a37f2</code> <code>huu graph</code> + <code>huu dev --graph</code> no terminal (74 casos).
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 5</span><strong>Configurar a saída da pesquisa pela tela</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>374b07d6</code> fecha pontas que agentes anteriores reportaram ·
-            <code>f9a0d813</code> o inspector de pesquisa: booleana / múltipla escolha / informativa, com o comportamento de cada saída cadastrável e a troca de tipo listando toda aresta que será removida (80 casos novos).
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Onda 6</span><strong>Documentar e aprender</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>cc18b1cb</code> 16 aprendizados em probation (todos verificados no código antes de gravar), a skill nova <code>authoring-dev-graphs</code>, e o <code>.gitignore</code> ·
-            <code>ca7309d7</code> <code>docs/dev-graph.md</code> + gêmeo pt-BR com a seção honesta de limites, <code>KEYBOARD.md</code>, READMEs, CHANGELOG, e o <code>METODO.md</code> re-medido.
-          </p>
-        </li>
-        <li class="timeline-item">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-ok">Onda 7</span><strong>Rodar o método desenhado pelo navegador</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>34eeb738</code> — fecha o buraco que o <em>fact-check das docs</em> achou: o <code>POST /api/dev</code> já aceitava <code>graphId</code>, mas nenhum controle do cliente enviava. Dava para desenhar, validar e salvar pela web — e não dava para rodar. E, de quebra, o conserto crítico da UI web morta no load.
-          </p>
-        </li>
-      </ol>
-
-      <h2 class="h4 pane-title mt-5">Os 21 commits</h2>
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle">
-          <thead><tr><th style="width:6.5rem">SHA</th><th>Assunto</th></tr></thead>
-          <tbody>
-            <tr><td><code>88d19754</code></td><td>onda1-vendor-reactflow: vendoriza React Flow como bundle ESM auto-contido</td></tr>
-            <tr><td><code>b67bc09f</code></td><td>onda1-research-node: contrato do nó de pesquisa na internet (huu-research-v1)</td></tr>
-            <tr><td><code>fef6248c</code></td><td>onda1-graph-schema: formato huu-devgraph-v1 — tipos, schema, validador, catálogo</td></tr>
-            <tr><td><code>d83d5031</code></td><td>PREP-onda-5: jsdom como devDependency para provar o canvas</td></tr>
-            <tr><td><code>1d50acd0</code></td><td>onda2-catalog-findings: blocos que PRODUZEM lista de achados</td></tr>
-            <tr><td><code>2c8fc04c</code></td><td>onda2-graph-store: persistência de grafos e biblioteca de amostras</td></tr>
-            <tr><td><code>9b91d3d7</code></td><td>onda2-graph-compiler: compila huu-devgraph-v1 → huu-pipeline-v2</td></tr>
-            <tr><td><code>6e844a6f</code></td><td>onda2b-store-hardening: dá dentes aos invariantes do store</td></tr>
-            <tr><td><code>e1bd822d</code></td><td>onda2b-loopback-gate: o braço que volta (retrabalho desenhável)</td></tr>
-            <tr><td><code>c60fefe7</code></td><td>onda3-graph-api: expõe o grafo por HTTP e serve a SPA em /graph</td></tr>
-            <tr><td><code>6a076ef4</code></td><td>onda3-graph-client-model: a lógica pura do editor de grafos</td></tr>
-            <tr><td><code>745c6bcb</code></td><td>onda3-driver-graph: o desenho do humano substitui o planner LLM</td></tr>
-            <tr><td><code>bde3f460</code></td><td>onda4-run-graph-web: o navegador passa a EXECUTAR um método desenhado</td></tr>
-            <tr><td><code>40ca2e4d</code></td><td>onda4-tui-graph: a TUI lista, inspeciona e LANÇA um método desenhado</td></tr>
-            <tr><td><code>cd9fa8a4</code></td><td>onda4-graph-canvas: a tela /graph — desenhar o método como no n8n</td></tr>
-            <tr><td><code>fd9a37f2</code></td><td>onda4-cli-graph: huu graph + huu dev --graph no terminal</td></tr>
-            <tr><td><code>374b07d6</code></td><td>onda5-loose-ends: fecha pontas que agentes anteriores reportaram</td></tr>
-            <tr><td><code>f9a0d813</code></td><td>onda5-graph-inspector: configurar a saída da pesquisa pela tela</td></tr>
-            <tr><td><code>cc18b1cb</code></td><td>onda6-evolution: aprendizados das 6 ondas + skill nova + .gitignore</td></tr>
-            <tr><td><code>ca7309d7</code></td><td>onda6-docs: documenta o método desenhado e re-mede o METODO.md</td></tr>
-            <tr><td><code>34eeb738</code></td><td>onda7-launch-from-web: rodar o método desenhado pelo navegador</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="small text-body-secondary">Faixa completa: <code>git log --oneline 26d093b1..34eeb738</code>. As mensagens de commit são densas de propósito — elas carregam os porquês, e boa parte da aba <a href="#pane-decisoes">Decisões</a> saiu delas.</p>
-    </div>
-
+  <div class="criterio">
+    <p class="big">O critério de aceitação mudou no meio da execução:<br>
+    não é mais <em>"os testes passam"</em>, é <em>"o teste MORRE se eu reverter"</em>.</p>
+    <p class="small">Um teste verde só é evidência quando existe uma versão do código que o deixa vermelho.</p>
   </div>
 
-  <footer class="text-body-secondary small border-top mt-5 pt-3">
-    <strong>huu 1.0.0</strong> · método desenhado <code>huu-devgraph-v1</code> · branch <code>main</code> · faixa <code>26d093b1..34eeb738</code> · 2026-08-04.
-    Documento de arquivo único — abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
-    Doc de referência do usuário: <code>docs/dev-graph.md</code> e o gêmeo <code>docs/dev-graph.pt-BR.md</code>.
+  <!-- =================================================================== -->
+  <h2><span class="num">05</span>Como o trabalho foi organizado</h2>
+
+  <p>
+    O trabalho foi cortado em <strong>4 ondas</strong> de sub-tarefas paralelas. Cada sub-tarefa recebeu uma
+    <strong>worktree própria e nomeada</strong> — uma cópia de trabalho separada do repositório, com nome que diz
+    o que ela faz (<code>onda2-web-dev-surface</code>, e não <code>tmp3</code>). Ao fim, cada worktree entra no
+    tronco por <strong>squash-merge</strong> (todos os commits da sub-tarefa viram um só commit) e
+    <strong>um a um</strong>, com o <strong>gate</strong> — a bateria de validação: build, testes, lint e o resto —
+    rodando a cada integração.
+  </p>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="f5t f5d">
+        <title id="f5t">Ciclo de vida de uma sub-tarefa: worktree, revisão adversarial, squash-merge, gate</title>
+        <desc id="f5d">Cada sub-tarefa é isolada numa worktree, revisada por um adversário, integrada sozinha por squash-merge e validada pelo gate.</desc>
+
+        <!-- caixas -->
+        <rect class="s-box" x="8" y="70" width="132" height="66" rx="9"/>
+        <text class="s-t-b" x="22" y="98">worktree</text>
+        <text class="s-t-b" x="22" y="115">nomeada</text>
+        <text class="s-s"   x="22" y="131">1 por sub-tarefa</text>
+
+        <rect class="s-box" x="176" y="70" width="132" height="66" rx="9"/>
+        <text class="s-t-b" x="190" y="98">agente</text>
+        <text class="s-t-b" x="190" y="115">implementa</text>
+        <text class="s-s"   x="190" y="131">isolado do tronco</text>
+
+        <rect class="s-box-w" x="344" y="70" width="140" height="66" rx="9"/>
+        <text class="s-t-b" x="358" y="98">revisão</text>
+        <text class="s-t-b" x="358" y="115">adversarial</text>
+        <text class="s-s"   x="358" y="131">tenta derrubar</text>
+
+        <rect class="s-box-a" x="520" y="70" width="112" height="66" rx="9"/>
+        <text class="s-t-b" x="534" y="98">squash-</text>
+        <text class="s-t-b" x="534" y="115">merge</text>
+        <text class="s-s"   x="534" y="131">um a um</text>
+
+        <rect class="s-box-o" x="662" y="70" width="90" height="66" rx="9"/>
+        <text class="s-t-b" x="676" y="98">gate</text>
+        <text class="s-s"   x="676" y="115">11 passos</text>
+        <text class="s-s"   x="676" y="131">a cada merge</text>
+
+        <!-- setas com rótulo -->
+        <path class="s-arrow" d="M142 103 H172" marker-end="url(#c1)"/>
+        <text class="s-lbl" x="130" y="60">recebe a sub-tarefa</text>
+
+        <path class="s-arrow" d="M310 103 H340" marker-end="url(#c1)"/>
+        <text class="s-lbl" x="286" y="60">entrega + commita</text>
+
+        <path class="s-arrow" d="M486 103 H516" marker-end="url(#c1)"/>
+        <text class="s-lbl" x="462" y="60">APPROVE / WARNING</text>
+
+        <path class="s-arrow" d="M634 103 H658" marker-end="url(#c1)"/>
+        <text class="s-lbl" x="618" y="60">1 commit</text>
+
+        <!-- loop BLOCK -->
+        <path class="s-arrow-d" d="M414 140 V180 H242 V140" marker-end="url(#c2)"/>
+        <text class="s-lbl-d" x="256" y="197">BLOCK: volta ao autor com o defeito PROVADO, não com opinião</text>
+
+        <!-- limpeza -->
+        <path class="s-arrow" d="M707 140 V216 H74 V140" marker-end="url(#c1)"/>
+        <text class="s-lbl" x="200" y="233">gate verde → worktree e branch apagadas; ao fim da execução restaram 0</text>
+
+        <!-- rodapé: ondas -->
+        <line class="s-dash" x1="8" y1="254" x2="752" y2="254"/>
+        <text class="s-s" x="8" y="272">Onda 1: 2 sub-tarefas  ·  Onda 2: 2  ·  Onda 3: 3  ·  Onda 4: 1</text>
+        <text class="s-s" x="8" y="289">ondas replanejadas a cada rodada; o prefixo no-stop removeu o teto de ondas</text>
+
+        <defs>
+          <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--accent)"/>
+          </marker>
+          <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--danger)"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+    <figcaption>
+      <span class="fignum">Figura 5</span>
+      <b>Cada sub-tarefa entra no tronco sozinha e com o gate atrás — por isso um defeito nunca chega grudado no commit de outra.</b>
+      É o isolamento que torna a revisão adversarial barata: rejeitar uma sub-tarefa não desfaz o trabalho das outras,
+      e o <code>BLOCK</code> volta com uma medição, não com uma opinião.
+    </figcaption>
+  </figure>
+
+  <div class="stats">
+    <div class="stat"><span class="n">11/11</span><span class="k">passos do gate PASS — o 11.º nasceu nesta execução</span></div>
+    <div class="stat"><span class="n">4 221</span><span class="k">testes ao final (baseline 4 153 · +68)</span></div>
+    <div class="stat"><span class="n">OK</span><span class="k">contenção verificada em todas as ondas</span></div>
+    <div class="stat"><span class="n">0</span><span class="k">worktrees remanescentes desta execução</span></div>
+  </div>
+
+  <details>
+    <summary>Tabela completa das 8 sub-tarefas e seus commits</summary>
+    <div class="details-body">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Onda</th><th>Worktree / sub-tarefa</th><th>Commit</th><th>O que entregou</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><code>onda1-manifest-atomic</code></td><td><code>b42e2fa</code></td><td>escrita atômica do manifesto</td></tr>
+            <tr><td>1</td><td><code>onda1-debate-model</code></td><td><code>3f832ed</code></td><td>tipos + parser leniente + localizador dos documentos do debate</td></tr>
+            <tr><td>2</td><td><code>onda2-tui-dev-dashboard</code></td><td><code>067199d</code></td><td>kanban Ink ao vivo em <code>huu dev --cli</code></td></tr>
+            <tr><td>2</td><td><code>onda2-web-dev-surface</code></td><td><code>f8bdd27</code></td><td>chat do debate + conserto da navegação</td></tr>
+            <tr><td>3</td><td><code>onda3-followups</code></td><td><code>423662f</code></td><td>11 learnings + parágrafo de escopo no JSDoc</td></tr>
+            <tr><td>3</td><td><code>onda3-docs-changelog</code></td><td><code>4205247</code></td><td>docs gêmeos + KEYBOARD + 4 fragmentos <code>.changes/</code></td></tr>
+            <tr><td>3</td><td><code>onda3-tui-strings</code></td><td><code>f4d2246</code></td><td>36 chaves i18n para 24 templates de narração</td></tr>
+            <tr><td>4</td><td><code>onda4-metodo-resync</code></td><td><code>95c6e05</code></td><td>reancora os números medidos do <code>METODO.md</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Incidentes registrados durante a execução</summary>
+    <div class="details-body">
+      <ul>
+        <li><strong>Violação de isolamento.</strong> Um agente criou um symlink de <code>node_modules</code> apontando
+        para o repositório principal, o que quebra a regra de contenção. A contenção foi verificada depois:
+        <strong>OK, sem dano</strong>. Registrado mesmo assim.</li>
+        <li><strong>Agente morto por rate limit.</strong> Um agente de correção recebeu 429 (limite de sessão)
+        <em>depois</em> de commitar o trabalho. O orquestrador executou a verificação restante — incluindo a prova
+        por mutação que o agente não chegou a rodar.</li>
+        <li><strong>Erro do próprio orquestrador.</strong> Ele errou o filtro do <code>vitest</code> — o filtro casa por
+        <em>substring</em>, não por caminho — e quase leu um baseline vermelho como "os testes estão falhando".
+        Detectado e corrigido; fica registrado porque o método vale tanto quanto o resultado.</li>
+      </ul>
+    </div>
+  </details>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">06</span>O que NÃO foi entregue, e por quê</h2>
+
+  <p>
+    Metade da honestidade desta página está aqui. Quatro itens ficaram de fora — três por decisão declarada,
+    um por ser dívida antiga que não era desta execução resolver.
+  </p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Não entregue</th><th>Motivo</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Painel de debate no TUI</strong></td>
+          <td>O usuário pediu "botão de chat" — uma afordância de interface <em>gráfica</em>. O TUI recebeu o kanban,
+          que é exatamente o que a frase sobre o CLI pedia. Decisão do orquestrador, declarada ao usuário.</td>
+        </tr>
+        <tr>
+          <td><strong>O literal "preenchido conforme atualizamos o arquivo json"</strong></td>
+          <td>Não existe JSON de debate, e os briefs ficam invisíveis até o merge (seção 03, Figura 1).
+          Entregue o firehose, que mostra os dois lados falando enquanto escrevem.</td>
+        </tr>
+        <tr>
+          <td><strong>Traduções faltantes em <code>dev-cli.ts</code></strong></td>
+          <td>Continuam em português: o resumo de abertura, as recusas, o <code>USAGE</code> e as mensagens de
+          <code>parseDevCliArgs</code>. Ficaram fora do escopo da sub-tarefa de i18n desta execução.</td>
+        </tr>
+        <tr>
+          <td><strong>Dívida pré-existente, encontrada e não tocada</strong></td>
+          <td>No host, <code>huu dev</code> sem <code>--cli</code> ainda passa pelo banner de "web launching" e publica
+          a porta 4888, porque a decisão de modo web acontece no topo do <code>cli.tsx</code>, <em>antes</em> de o
+          código saber que o subcomando é <code>dev</code>. Achado, registrado, deixado como está.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- =================================================================== -->
+  <h2><span class="num">07</span>Tabela de jargão</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Termo</th><th>O que significa aqui</th></tr></thead>
+      <tbody>
+        <tr><td><strong>worktree isolada</strong></td><td>Cópia de trabalho separada do mesmo repositório git, com diretório próprio. O que o agente escreve lá não existe para o resto do projeto até o merge.</td></tr>
+        <tr><td><strong>squash-merge</strong></td><td>Integrar todos os commits de uma sub-tarefa como <em>um único</em> commit no tronco. Aqui, feito uma sub-tarefa por vez.</td></tr>
+        <tr><td><strong>gate</strong></td><td>A bateria de validação do projeto (<code>gate.sh</code>): build, testes, lint, smoke e o resto. Nesta execução, 11 passos — o 11.º nasceu aqui.</td></tr>
+        <tr><td><strong>SSE</strong></td><td><em>Server-Sent Events</em>: conexão HTTP que fica aberta e pela qual o servidor empurra mensagens para o navegador.</td></tr>
+        <tr><td><strong>firehose</strong></td><td>O canal SSE <code>{type:'agent-stream'}</code>: a saída bruta do agente, sem <em>throttle</em>. É o que alimenta o chat do debate.</td></tr>
+        <tr><td><strong>throttle</strong></td><td>Limitar de propósito a frequência de envio. O canal de snapshot do run é throttled; o firehose não é.</td></tr>
+        <tr><td><strong>ReDoS</strong></td><td><em>Regular expression Denial of Service</em>: entrada que faz o motor de regex explorar combinações demais e travar a thread. Em JavaScript, isso congela a UI inteira.</td></tr>
+        <tr><td><strong>backtracking catastrófico</strong></td><td>O mecanismo por trás do ReDoS: o regex volta atrás repetidamente ao não casar, com custo que cresce ao quadrado da entrada.</td></tr>
+        <tr><td><strong>teste vácuo</strong></td><td>Teste que passa mesmo com a implementação que ele deveria proteger quebrada. Custa CI e compra confiança falsa.</td></tr>
+        <tr><td><strong>teste de mutação</strong></td><td>Sabotar o código de propósito, uma alteração por vez, e contar quantas sabotagens a suíte <em>não</em> pega. Mutante sobrevivente = furo na rede.</td></tr>
+        <tr><td><strong>revisão adversarial</strong></td><td>Um segundo agente cuja tarefa é derrubar o trabalho do primeiro, com prova medida. Vereditos: APPROVE, WARNING, BLOCK.</td></tr>
+        <tr><td><strong>escrita atômica</strong></td><td>Gravar num arquivo temporário e renomear por cima do destino, para que nenhum leitor jamais veja conteúdo pela metade.</td></tr>
+        <tr><td><strong>ANSI</strong></td><td>Códigos de escape que o terminal interpreta como cor, cursor e limpeza de tela. Bonito para humano, lixo para um script que espera JSON.</td></tr>
+        <tr><td><strong>stdout / stderr</strong></td><td>Os dois canais de saída de um processo. Aqui, <code>stdout</code> é contrato de máquina (JSON puro) e <code>stderr</code> é onde a interface pinta.</td></tr>
+        <tr><td><strong>XSS / fuzzing</strong></td><td>Injeção de script numa página / disparar entradas malformadas em massa contra uma rota. Ambos foram testados na superfície web: 5 vetores e 18 casos, todos resistidos.</td></tr>
+        <tr><td><strong>contenção</strong></td><td>Garantia verificada de que o trabalho feito numa worktree não escapou para o projeto principal. Resultado: OK em todas as ondas.</td></tr>
+        <tr><td><strong>i18n</strong></td><td><em>Internationalization</em>: as strings da interface vivem num catálogo por idioma em vez de escritas no código.</td></tr>
+        <tr><td><strong>modo dev</strong></td><td>O fluxo <code>huu dev</code>: o único do projeto cujo grafo de passos é escrito em tempo de execução por um planner LLM — por isso as atividades nascem <em>durante</em> a sessão.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    Página gerada a partir do registro de fatos da execução
+    <code>run-20260905-093835-105308</code>. Todos os números, vereditos e commits citados vêm desse registro;
+    nada aqui foi estimado ou inferido. Documento autocontido — sem recursos externos.
   </footer>
 
-</main>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
-        crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
-        integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
-        crossorigin="anonymous"></script>
-
-<script>
-/* ── runtime do documento ────────────────────────────────────────────────────
-   1. guarda o código-fonte cru ANTES de qualquer transformação (para o copiar);
-   2. destaca a sintaxe e injeta o botão de copiar;
-   3. liga as abas ao #hash da URL, nos dois sentidos.
-   ────────────────────────────────────────────────────────────────────────── */
-(function () {
-  'use strict';
-
-  // 1. Fonte cru primeiro. Depois do highlight o DOM ganha <span>; textContent ainda
-  //    devolve o texto certo, mas plugins de numeração de linha o contaminam. Guardar
-  //    antes é a única versão que nunca mente.
-  var sources = new WeakMap();
-  document.querySelectorAll('pre > code').forEach(function (code) {
-    sources.set(code, code.textContent.replace(/\n$/, ''));
-  });
-
-  // 2. Highlight. Declare sempre a linguagem na classe: a auto-detecção erra em
-  //    trechos curtos (o mesmo snippet vira "ruby" numa aba e "perl" na outra).
-  if (window.hljs) hljs.highlightAll();
-
-  // Copiar. navigator.clipboard exige contexto seguro; em file:// o comportamento
-  // varia por navegador, então o fallback com execCommand não é opcional.
-  function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      return navigator.clipboard.writeText(text).then(function () { return true; },
-                                                      function () { return legacyCopy(text); });
-    }
-    return Promise.resolve(legacyCopy(text));
-  }
-
-  function legacyCopy(text) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    // position:fixed + opacity:0 evita que a página role até o textarea.
-    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, ta.value.length); // iOS ignora select() sozinho
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
-  }
-
-  document.querySelectorAll('pre > code').forEach(function (code) {
-    var pre = code.parentElement;
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
-    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
-    btn.setAttribute('aria-label', 'Copiar código');
-    btn.addEventListener('click', function () {
-      copyText(sources.get(code) || code.textContent).then(function (ok) {
-        btn.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
-        btn.classList.toggle('btn-outline-success', ok);
-        btn.classList.toggle('btn-outline-danger', !ok);
-        btn.classList.remove('btn-outline-secondary');
-        setTimeout(function () {
-          btn.innerHTML = '<i class="bi bi-clipboard"></i>';
-          btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
-        }, 1500);
-      });
-    });
-    pre.appendChild(btn);
-  });
-
-  // 3. Aba ↔ URL. Sem isto, mandar "olha a aba Decisões" exige explicar o clique.
-  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
-  if (!tabs.length) return;
-
-  function activateFromHash() {
-    var hash = window.location.hash;
-    if (!hash || hash.length < 2) return;
-    var target = document.querySelector(hash);
-    if (!target) return;
-    // O #hash pode apontar para o painel OU para um título dentro dele.
-    var pane = target.closest('.tab-pane') || (target.classList.contains('tab-pane') ? target : null);
-    if (!pane) return;
-    var trigger = document.querySelector('[data-bs-target="#' + CSS.escape(pane.id) + '"]');
-    if (trigger) bootstrap.Tab.getOrCreateInstance(trigger).show();
-    // O navegador já tentou rolar até o alvo — e falhou, porque naquele instante o
-    // painel ainda era display:none. Agora que apareceu, role de novo.
-    var scrollTo = target !== pane ? target : (trigger && trigger.closest('[role="tablist"]')) || pane;
-    requestAnimationFrame(function () { scrollTo.scrollIntoView({ block: 'start' }); });
-  }
-
-  tabs.forEach(function (t) {
-    t.addEventListener('shown.bs.tab', function (e) {
-      var id = (e.target.getAttribute('data-bs-target') || '').slice(1);
-      // replaceState, não location.hash: mudar o hash direto faz a página pular.
-      if (id) history.replaceState(null, '', '#' + id);
-    });
-  });
-
-  window.addEventListener('hashchange', activateFromHash);
-  activateFromHash();
-})();
-</script>
+</div>
 </body>
 </html>

@@ -185,7 +185,7 @@ INNER
 surf_checks() {
     local img="$1"
     local expect="$2"
-    local bin ver want
+    local bin ver want b
 
     bin=$(docker run --rm --entrypoint sh "$img" -c 'command -v surf-research-skill || true')
 
@@ -199,15 +199,28 @@ surf_checks() {
             fail "surf-research-skill --version não imprimiu nada em $img"
         fi
         echo "    surf-research-skill $ver ($bin)"
-        # O degrau SEM chave (`surf-free-skill`) só existe a partir da surf
-        # 5.2.0; a 5.0.0 publicada não o traz. NÃO é obrigatório — quem tem de
-        # dizer a verdade sobre ele é `probeSurf().free`, e é o prompt que
-        # decide o que fazer com a resposta.
+        # Os binários que os prompts de pesquisa chamam PRIMEIRO. Não são
+        # extras: `surf-search-normal` é a Camada A inteira (a onda autônoma
+        # que devolve resposta já citada) e `surf-search-unlimit` é a versão
+        # sem teto de ondas. Uma imagem sem eles instalou o pacote errado —
+        # foi exatamente esse o bug: o Dockerfile pedia `surf-skill`, o nome
+        # ABANDONADO no npm ("Renomeado para surf-agent-skill"), enquanto o
+        # código chamava a v8 do `surf-agent-skill`.
+        for b in surf-search-normal surf-search-unlimit; do
+            docker run --rm --entrypoint sh "$img" -c "command -v $b" >/dev/null 2>&1 \
+                || fail "$b ausente de $img — a imagem instalou o pacote de surf errado (esperado surf-agent-skill@8)"
+        done
+        echo "    surf-search-normal + surf-search-unlimit: presentes (Camada A completa)"
+
+        # `surf-free-skill` tem de estar AUSENTE, e por DESIGN, não por acaso
+        # de versão: a v8 não tem degrau sem chave — Brave é o único backend e
+        # sem chave o comando sai 78 antes de rodar qualquer coisa. Se ele
+        # aparecer, a imagem instalou um pacote PRÉ-v8 (surf-skill 5.2+/7.x),
+        # e a escada de duas camadas que os prompts descrevem está mentindo.
         if docker run --rm --entrypoint sh "$img" -c 'command -v surf-free-skill' >/dev/null 2>&1; then
-            echo "    surf-free-skill: presente (degrau sem-chave disponível)"
-        else
-            echo "    surf-free-skill: ausente (esperado na surf 5.0.0 publicada)"
+            fail "surf-free-skill presente em $img — a v8 não tem degrau sem chave; a imagem está numa surf pré-v8"
         fi
+        echo "    surf-free-skill: ausente (correto — a v8 não tem camada sem chave)"
         want=1
     else
         if [ "$expect" = present ]; then

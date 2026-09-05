@@ -195,17 +195,26 @@ canal que um nó tem para o nó seguinte.
 
 ### A escada de degradação
 
-Um agente `pi` tem sete ferramentas — `bash edit find grep ls read write` — e
-nenhuma delas é ferramenta de web. A internet só existe através do `bash`, então
-o prompt de pesquisa descreve **comandos de shell** e nomeia os binários exatos
-que a imagem entrega. Ele desce uma escada de três degraus e para no primeiro que
-**funcionar**:
+Um agente de pesquisa tem sete ferramentas — `bash edit find grep ls read
+write` — e nenhuma delas é ferramenta de web. A internet só existe através do
+`bash`, então o prompt de pesquisa descreve **comandos de shell** e nomeia os
+binários exatos que a imagem entrega. Ele desce uma escada de **dois degraus** e
+para no primeiro que **funcionar**:
 
 | Degrau | Comando | `method` registrado |
 |---|---|---|
-| **A** — busca com chave | `surf-research-skill search "…" --max 3 --quiet` | `surf-research` |
-| **B** — busca sem chave (Wikipedia + DuckDuckGo) | `surf-free-skill search "…" --max 3 --quiet` | `surf-free` |
-| **C** — `curl` de uma URL que o agente já conhecia | `curl` + `jq` (sempre presentes) | `direct-fetch`, ou `none` |
+| **A** — busca com chave (Brave, o único backend) | `surf-research-skill gate` e então `surf-search-normal "…" --task … --goal …`; links crus via `surf-research-skill search "Q1" "Q2" "Q3"` | `surf-research` |
+| **B** — `curl` de uma URL que o agente já conhecia | `curl` + `jq` (sempre presentes) | `direct-fetch`, ou `none` |
+
+**Não existe degrau sem chave.** A surf v8 (`surf-agent-skill`, o que o
+Dockerfile instala) busca no Brave e em mais nada, e o `surf-free-skill` — o
+antigo degrau Wikipedia→DuckDuckGo — não existe nela. Sem chave do Brave o
+`gate` sai **78 antes de rodar qualquer coisa**, o que é um veredito de
+CONFIGURAÇÃO, não uma falha transitória: repetir queima um card de agente e não
+muda nada. O prompt diz isso explicitamente, pra que o agente não saia caçando
+um binário que não vai voltar. O `method: "surf-free"` sobrevive só como valor
+APOSENTADO — nenhum nó novo escreve esse valor, e um artefato que o carrega é
+antigo o bastante pra que a evidência dele não possa mais ser re-executada.
 
 **A escada degrada por FALHA, não apenas por ausência** — e essa distinção é o
 ponto inteiro. `command -v` prova que um binário está *instalado*; não prova que

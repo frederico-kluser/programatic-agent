@@ -82,13 +82,29 @@ ARG INCLUDE_SSH=true
 
 # Build arg controls whether the surf web-research CLI ships in the image.
 # - INCLUDE_SURF=true (default): pipeline steps can run real, cited web
-#   research from inside the container (`surf-research-skill`).
+#   research from inside the container — `surf-research-skill` (probe + raw
+#   links) plus `surf-search-normal` / `surf-search-unlimit` (the autonomous
+#   waves the research prompts reach for FIRST).
 # - INCLUDE_SURF=false: ~20MB smaller image; research steps degrade to
 #   repo-only knowledge (the prompt handles it — see docs/dev-mode.md).
-# SURF_VERSION is a RANGE, not a pin, so the image picks up 5.x as it
-# publishes (5.0.0 has no `surf-free-skill`; 5.2.0 does).
+#
+# THE PACKAGE NAME IS `surf-agent-skill`. The old `surf-skill` name is
+# DEPRECATED on npm — `npm view surf-skill deprecated` answers "Renomeado para
+# surf-agent-skill — instale com: npm i -g surf-agent-skill" — and is frozen at
+# 7.0.0. huu is docker-only, so the image IS production research: installing
+# the abandoned name does not degrade a dev box, it silently ships every user a
+# CLI that does not match the code calling it.
+#
+# SURF_VERSION is a MAJOR RANGE, not a pin: 8.x fixes land without a Dockerfile
+# edit, but the image never crosses a major on its own. That boundary is the
+# whole point — v8 is the release that made Brave the ONLY backend, deleted the
+# keyless `surf-free-skill` rung and made a missing key exit 78 *before*
+# anything runs, and huu encodes exactly those facts in
+# src/lib/surf-research.ts, src/lib/dev-graph/research-contract.ts and
+# src/lib/dev-mode/knowledge-blackboard.ts. A v9 must be read before it is
+# trusted, so it does not arrive by itself.
 ARG INCLUDE_SURF=true
-ARG SURF_VERSION=5
+ARG SURF_VERSION=8
 
 # Pentest mode's active-testing toolchain (nmap, nikto, whatweb, sqlmap, …).
 # OFF by default — it adds weight most runs never need, and only the
@@ -133,8 +149,16 @@ RUN set -eux; \
 # and a keys.json skeleton into the BUILD user's $HOME, which is both useless
 # (the runtime HOME differs) and a layer of stale state baked into the image.
 # The bin symlinks come from package.json `bin`, which npm links regardless.
+#
+# The three `command -v` guards are the ASSERTION this layer was missing. The
+# prompts call `surf-search-normal` first and `surf-research-skill` second; a
+# package that stops shipping either one is a broken image, and a build that
+# fails here is infinitely cheaper than a run that discovers it at agent time.
 RUN if [ "$INCLUDE_SURF" = "true" ]; then \
-        npm i -g --ignore-scripts "surf-skill@${SURF_VERSION}" \
+        npm i -g --ignore-scripts "surf-agent-skill@${SURF_VERSION}" \
+        && command -v surf-research-skill >/dev/null \
+        && command -v surf-search-normal >/dev/null \
+        && command -v surf-search-unlimit >/dev/null \
         && npm cache clean --force; \
     fi
 

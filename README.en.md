@@ -123,15 +123,61 @@ execution is left, it's exactly huu's job.**
 
 ## Quick start
 
-**Prerequisites:** Node.js ≥ 20, `git`, and Docker (required) — **a stock
-Docker is enough; the `buildx` plugin is NOT required**. The `Dockerfile`
-carries no BuildKit-only syntax (no cache mounts, no `COPY --link`, no
-heredocs), so the classic builder builds the whole image; put one back and
-`scripts/check-dockerfile.ts` fails the gate. Export the key
-of the **provider** you'll run: `DEEPSEEK_API_KEY`
-([platform.deepseek.com](https://platform.deepseek.com)) by default, or
-`OPENROUTER_API_KEY` ([openrouter.ai/keys](https://openrouter.ai/keys)) when
-you run with `--provider=openrouter`.
+**Prerequisites:** Node.js ≥ 20, `git`, and Docker — the **default** runtime,
+and **a stock Docker is enough; the `buildx` plugin is NOT required**. The
+`Dockerfile` carries no BuildKit-only syntax (no cache mounts, no
+`COPY --link`, no heredocs), so the classic builder builds the whole image; put
+one back and `scripts/check-dockerfile.ts` fails the gate. You do **not** need
+to export an API key first: huu asks for the ones it is missing on the first
+run — and never asks for one it can already resolve.
+
+### The first run sets huu up
+
+The first time huu starts — the globally installed `huu`, or `npm start` in
+the repo — it **asks three questions and only three**:
+
+1. **Front-end** — `web` (the default) or `cli`.
+2. **Runtime** — `docker` (the default) or `native`. Picking `native` prints
+   the price **before** you can confirm it, because two things go away: the
+   **isolation** (agents start reaching your shell credentials — `~/.ssh`,
+   `~/.aws`, …) and the **container** memory ceiling. The **kernel** ceiling
+   is a different thing and does not go with it: on Linux huu wraps itself in
+   a `systemd` scope that supplies one; anywhere else only huu's own software
+   guard is left. The confirmation defaults to **no** — anything that isn't
+   `y`/`s` keeps docker.
+3. **The keys it is missing** — in this order: `OPENROUTER_API_KEY`
+   ([openrouter.ai/keys](https://openrouter.ai/keys)) and `BRAVE_API_KEY`,
+   which setup treats as needed (a missing one is asked again on every start),
+   then `DEEPSEEK_API_KEY`
+   ([platform.deepseek.com](https://platform.deepseek.com)), which is
+   **optional** — offered exactly once, on the first run: ENTER skips it and
+   it is not asked again. A key that already resolves (env var or the config
+   store) is **never asked for**; only `huu setup` revisits it.
+
+**Keys are really validated** — one call to the provider's **metadata**
+endpoint, never inference, so validating a key never spends a model credit.
+And only a **rejected** key blocks: `401`/`403` is the provider saying out loud
+that the credential is wrong, and the question comes back; a timeout, dead DNS,
+`429` or `5xx` only **warn** and let you through — "we could not check" is not
+"it is bad", and a flaky network must never lock you out of your own project.
+Pasting another provider's key into the wrong field is **refused**, not merely
+flagged.
+
+After that it stops asking — except for whatever is still missing. The answers
+live in `~/.config/huu/config.json` under `_setup`, the same file that holds
+the keys; **`huu setup` reopens the whole conversation** whenever you change
+your mind — including keys that are already set — and it runs natively, with
+no container and outside a git repo (spinning up a container to answer whether
+huu should use a container would be absurd). Typed explicitly, it even beats a
+`HUU_SKIP_SETUP=1` left behind in your shell profile. **With no TTY** (CI,
+cron, a pipe) nothing is asked: huu proceeds with the defaults, says in one
+line which ones it used, and **saves nothing** — the next run on a terminal
+asks again; `HUU_SKIP_SETUP=1` silences the notice.
+
+**Precedence: flag > env > saved config > default.** Typing `--web` means web
+*this time*, even with `cli` saved — and `--docker` (the new mirror of
+`--no-docker`) forces the container for one run even over a saved `native`
+runtime, without rewriting your configuration.
 
 ### Docker
 
@@ -177,15 +223,17 @@ shell credentials. `--yolo` / `--no-docker` / `HUU_NO_DOCKER=1` **work**
 and skip the container on purpose — for targets that already run their
 own Docker, where nesting containers is the problem — but they cost
 the two things the container was giving you (credential isolation and
-the memory ceiling), and huu warns on every such start; `--docker` is
-the mirror, forcing the container even over a saved `native` runtime.
-On the first `npm start`, `huu setup` asks for the front-end and the
-runtime and saves the choice to `~/.config/huu/config.json` — reopen it
-any time with `huu setup`. Precedence: **flag > env > saved config >
-default**. Only `--help` and the host utilities (`init-docker`,
-`status`, `prune`) run outside the container. Full install matrix
-(macOS / Windows / Linux, OrbStack notes, WSL2 caveats):
+the container memory ceiling), and huu warns on every such start,
+including when `native` came from your saved configuration rather than
+from a flag. Only `--help`, `huu setup` and the host utilities
+(`init-docker`, `status`, `prune`) run outside the container. Full
+install matrix (macOS / Windows / Linux, OrbStack notes, WSL2 caveats):
 [`docs/onboarding.md#install`](docs/onboarding.md#install).
+
+In the repo, `npm start` now **asks before it builds the image**: the order is
+*setup gate → runtime decision → build (only when the run lands in a
+container) → CLI*. With the daemon down it explains what happened and
+**offers native mode** instead of dying inside `docker build`.
 
 The UI (web by default, or the TUI with `--cli`) opens on a dashboard:
 start from `huu Test Suite` (the default pipeline, already materialized)
@@ -807,7 +855,16 @@ Controls:
 
 ---
 
-## Development mode (`huu dev`)
+## Development mode (`huu dev`) — beta
+
+> 🚧 **Beta, and the manifesto is the reason.** This is the **only** huu flow
+> in which an LLM writes the step graph **at run time** — against differential
+> #2 of the [MANIFESTO](MANIFESTO.en.md) ("zero LLM planner at run time") and
+> against "huu is not a tool for building new features". The contradiction is
+> owned, not hidden: the callout at the end of this section says where it hurts
+> and what survives it. With the gate off — the default — **nobody signs the
+> plan**; `--approve-each` hands that signature back, and **the drawn method**
+> (`huu-devgraph-v1`, right below) is the same idea with no LLM planner at all.
 
 The only huu flow whose **step graph is written at run time**. You write the
 goal; a planner decomposes it into parallel **fronts**; each front becomes
@@ -829,18 +886,31 @@ side — `Pipelines` (you already have the method) and `Development` (you have a
 goal). Each half is a real route (`/` and `/dev`, bookmarkable), but clicking
 swaps the view without a reload, so the SSE stream and the run board survive.
 
-**Two surfaces to watch it on.** In the terminal, `huu dev "<goal>" --cli`
-renders a **live kanban** (the pipeline dashboard's own board) instead of a
-scrolling log — and it paints on **stderr**, so the JSON object `huu dev`
-writes to stdout stays byte-identical and no script breaks; with no TTY it
-falls back to the plain log. The `y/N` gates are answered inside the frame
-(`y`/`s` is yes, any other key is no), `Ctrl+C` exits 130. On the web, with
-`--debate` on, `/dev` grows a **Debate** button that opens the two sides as a
-conversation: **live** off the agent-output firehose — the only way to watch it
-happen, since each brief is written inside its own agent's worktree and reaches
-the blackboard only after the wave merges — and **settled** afterwards, read
-from the merged `A.md`/`B.md` and parsed server-side. Without `--debate` the
-button never appears.
+**Two surfaces to watch it on — one in the terminal, one on the web.** In the
+terminal, `huu dev "<goal>" --cli` renders a **live kanban** (the pipeline
+dashboard's own `RunKanban`) instead of a scrolling log — and it paints on
+**stderr**, so the JSON object `huu dev` writes to **stdout stays byte-identical**
+and no script that consumes it breaks. It is an explicit opt-in (`--cli`,
+`--tui` or `HUU_CLI=1`); a plain `huu dev` keeps the headless log, and with no
+TTY on stderr (a pipe, a log file, CI) huu says so once and keeps the plain log
+rather than drawing a board nobody can read. The three `y/N` gates —
+`--approve-each`, resuming an earlier session, and landing orphan branches —
+are answered **inside the frame**, because Ink holds stdin in raw mode, with
+the semantics they always had: `y`/`s` is yes, **any other key, ENTER
+included, is no**. `Ctrl+C` unmounts and exits `130`.
+
+On the web, with `--debate` on, `/dev` grows a **Debate** button that opens the
+two sides as a conversation: **live** off the agent-output firehose (the SSE
+`agent-stream` frame, which is **not throttled** — it is literally the advocate
+and the prosecutor as they write) and **settled** afterwards, when
+`GET /api/dev/debate` reads the merged `A.md`/`B.md` and parses them **on the
+server**. The live half cannot come from a file, and that is counterintuitive
+enough to say out loud: each brief is written **inside its own agent's
+worktree** and only reaches the canonical path once the wave merges, so a UI
+watching the file would see it appear **finished**, never filling — there is no
+debate JSON to poll. Without `--debate` (which ships **off**) the button never
+appears, and **the terminal has no debate panel at all**: the kanban is the
+terminal's, the chat is the web's.
 
 **Phase 0 — the knowledge gate.** Before any development, huu checks whether
 the project has agent skills (`.agents/skills/catalog.md`, a router skill, or
@@ -1083,8 +1153,8 @@ So nobody confuses intent with done:
 
 | State | What |
 |---|---|
-| ✅ **Implemented** | Pipeline JSON v2 (work · check · memory · `dependsOn`/waves); `per-file` and `memory` fan-out; deterministic `--no-ff` merge with an LLM conflict-resolver fallback; Docker sandbox with secret mounts; web UI (default) + TUI (`--cli`); headless `auto` mode; the `jcode` backend (a CLI subprocess) serving both the DeepSeek and OpenRouter providers, plus the no-LLM `stub` backend; **multi-run** (N projects in one process under a shared budget — priority + backfill + agent-exit announcements in the terminal); memory-aware concurrency + memory guard with **host-aware RAM accounting** and honest machine-wide numbers; **truthful kanban** (green = merged, `PAUSED` → TODO); **SSE liveness watchdog** (zombie streams reconnect, the queue survives a refresh); native-shim port isolation; 7 autonomous default pipelines; **per-agent** token/cost telemetry + a real-time summed run total (`totalCost`). |
-| 🟡 **Stabilizing** | The OpenRouter provider (back, alongside the default DeepSeek); Pipeline Assistant / Architect flow (TUI). |
+| ✅ **Implemented** | **First-run setup** (front-end · runtime · the missing keys, validated against the provider and persisted under `_setup`, with `huu setup` to reopen it); Pipeline JSON v2 (work · check · memory · `dependsOn`/waves); `per-file` and `memory` fan-out; deterministic `--no-ff` merge with an LLM conflict-resolver fallback; Docker sandbox with secret mounts; web UI (default) + TUI (`--cli`); headless `auto` mode; the `jcode` backend (a CLI subprocess) serving both the DeepSeek and OpenRouter providers, plus the no-LLM `stub` backend; **multi-run** (N projects in one process under a shared budget — priority + backfill + agent-exit announcements in the terminal); memory-aware concurrency + memory guard with **host-aware RAM accounting** and honest machine-wide numbers; **truthful kanban** (green = merged, `PAUSED` → TODO); **SSE liveness watchdog** (zombie streams reconnect, the queue survives a refresh); native-shim port isolation; 7 autonomous default pipelines; **per-agent** token/cost telemetry + a real-time summed run total (`totalCost`). |
+| 🟡 **Stabilizing** | **Development mode (`huu dev`) — beta**: the only flow in which an LLM writes the step graph at run time, against differential #2 of the manifesto (**the drawn method** is the deterministic alternative); the OpenRouter provider (back, alongside the default DeepSeek); Pipeline Assistant / Architect flow (TUI). |
 | 🧭 **Roadmap** | **mutation score** as a first-class metric (prompts already aim for mutation-surviving assertions, but the pipeline doesn't run the mutator); **web-based pipeline authoring** (TUI-only today); more backends (ACP, Claude Code); **merge/judge cost** in the aggregate total. |
 
 ---
@@ -1114,8 +1184,13 @@ to propose a pipeline, report a bug, or discuss an idea. **CI runs the gate
 on every push and PR** (`.github/workflows/gate.yml` → `scripts/gate.sh`),
 but run `npm run typecheck && npm test` locally before opening one anyway —
 CI only reports after the fact, and the pre-push hook in `.githooks` helps
-you not forget. `bash scripts/gate.sh` reproduces CI exactly. Development
-and architecture details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+you not forget. `bash scripts/gate.sh` reproduces CI exactly — **eleven steps**
+today: typecheck · test · validate-skills · check-acceptance · smoke-defaults ·
+validate-graph · check-pins · check-twins · check-metodo · check-dockerfile ·
+**smoke-dev-dashboard**, the newest one, which drives two real epochs of a
+stub-backed dev session for the sole purpose of proving that the
+`huu dev --cli` kanban wrote no byte to stdout. Development and architecture
+details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
